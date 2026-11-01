@@ -1,4 +1,7 @@
 from types import SimpleNamespace
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -25,6 +28,38 @@ class CompositeDiagnosticTests(unittest.TestCase):
         self.assertFalse(report['physical_transfer_verified'])
         self.assertFalse(report['file_commands_sent'])
         self.assertIn('firmware_error', report)
+
+    def test_snapshot_preserves_unknown_usb_failure_and_parent_location(self):
+        rows = [{'instance': r'USB\VID_0000&PID_0002\123',
+                 'unidentified_usb_failure': True, 'psp_identity_confirmed': False,
+                 'properties': {'DEVPKEY_Device_Parent': 'USBHUB',
+                                'DEVPKEY_Device_LocationPaths': ['USBROOT(0)#USB(4)']}}]
+        with patch.object(diagnostic.os, 'name', 'nt'):
+            result = diagnostic.windows_binding_snapshot(run=lambda *args, **kwargs:
+                SimpleNamespace(returncode=0, stdout='\ufeff'+json.dumps(rows), stderr=''))
+        self.assertEqual(result['devices'], rows)
+        self.assertFalse(result['winusb_present'])
+        self.assertIn('VID_0000&PID_000[02]', diagnostic.PNP_SCRIPT)
+
+    def test_setupapi_retains_only_relevant_bounded_sections(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'setupapi.dev.log'
+            path.write_text('>>> [Other device - PCI\\PRIVATE]\nprivate unrelated text\n' +
+                            '>>> [Device install - USB\\VID_054C&PID_01CB]\n! driver bind\n' +
+                            '>>> [Other device - USB\\VID_1234&PID_5678]\nnot psp\n' +
+                            '>>> [Device install - USB\\VID_0000&PID_0002]\n! descriptor failed\n',
+                            encoding='utf-8')
+            result = diagnostic.setupapi_snapshot(path)
+        self.assertEqual(len(result['sections']), 2)
+        self.assertTrue(result['unidentified_usb_entries_are_not_psp_proof'])
+        self.assertNotIn('private unrelated text', ''.join(result['sections']))
+        self.assertNotIn('not psp', ''.join(result['sections']))
+
+    def test_setupapi_missing_log_does_not_break_pnp_diagnostics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = diagnostic.setupapi_snapshot(Path(directory) / 'missing.log')
+        self.assertEqual(result['sections'], [])
+        self.assertIn('error', result)
 
 
 if __name__ == '__main__':

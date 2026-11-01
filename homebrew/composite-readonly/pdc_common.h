@@ -9,7 +9,7 @@
 
 #define PDC_DRIVER_NAME "PSPDockCompositeRO"
 #define PDC_TEST_PRODUCT 0x01cb
-#define PDC_REVISION 0x0203
+#define PDC_REVISION 0x0204
 #define PDC_USB_INTERFACE 1
 #define PDC_HID_IN 0x81
 #define PDC_BULK_IN 0x82
@@ -39,6 +39,9 @@ typedef struct {
     volatile uint32_t request_stop, stage, safe_to_unload;
     volatile int32_t error;
     volatile uint32_t hid_reports, bulk_commands, bytes_read, rx_errors;
+    volatile uint32_t ctrl_requests, ctrl_os_string, ctrl_os_compat;
+    volatile uint32_t ctrl_os_properties, ctrl_status;
+    volatile uint32_t last_setup, last_value_index;
 } PdcSharedStatus;
 
 typedef struct {

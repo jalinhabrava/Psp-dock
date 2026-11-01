@@ -21,7 +21,7 @@
 #include "pdc_psp_fs.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockCompositeRO",PSP_MODULE_KERNEL,2,3);
+PSP_MODULE_INFO("PSPDockCompositeRO",PSP_MODULE_KERNEL,2,4);
 
 static volatile int running,active,connected,stop_requested,ever_connected;
 static volatile int hid_busy,ctl_busy,rx_busy,tx_busy,rx_ready,bulk_fault;
@@ -107,6 +107,20 @@ static int receive_control(int endpoint,int arg2,struct DeviceRequest *r) {
     uint8_t answer[256];size_t os_size;int length,irq;
     (void)endpoint;
     if(!r || arg2==-1)return -1;
+    if(ui){
+        ui->ctrl_requests++;
+        ui->last_setup=(uint32_t)r->bmRequestType|((uint32_t)r->bRequest<<8)|
+                       ((uint32_t)r->wLength<<16);
+        ui->last_value_index=(uint32_t)r->wValue|((uint32_t)r->wIndex<<16);
+        if(r->bmRequestType==0x80 && r->bRequest==6 && r->wValue==0x03ee)
+            ui->ctrl_os_string++;
+        if(r->bmRequestType==0xc0 && r->bRequest==PDC_OS_VENDOR_REQUEST &&
+           r->wValue==0 && r->wIndex==4)ui->ctrl_os_compat++;
+        if(r->bmRequestType==0xc1 && r->bRequest==PDC_OS_VENDOR_REQUEST &&
+           r->wValue==PDC_USB_INTERFACE && r->wIndex==5)ui->ctrl_os_properties++;
+        if(r->bmRequestType==0xc1 && r->bRequest==PDC_STATUS_REQUEST &&
+           r->wIndex==PDC_USB_INTERFACE && r->wValue==0)ui->ctrl_status++;
+    }
     /* Must dispatch OS string/vendor requests BEFORE HID interface checks. */
     os_size=pdc_os_control(r->bmRequestType,r->bRequest,r->wValue,r->wIndex,
                            r->wLength,answer,sizeof(answer));
@@ -147,7 +161,7 @@ static int receive_control(int endpoint,int arg2,struct DeviceRequest *r) {
 }
 static int attach(int speed,void *a,void *b){
     (void)a;(void)b;
-    if(speed!=1 && speed!=2){bulk_fault=-10;return -1;}
+    if(speed!=1 && speed!=2){bulk_fault=-10;stop_requested=1;return -1;}
     ever_connected=1;connected=1;set_stage(PDC_STAGE_CONNECTED,0);return 0;
 }
 static int detach(int a,int b,int c){

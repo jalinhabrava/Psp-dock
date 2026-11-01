@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -24,14 +25,18 @@ from psp_winusb_transport import WinUSBTransport, WinUSBError
 HID_INTERFACE = re.compile(r"^\\\\\?\\hid#vid_054c&pid_01cb&mi_00(?:&|#)", re.I)
 
 
-def matching_hid_session(report: dict, session: bytes) -> str:
+def matching_hid_session(report: dict, session: bytes, *, expected_product: int = 0x01CB) -> str:
     """Correlate two interfaces; this is NOT cryptographic authentication."""
+    if type(expected_product) is not int or expected_product not in (0x01CB, 0x01CC):
+        raise WinUSBError('PID PSP Dock no reconocido.')
+    expected_interface = HID_INTERFACE if expected_product == 0x01CB else re.compile(
+        r'^\\\\\?\\hid#vid_054c&pid_01cc&mi_00(?:&|#)', re.I)
     if (not isinstance(report, dict) or report.get('supported') is not True or
             report.get('errors') or not isinstance(report.get('devices'), list) or
             len(report['devices']) != 1 or len(session) != 16 or not any(session)):
         raise WinUSBError('No hay un único mando HID PSP verificable.')
     device = report['devices'][0]
-    if not isinstance(device, dict) or not HID_INTERFACE.match(device.get('path', '')):
+    if not isinstance(device, dict) or not expected_interface.match(device.get('path', '')):
         raise WinUSBError('El mando no es la interfaz HID del dispositivo compuesto.')
     status = device.get('status')
     if (not isinstance(status, dict) or status.get('session') != session.hex() or
@@ -54,11 +59,16 @@ def _joystick_sample(read_input) -> tuple:
 
 
 def run_probe(output_directory: Path, *, rounds: int = 4,
+              min_duration_seconds: float = 0,
               enumerate_bulk=candidate_paths, open_transport=WinUSBTransport,
               hid_probe=None, read_input=None, storage_present=None) -> dict:
     """Bounded test length is NOT a watchdog on the PSP's gamepad session."""
     if type(rounds) is not int or not 1 <= rounds <= 32:
         raise ValueError('La prueba admite de 1 a 32 lecturas del archivo ficticio.')
+    if (type(min_duration_seconds) not in (int, float) or
+            not math.isfinite(min_duration_seconds) or
+            not 0 <= min_duration_seconds <= 30):
+        raise ValueError('La duración mínima debe estar entre 0 y 30 segundos.')
     if hid_probe is None:
         from bridge_hid import probe
         hid_probe = probe
@@ -83,13 +93,15 @@ def run_probe(output_directory: Path, *, rounds: int = 4,
         'same_hid_bulk_session': False, 'psp_writes': False,
         'save_return_supported': False, 'fat_volume_identity_verified': False,
         'gamepad_motion_observed': False, 'completed_rounds': 0,
-        'bytes_verified': 0,
+        'bytes_verified': 0, 'gamepad_samples_during_transfer': 0,
+        'minimum_duration_seconds': min_duration_seconds,
+        'simultaneous_hid_bulk_verified': False,
     }
     inputs = set()
     try:
         with open_transport(paths[0]) as transport:
             before = matching_hid_session(hid_probe(), transport.firmware.session)
-            inputs.add(_joystick_sample(read_input))
+            _joystick_sample(read_input)
             reader = CompositeReader(transport)
             listed = reader.list_directory('PSP/GAME/PSPDockCompositeTest')
             if not any(x['name'] == 'PROBE.DAT' and x['size'] == PROBE_SIZE and
@@ -98,7 +110,18 @@ def run_probe(output_directory: Path, *, rounds: int = 4,
             started = time.monotonic()
             for number in range(rounds):
                 def progress(current, total):
-                    inputs.add(_joystick_sample(read_input))
+                    # Spread actual file reads over the observation interval.
+                    # The PSP still owns the file and another READ/EOF follows
+                    # this callback. Do not append a joystick-only waiting period
+                    # after BULK is finished and call it simultaneous input.
+                    deadline = started + min_duration_seconds * (number + current / total) / rounds
+                    while True:
+                        inputs.add(_joystick_sample(read_input))
+                        report['gamepad_samples_during_transfer'] += 1
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            break
+                        time.sleep(min(0.02, remaining))
                 result = reader.copy_to_pc(
                     PROBE_PATH, root / ('probe-' + str(number + 1) + '.dat'),
                     expected_sha256=PROBE_SHA256, expected_size=PROBE_SIZE,
@@ -110,13 +133,16 @@ def run_probe(output_directory: Path, *, rounds: int = 4,
             after = matching_hid_session(hid_probe(), transport.firmware.session)
             if before.casefold() != after.casefold() or storage_present():
                 raise WinUSBError('Cambió el mando o reapareció almacenamiento durante BULK.')
-            inputs.add(_joystick_sample(read_input))
+            _joystick_sample(read_input)
+            motion = len(inputs) > 1
+            hardware = getattr(transport.backend, 'hardware', False) is True
             report.update({
-                'result': 'verified',
-                'usb_backend': 'winusb' if getattr(transport.backend, 'hardware', False) else 'test',
-                'physical_usb_transfer_verified': getattr(transport.backend, 'hardware', False) is True,
+                'result': 'verified' if motion else 'motion_not_observed',
+                'usb_backend': 'winusb' if hardware else 'test',
+                'physical_usb_transfer_verified': hardware,
                 'same_hid_bulk_session': True,
-                'gamepad_motion_observed': len(inputs) > 1,
+                'gamepad_motion_observed': motion,
+                'simultaneous_hid_bulk_verified': hardware and motion,
                 'different_gamepad_states': len(inputs),
                 'seconds': round(time.monotonic() - started, 4),
                 'probe_sha256': PROBE_SHA256,
@@ -128,6 +154,7 @@ def run_probe(output_directory: Path, *, rounds: int = 4,
     finally:
         # Failed evidence is retained too. Do not infer success from the
         # existence of a report file or a partially completed round.
+        report['different_gamepad_states'] = len(inputs)
         with (root / 'evidence.json').open('x', encoding='utf-8') as file:
             json.dump(report, file, ensure_ascii=False, indent=2)
             file.write('\n')
@@ -139,6 +166,8 @@ def main() -> int:
     parser.add_argument('--run', action='store_true', help='Ejecutar prueba explícita; sin esto solo enumera')
     parser.add_argument('--output', type=Path, help='Carpeta NUEVA en un disco fijo del PC')
     parser.add_argument('--rounds', type=int, default=4)
+    parser.add_argument('--min-duration-seconds', type=float, default=8,
+                        help='Distribuir las lecturas durante este intervalo para comprobar botones')
     args = parser.parse_args()
     try:
         if not args.run:
@@ -150,9 +179,10 @@ def main() -> int:
             raise ValueError('El ensayo físico solo se ejecuta en Windows fuera de los tests.')
         if args.output is None:
             raise ValueError('Indica --output con una carpeta nueva del PC.')
-        result = run_probe(args.output, rounds=args.rounds)
+        result = run_probe(args.output, rounds=args.rounds,
+                           min_duration_seconds=args.min_duration_seconds)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0
+        return 0 if result['result'] == 'verified' else 2
     except (OSError, ValueError, RuntimeError) as exc:
         print('Prueba no completada:', str(exc))
         return 1

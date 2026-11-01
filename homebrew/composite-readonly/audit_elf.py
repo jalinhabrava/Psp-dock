@@ -80,7 +80,7 @@ def require(condition, message):
 
 def audit(raw: bytes) -> dict:
     elf = MipsElf(raw)
-    for speed, packet in (('hi', 512), ('full', 64)):
+    for speed, packet, interval in (('hi', 512, 6), ('full', 64, 4)):
         interfaces = 'pdc_interfaces_' + speed
         endpoints = 'pdc_endpoints_' + speed
         settings = 'pdc_settings_' + speed
@@ -89,7 +89,7 @@ def audit(raw: bytes) -> dict:
                 'USB 2.0 must be declared even at full speed for Windows OS descriptors')
         require(device[4:8] == b'\0\0\0\x40' and device[17] == 1,
                 'Composite parent class, EP0 size or configuration count invalid')
-        require(struct.unpack_from('<H', device, 12)[0] == 0x0203, 'Wrong reviewed firmware revision')
+        require(struct.unpack_from('<H', device, 12)[0] == 0x0204, 'Wrong reviewed firmware revision')
         table = struct.unpack('<6I', elf.data(settings, 24))
         expected = (elf.address(interfaces), 0, 1, elf.address(interfaces) + 24, 0, 1)
         require(table == expected, 'Need two per-interface settings records, not two descriptor pointers')
@@ -107,6 +107,7 @@ def audit(raw: bytes) -> dict:
         require(struct.unpack_from('<II', desc, 16) == (elf.address('pdc_hid_descriptor'), 9), 'HID extra descriptor missing')
         require(desc[48:] == bytes(24), 'Interface sentinel corrupted')
         eps = elf.data(endpoints, 64)
+        require(eps[6] == interval, 'HID polling interval must declare 4 ms at both speeds')
         for i, (address, kind, mps) in enumerate(((129,3,8),(130,2,packet),(3,2,packet))):
             require(eps[i*16:i*16+6] == struct.pack('<BBBBH', 7,5,address,kind,mps),
                     'Endpoint direction/type/maximum packet mismatch')
@@ -119,7 +120,7 @@ def audit(raw: bytes) -> dict:
     forbidden = ('sceIoWrite','sceIoRemove','sceIoRename','sceIoMkdir','sceIoRmdir',
                  'sceIoDevctl','sceIoFormat')
     require(not any(name in elf.symbols for name in forbidden), 'Unexpected filesystem write import')
-    return {'elf_machine': 'MIPS', 'revision': '0203', 'interfaces': 2,
+    return {'elf_machine': 'MIPS', 'revision': '0204', 'interfaces': 2,
             'settings_records_per_speed': 2, 'descriptor_tables_verified': True,
             'physical_enumeration_verified': False}
 

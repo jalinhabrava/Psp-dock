@@ -15,7 +15,7 @@ from ctypes import wintypes as W
 from dataclasses import dataclass, asdict
 import os
 
-from bridge_hid import VID, PID
+from bridge_hid import VID, PID, MSC_TEST_PID
 from hid_winmm_buttons import (
     JOYCAPSW, JOYINFOEX, JoyProbeError, decode_joyinfo,
     matching_joystick_capabilities,
@@ -86,6 +86,11 @@ def normalize_psp_joystick(*, buttons: int, pov: int, x: int, y: int,
 class PSPWinMMReader:
     """One short host-only joystick snapshot; safe under concurrent HTTP GETs."""
 
+    def __init__(self, *, expected_product: int = PID):
+        if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID):
+            raise JoyProbeError('PID PSP Dock no reconocido.')
+        self.expected_product = expected_product
+
     def read(self) -> dict:
         if os.name != "nt":
             return idle("WinMM solo está disponible en Windows.")
@@ -107,8 +112,8 @@ class PSPWinMMReader:
                 })
                 ranges[index] = ((caps.wXmin, caps.wXmax),
                                  (caps.wYmin, caps.wYmax))
-        target = matching_joystick_capabilities(rows)
-        if target["vendor_id"] != VID or target["product_id"] != PID:
+        target = matching_joystick_capabilities(rows, expected_product=self.expected_product)
+        if target["vendor_id"] != VID or target["product_id"] != self.expected_product:
             raise JoyProbeError("El mando no es PSP Dock HID PDK1.")
         if target["buttons"] < 8:
             raise JoyProbeError("El descriptor de mando PSP no tiene ocho botones.")

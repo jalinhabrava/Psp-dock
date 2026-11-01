@@ -32,7 +32,7 @@ el adaptador FuSa que ya funciona en esta PSP; no se copió código UVC.
 Se anuncia USB 2.0 también a velocidad full-speed: versión USB no es
 lo mismo que velocidad del enlace. Windows puede no consultar los
 Microsoft OS Descriptors si el dispositivo dice USB 1.0/1.1. La revisión
-del dispositivo es **0x0203** y el cliente Windows exige esa revisión.
+del dispositivo es **0x0204** y el cliente Windows exige esa revisión.
 
 Los buffers USB pertenecen al controlador hasta completar/cancelar
 las peticiones. La recepción OUT se reclama atómicamente; EP0 termina
@@ -109,9 +109,32 @@ python psp_composite_package.py --prepare C:\PSP-Dock-Tests\paquete-nuevo
 ```
 
 El paquete incluye EBOOT, PRX, PROBE.DAT y licencia. Verifica hashes y el
-ELF antes de prepararlo. **No toca la Memory Stick**. Antes del ensayo
-se necesita una tarjeta de pruebas respaldada y una recuperación PSP
-conocida; no sustituir `PSP/GAME/PSPDock` ni añadir plugins de arranque.
+ELF antes de prepararlo. Este paso no toca la Memory Stick.
+
+Para preparar la ejecución física existe un instalador separado:
+
+```powershell
+python psp_composite_install.py --drive G:\ --package C:\PSP-Dock-Tests\paquete-nuevo --backup C:\PSP-Dock-Backups\snapshot-verificado --install --receipt C:\PSP-Dock-Tests\instalacion.json
+```
+
+Comprueba la identidad Sony y del volumen, relee el respaldo y coteja los
+archivos críticos con su estado actual. Solo crea la carpeta nueva
+`PSP/GAME/PSPDockCompositeTest`, verifica todos sus hashes y rechaza un
+destino existente. La aplicación estable, los plugins y las partidas
+no forman parte de la instalación. Copiar el ensayo no lo ejecuta.
+
+El observador de Windows puede esperar a que se abra el homebrew y ejecutar
+una sola prueba agrupada al aparecer la interfaz:
+
+```powershell
+python psp_composite_watch.py --wait --seconds 1800 --rounds 32 --output C:\PSP-Dock-Tests\ensayo-nuevo
+```
+
+Guarda el estado PnP incluso si WinUSB no llega a aparecer, además de la
+evidencia de transferencia cuando existe. Un fallo termina el ensayo,
+sin reinstalar drivers ni repetir comandos de archivos. La pantalla PSP
+muestra contadores de peticiones de control y los campos del último
+SETUP para ayudar a localizar fallos de enumeración.
 
 ## Pendientes que solo puede resolver la prueba física
 

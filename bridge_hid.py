@@ -18,6 +18,7 @@ import struct
 from contextlib import contextmanager
 
 VID, PID = 0x054C, 0x01CB
+MSC_TEST_PID = 0x01CC
 MAGIC = b"PDK1"
 VERSION = 1
 STATUS, REQUEST_STORAGE = 1, 2
@@ -27,6 +28,13 @@ WINDOWS_REPORT_SIZE = FEATURE_SIZE + 1
 FLAG_CONNECTED, FLAG_PENDING, FLAG_CONSUMED = 1, 2, 4
 _FRAME = struct.Struct("<4sBBBB16sIi")
 _EXPECTED_PATH = re.compile(r"^\\\\\?\\hid#vid_054c&pid_01cb(?:&|#)", re.IGNORECASE)
+
+
+def expected_product_pattern(expected_product: int = PID):
+    """Allow the stable controller or the explicitly selected MSC diagnostic."""
+    if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID):
+        raise BridgeHidError('PID PSP Dock no reconocido.')
+    return re.compile(r'^\\\\\?\\hid#vid_054c&pid_' + f'{expected_product:04x}' + r'(?:&|#)', re.I)
 
 
 class BridgeHidError(RuntimeError):
@@ -113,7 +121,9 @@ class HIDP_CAPS(C.Structure):
 
 
 class _WindowsHid:
-    def __init__(self) -> None:
+    def __init__(self, *, expected_product: int = PID) -> None:
+        self.expected_product = expected_product
+        self.expected_path = expected_product_pattern(expected_product)
         if os.name != "nt":
             raise BridgeHidError("La consulta HID nativa requiere Windows")
         self.hid = C.WinDLL("hid", use_last_error=True)
@@ -174,7 +184,7 @@ class _WindowsHid:
                         required.value, None, None):
                     raise self._failure("Leer ruta HID")
                 path = C.wstring_at(C.addressof(detail) + 4)
-                if _EXPECTED_PATH.match(path):
+                if self.expected_path.match(path):
                     paths.append(path)
         finally:
             self.setup.SetupDiDestroyDeviceInfoList(devices)
@@ -182,8 +192,10 @@ class _WindowsHid:
 
     @contextmanager
     def open(self, path: str, write: bool = False):
-        if not _EXPECTED_PATH.match(path):
-            raise BridgeHidError("La ruta no corresponde a VID054c/PID01cb HID")
+        if not self.expected_path.match(path):
+            raise BridgeHidError("La ruta no corresponde al VID/PID HID seleccionado")
+        if write and self.expected_product != PID:
+            raise BridgeHidError('El diagnostico MSC solo admite consultas HID.')
         handle = self.kernel.CreateFileW(path, 0xC0000000 if write else 0, 3, None, 3, 0, None)
         if handle == C.c_void_p(-1).value:
             raise self._failure("Abrir PSP HID")
@@ -192,7 +204,7 @@ class _WindowsHid:
             attrs.Size = C.sizeof(attrs)
             if not self.hid.HidD_GetAttributes(handle, C.byref(attrs)):
                 raise self._failure("Leer identidad HID")
-            if (attrs.VendorID, attrs.ProductID) != (VID, PID):
+            if (attrs.VendorID, attrs.ProductID) != (VID, self.expected_product):
                 raise BridgeHidError("VID/PID de HID inesperados")
             data = C.c_void_p()
             if not self.hid.HidD_GetPreparsedData(handle, C.byref(data)):
@@ -217,6 +229,8 @@ class _WindowsHid:
         return decode_status(buf.raw)
 
     def set(self, handle, report: bytes) -> None:
+        if self.expected_product != PID:
+            raise BridgeHidError('El diagnostico MSC no admite ordenes HID de retorno.')
         if len(report) != WINDOWS_REPORT_SIZE:
             raise BridgeHidError("Longitud de comando no válida")
         buf = C.create_string_buffer(report, len(report))
@@ -224,11 +238,12 @@ class _WindowsHid:
             raise self._failure("HidD_SetFeature; entrega no confirmada, comprobar estado USB")
 
 
-def probe() -> dict:
+def probe(*, expected_product: int = PID) -> dict:
     """Read-only diagnostic. Rejected candidates are errors, never bridges."""
+    expected_product_pattern(expected_product)
     if os.name != "nt":
         return {"supported": False, "devices": [], "errors": ["HID nativo requiere Windows"]}
-    api = _WindowsHid()
+    api = _WindowsHid() if expected_product == PID else _WindowsHid(expected_product=expected_product)
     devices, errors = [], []
     for path in api.paths():
         try:

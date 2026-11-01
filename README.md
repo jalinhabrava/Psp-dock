@@ -1,5 +1,19 @@
 # PSP Dock · prototipo para Windows
 
+## Prueba USBSTOR + HID 0205 con gráficos XMB
+
+La rama del controlador compuesto incorpora una prueba de almacenamiento
+USB estándar y mando simultáneos, instalada en `PSP/GAME/PSPDockStorageTest`.
+Incluye el thumbnail, la presentación y el fondo de PSP Dock dentro del
+EBOOT. La compilación PSPDEV, los tests de transporte y la auditoría de
+binarios pasan; **abrirla y comprobar la enumeración en la PSP sigue
+pendiente**. El disco es ficticio, de 512 KiB y solo lectura: aún no ofrece
+acceso a la Memory Stick real ni devolución de partidas.
+
+Procedimiento: [USBSTOR + HID 0205](homebrew/composite-mscdemo/README.md).
+Evidencia y diferencias con el prototipo WinUSB:
+[validación del controlador](COMPOSITE-DRIVER-VALIDATION.md).
+
 ## Estado de integración — 1 de noviembre de 2026
 
 Las PR #1 y #2 están fusionadas en main. La instalación LIVE de Windows

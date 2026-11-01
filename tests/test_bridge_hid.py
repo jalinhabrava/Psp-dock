@@ -3,7 +3,7 @@ import struct
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import bridge_hid as hid
 
@@ -72,6 +72,48 @@ class BridgeHidTests(unittest.TestCase):
         for path in (PATH.replace("054c", "054d"), PATH.replace("01cb", "01cba"),
                      PATH.replace("hid#", "usb#"), r"\\.\PhysicalDrive1", "x" + PATH):
             self.assertFalse(hid._EXPECTED_PATH.match(path))
+
+    def test_msc_diagnostic_pid_requires_explicit_read_only_selection(self):
+        msc_path = PATH.replace('pid_01cb', 'pid_01cc')
+        self.assertTrue(hid.expected_product_pattern().match(PATH))
+        self.assertFalse(hid.expected_product_pattern().match(msc_path))
+        self.assertTrue(hid.expected_product_pattern(0x01CC).match(msc_path))
+        self.assertFalse(hid.expected_product_pattern(0x01CC).match(PATH))
+        for product in (True, 0x02D2, '01CC', -1):
+            with self.assertRaises(hid.BridgeHidError):
+                hid.expected_product_pattern(product)
+        api = FakeHid(hid.decode_status(status_report()))
+        api.paths = lambda: [msc_path]
+        with patch.object(hid.os, 'name', 'nt'), \
+             patch.object(hid, '_WindowsHid', return_value=api) as constructor:
+            result = hid.probe(expected_product=0x01CC)
+        constructor.assert_called_once_with(expected_product=0x01CC)
+        self.assertEqual(result['devices'][0]['path'], msc_path)
+        self.assertEqual(api.sent, [])
+
+    def test_msc_native_api_rejects_wrong_pid_and_never_permits_mutation(self):
+        msc_path = PATH.replace('pid_01cb', 'pid_01cc')
+        api = hid._WindowsHid.__new__(hid._WindowsHid)
+        api.expected_product = 0x01CC
+        api.expected_path = hid.expected_product_pattern(0x01CC)
+        api.kernel, api.hid = Mock(), Mock()
+        api.kernel.CreateFileW.return_value = 123
+        def attrs(_handle, pointer):
+            value = hid.C.cast(pointer, hid.C.POINTER(hid.HIDD_ATTRIBUTES)).contents
+            value.VendorID, value.ProductID = 0x054C, 0x01CB
+            return True
+        api.hid.HidD_GetAttributes.side_effect = attrs
+        with self.assertRaises(hid.BridgeHidError):
+            with api.open(msc_path):
+                self.fail('Wrong PID reached the feature read')
+        api.kernel.CloseHandle.assert_called_once_with(123)
+        api.hid.HidD_GetPreparsedData.assert_not_called()
+        with self.assertRaises(hid.BridgeHidError):
+            with api.open(msc_path, write=True):
+                self.fail('Diagnostic opened for mutation')
+        with self.assertRaises(hid.BridgeHidError):
+            api.set(123, status_report())
+        api.hid.HidD_SetFeature.assert_not_called()
 
     def test_session_is_rechecked_before_mutation_on_same_handle(self):
         api = FakeHid(hid.decode_status(status_report()))

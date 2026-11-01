@@ -1,8 +1,8 @@
 """Build a verified PC-only test package, never install it onto a PSP.
 
 The original PSP Dock folder, firmware flash and plugins are not touched.
-This package is for a single reversible read-only hardware test on a
-separate, backed-up Memory Stick. Execution remains a physical PSP action.
+This package is for a single reversible read-only hardware test in a
+separate folder on a backed-up Memory Stick. Execution is a physical PSP action.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
     manifest = {
         'schema': 'pspdock-composite-test-package-v1',
         'built_utc': datetime.now(timezone.utc).isoformat(),
-        'revision': '0203', 'folder': REMOTE_FOLDER,
+        'revision': '0204', 'folder': REMOTE_FOLDER,
         'read_only_protocol': True, 'save_return_supported': False,
         'installed_on_psp': False, 'hardware_execution_verified': False,
         'session_time_limit': None, 'compiled_abi': abi,
@@ -78,7 +78,8 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
     (stage / 'LEER-ANTES-DE-PROBAR.txt').write_text(
         'PSP Dock Composite TEST — solo lectura\n\n'
         'Este paquete NO ha sido instalado ni ejecutado en la PSP.\n'
-        'Usar una Memory Stick de pruebas respaldada. No sustituir PSP/GAME/PSPDock.\n'
+        'Usar una Memory Stick respaldada y el instalador de carpeta nueva.\n'
+        'No sustituir PSP/GAME/PSPDock.\n'
         'No modificar PLUGINS.TXT, ARK, flash ni drivers de Windows.\n'
         'El controlador mantiene HID y archivos en dos interfaces del mismo USB.\n'
         'No monta la Memory Stick como disco de Windows y no escribe partidas.\n'
@@ -92,7 +93,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
         raise FileExistsError('El destino apareció durante el empaquetado.')
     stage.rename(target)
     verify_package(target)
-    return {'package': str(target), 'files': len(FILES), 'revision': '0203',
+    return {'package': str(target), 'files': len(FILES), 'revision': '0204',
             'installed_on_psp': False, 'hardware_execution_verified': False}
 
 
@@ -100,7 +101,7 @@ def verify_package(path: Path) -> dict:
     root = Path(path)
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
     if (manifest.get('schema') != 'pspdock-composite-test-package-v1' or
-            manifest.get('folder') != REMOTE_FOLDER or manifest.get('revision') != '0203' or
+            manifest.get('folder') != REMOTE_FOLDER or manifest.get('revision') != '0204' or
             set(manifest.get('files', {})) != set(FILES)):
         raise ValueError('No es el paquete de prueba de PSP Dock revisado.')
     directory = root / REMOTE_FOLDER

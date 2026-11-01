@@ -1,5 +1,76 @@
 # Controlador compuesto PSP Dock: evidencia y siguiente ensayo
 
+## Estado actual: USBSTOR + HID 0205 preparado e instalado
+
+La nueva prueba **PSP Dock USB Storage + HID TEST** está copiada y
+releída por SHA-256 en `PSP/GAME/PSPDockStorageTest`. Todavía requiere
+que el usuario la abra físicamente en la consola; no se ha verificado
+su enumeración ni el tráfico simultáneo en hardware.
+
+La prueba incorpora el **thumbnail ICON0, la presentación PIC0 y el fondo
+PIC1** existentes de PSP Dock dentro del EBOOT. Se compararon sus bytes
+incrustados y dimensiones con los recursos originales antes de instalar.
+El instalador publica únicamente una carpeta nueva y exige identidad
+de PSP, backup crítico vigente e integridad del paquete.
+
+| Variante | Interfaces | Contenido accesible | Estado |
+|---|---|---|---|
+| 0205, `054C:01CC` | HID + USBSTOR nativo, MSC `08/06/50` | Disco FAT12 ficticio de 512 KiB | Compilada, auditada e instalada; ejecución física pendiente |
+| 0204, `054C:01CB` | HID + interfaz de archivos WinUSB | Servicio de archivos de solo lectura | Compilada y auditada; no instalada en esta prueba |
+
+El identificador `01CC` separa la asociación de drivers de Windows del
+mando estable y del prototipo WinUSB. La identidad emitida por el bus
+Sony solo se confirmará mediante la captura física de PnP.
+
+### Evidencia de esta revisión
+
+- Compilación PSPDEV de ambas variantes con avisos tratados como errores.
+- **104 pruebas focales en Windows superadas**, incluidas las ABI nativas
+  HID/WinMM, paquetes, instalación, correlación, interrupciones y diagnósticos.
+  La última revisión espera a que HID termine de enumerar antes de abrir
+  la única aceptación: 100 casos iniciales y 21 de MSC reejecutados tras
+  añadir cuatro casos de llegada tardía/ambigüedad de las interfaces.
+- Motor MSC: 13 casos BOT, FAT12/SCSI, límites, residuos y **50.000 entradas
+  malformadas**, también bajo AddressSanitizer y UndefinedBehaviorSanitizer.
+- Wrapper USB real incluido en un harness con cinco escenarios asíncronos:
+  varios buffers, completions pendientes, reset, cancelación y errores.
+  La revisión corrigió dos carreras que podían perder una recepción o
+  repetir un bloque IN; el harness cubre ambas.
+- Auditoría del ELF MIPS: tablas Sony por interfaz, revisión y endpoints;
+  **ningún símbolo/import `sceIo*` ni `IoFileMgr` en el kernel MSC**.
+- Auditoría USER y verificación exacta de las tres secciones gráficas del PBP.
+- Parser FAT12 independiente: `PROBE.DAT` de 150.003 bytes y `SESSION.BIN`
+  de 16 bytes comprobados en la imagen de referencia generada.
+- Backup crítico revalidado antes de publicar: 42 archivos, 4.908.072 bytes.
+- Paquete instalado: cuatro archivos, 319.989 bytes, relectura SHA-256 correcta.
+
+Hashes de los binarios instalados:
+
+```text
+EBOOT.PBP    8b4ad4643d287102e069b4a1866af5ecdde9172577eccb0e0d880be6577d3afa
+dockmsc.prx  cf1ef97f32ef87862c424435bdfb931da7daa448441b1bef45ce9315fbfcc689
+```
+
+### Alcance que queda por demostrar
+
+El disco es generado en memoria y de solo lectura. **No representa la
+Memory Stick real y no ofrece juegos, partidas ni devolución de saves.**
+La siguiente prueba debe confirmar que Windows monta USBSTOR, recibe HID
+y lee los bytes esperados a la vez. El monitor usa archivos sin caché,
+exige mismo padre USB y nonce, y solo acepta cambios de controles
+observados durante la lectura. Un hash correcto sin movimiento no pasa
+la aceptación combinada.
+
+Las pruebas de software no establecen cómo el bus Sony maneja las colas
+en endpoints detenidos, la terminación de un envío de 64 KiB ni el estado
+EP0 diferido del reset BOT. Esos puntos quedan documentados como pendientes
+de hardware; no se han añadido parches de firmware ni APIs supuestas.
+
+Procedimiento y comandos vigentes:
+[USBSTOR + HID 0205](homebrew/composite-mscdemo/README.md).
+
+## Ruta alternativa WinUSB: revisión y evidencia previa
+
 ## Qué ha cambiado respecto al prototipo de descriptores
 
 La rama `feat/composite-usb-driver` tiene ahora un **controlador kernel
@@ -44,7 +115,7 @@ la estructura antigua y un endpoint con dirección incorrecta.
 ## Evidencia obtenida en PC
 
 La compilación PSPDEV produce `dockcomposite.prx` y un EBOOT separado,
-revisión 0x0203, con avisos de compilación tratados como errores.
+revisión 0x0204, con avisos de compilación tratados como errores.
 El build incluye:
 
 1. Vectores SHA-256 y pruebas nativas de parser, directorios, sesión y EOF.

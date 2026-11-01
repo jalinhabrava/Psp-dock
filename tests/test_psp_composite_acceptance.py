@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from psp_composite_acceptance import run_probe, matching_hid_session
 from psp_winusb_transport import WinUSBTransport, WinUSBError
@@ -49,10 +50,62 @@ class CombinedAcceptanceTests(unittest.TestCase):
         self.assertTrue(report['same_hid_bulk_session'])
         self.assertTrue(report['gamepad_motion_observed'])
         self.assertFalse(report['physical_usb_transfer_verified'])
+        self.assertFalse(report['simultaneous_hid_bulk_verified'])
         self.assertFalse(report['save_return_supported'])
         self.assertFalse(report['fat_volume_identity_verified'])
         self.assertEqual(json.loads((dest / 'evidence.json').read_text())['usb_backend'], 'test')
         self.assertEqual(self.fake.closed, 1)
+
+    def test_no_motion_cannot_verify_simultaneous_gamepad_and_bulk(self):
+        self.fake.hardware = True
+        constant = lambda: {'connected': True, 'source': 'psp_winmm', 'button_mask': 0}
+        report = run_probe(self.root / 'still', rounds=1, enumerate_bulk=lambda: [PATH],
+                           open_transport=self.opener, hid_probe=hid_report,
+                           read_input=constant, storage_present=lambda: False)
+        self.assertEqual(report['result'], 'motion_not_observed')
+        self.assertTrue(report['physical_usb_transfer_verified'])
+        self.assertFalse(report['gamepad_motion_observed'])
+        self.assertFalse(report['simultaneous_hid_bulk_verified'])
+
+    def test_motion_only_before_or_after_transfers_is_not_accepted(self):
+        def sample():
+            # The LIST has not completed for the first sample, and EOF has
+            # completed for the last. Neither is movement during copying.
+            outside_copy = self.fake.count < 3 or self.fake.position == 150003 and self.fake.count >= 7
+            return {'connected': True, 'source': 'psp_winmm',
+                    'button_mask': 1 if outside_copy else 0}
+        report = run_probe(self.root / 'outside', rounds=1, enumerate_bulk=lambda: [PATH],
+                           open_transport=self.opener, hid_probe=hid_report,
+                           read_input=sample, storage_present=lambda: False)
+        self.assertFalse(report['gamepad_motion_observed'])
+        self.assertEqual(report['result'], 'motion_not_observed')
+
+    def test_minimum_duration_keeps_sampling_between_file_reads(self):
+        clock = [0.0]
+        waits = []
+        def sleep(seconds):
+            waits.append(seconds)
+            clock[0] += seconds
+        def sample():
+            return {'connected': True, 'source': 'psp_winmm',
+                    'button_mask': int(clock[0] > 0.2)}
+        with patch('psp_composite_acceptance.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('psp_composite_acceptance.time.sleep', side_effect=sleep):
+            report = run_probe(self.root / 'paced', rounds=2, min_duration_seconds=0.4,
+                               enumerate_bulk=lambda: [PATH], open_transport=self.opener,
+                               hid_probe=hid_report, read_input=sample,
+                               storage_present=lambda: False)
+        self.assertEqual(report['result'], 'verified')
+        self.assertGreaterEqual(report['seconds'], 0.4)
+        self.assertGreaterEqual(report['gamepad_samples_during_transfer'], 20)
+        self.assertTrue(all(0 < wait <= 0.02 for wait in waits))
+        self.assertEqual(report['completed_rounds'], 2)
+
+    def test_invalid_minimum_duration_opens_no_device(self):
+        for duration in (-1, 31, True, float('nan'), float('inf'), '8'):
+            with self.subTest(duration=duration), self.assertRaises(ValueError):
+                run_probe(self.root / 'invalid', min_duration_seconds=duration)
+        self.assertFalse(self.fake.opened)
 
     def test_foreign_hid_session_never_sends_bulk_commands(self):
         with self.assertRaises(WinUSBError):

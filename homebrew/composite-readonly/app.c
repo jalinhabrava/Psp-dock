@@ -9,7 +9,7 @@
 #include <string.h>
 #include "pdc_common.h"
 
-PSP_MODULE_INFO("PSPDockCompositeTest",PSP_MODULE_USER,2,3);
+PSP_MODULE_INFO("PSPDockCompositeTest",PSP_MODULE_USER,2,4);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdcSharedStatus state;
@@ -40,7 +40,7 @@ int main(void) {
     SceUID module;
     int result,exit_status=-1,release_seen=0,hold=0,previous=-1;
     pspDebugScreenInit();
-    pspDebugScreenPrintf("PSP DOCK COMPOSITE - READ ONLY TEST\n\n");
+    pspDebugScreenPrintf("PSP DOCK COMPOSITE 0204 - READ ONLY TEST\n\n");
     pspDebugScreenPrintf("Separate test; keeps your normal PSP Dock intact.\n");
     pspDebugScreenPrintf("No save writes, no flash writes, no USB storage.\n");
     pspDebugScreenPrintf("Start with USB storage OFF and cable UNPLUGGED.\n\n");
@@ -70,12 +70,18 @@ int main(void) {
         if((pad.Buttons&(PSP_CTRL_START|PSP_CTRL_SELECT))==(PSP_CTRL_START|PSP_CTRL_SELECT)) {
             if(++hold>=10)state.request_stop=1;
         }else hold=0;
-        if(previous!=(int)state.stage || state.stage==PDC_STAGE_CONNECTED) {
+        if(previous!=(int)state.stage || state.stage==PDC_STAGE_CONNECTED ||
+           state.stage==PDC_STAGE_READY || state.stage==PDC_STAGE_ERROR) {
             pspDebugScreenSetXY(0,9);
             pspDebugScreenPrintf("%-48s\n",stage_name(state.stage));
             pspDebugScreenPrintf("HID %u  BULK %u  Bytes %u            \n",
                 (unsigned)state.hid_reports,(unsigned)state.bulk_commands,(unsigned)state.bytes_read);
             pspDebugScreenPrintf("Error %08X  Hold START+SELECT to stop.\n",(unsigned)state.error);
+            pspDebugScreenPrintf("Control %u  MS string %u  Compat %u  GUID %u\n",
+                (unsigned)state.ctrl_requests,(unsigned)state.ctrl_os_string,
+                (unsigned)state.ctrl_os_compat,(unsigned)state.ctrl_os_properties);
+            pspDebugScreenPrintf("Last setup %08X  Value/index %08X\n",
+                (unsigned)state.last_setup,(unsigned)state.last_value_index);
             previous=(int)state.stage;
         }
         if(state.safe_to_unload) {

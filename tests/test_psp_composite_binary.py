@@ -51,6 +51,14 @@ class CompiledDescriptorTests(unittest.TestCase):
         with self.assertRaises(audit_module.ElfAuditError):
             audit_module.audit(bytes(changed))
 
+    def test_hid_interval_must_match_four_ms_at_each_speed(self):
+        for speed in ('hi', 'full'):
+            changed=bytearray(self.raw)
+            offset=self.elf.file_offset('pdc_endpoints_' + speed)
+            changed[offset+6]=10
+            with self.assertRaisesRegex(audit_module.ElfAuditError, 'polling interval'):
+                audit_module.audit(bytes(changed))
+
 
 if __name__=='__main__':
     unittest.main()

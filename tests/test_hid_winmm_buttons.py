@@ -19,6 +19,16 @@ class HidWinmmButtonTests(unittest.TestCase):
             with self.assertRaises(joy.JoyProbeError):
                 joy.matching_joystick_capabilities(rows)
 
+    def test_msc_and_stable_gamepads_are_selected_independently(self):
+        stable = {'index': 0, 'vendor_id': 0x054C, 'product_id': 0x01CB}
+        msc = {'index': 1, 'vendor_id': 0x054C, 'product_id': 0x01CC}
+        self.assertEqual(joy.matching_joystick_capabilities([stable, msc]), stable)
+        self.assertEqual(joy.matching_joystick_capabilities([stable, msc], expected_product=0x01CC), msc)
+        with self.assertRaises(joy.JoyProbeError):
+            joy.matching_joystick_capabilities([stable], expected_product=0x01CC)
+        with self.assertRaises(joy.JoyProbeError):
+            joy.matching_joystick_capabilities([msc])
+
     def test_buttons_and_pov_are_decoded_without_inference(self):
         idle = joy.decode_joyinfo(x=32767, y=32767, z=32767, r=32767,
                                   buttons=0, pov=0xFFFF)

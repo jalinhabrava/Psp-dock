@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import psp_launcher_input as controller
 from hid_winmm_buttons import JoyProbeError
 
@@ -60,6 +60,36 @@ class WindowsLauncherControllerTests(unittest.TestCase):
         self.assertFalse(controller.idle()["connected"])
         with patch.object(controller.os,"name","posix"):
             self.assertEqual(controller.PSPWinMMReader().read()["connected"],False)
+
+    def test_explicit_msc_product_does_not_read_the_stable_controller(self):
+        winmm = Mock()
+        winmm.joyGetNumDevs.return_value = 2
+        def capabilities(index, pointer, size):
+            caps = controller.C.cast(pointer, controller.C.POINTER(controller.JOYCAPSW)).contents
+            caps.wMid = 0x054C
+            caps.wPid = 0x01CB if index == 0 else 0x01CC
+            caps.wNumButtons = 8
+            caps.wXmin = caps.wYmin = 0
+            caps.wXmax = caps.wYmax = 65535
+            return 0
+        def read(index, pointer):
+            info = controller.C.cast(pointer, controller.C.POINTER(controller.JOYINFOEX)).contents
+            info.dwXpos = info.dwYpos = 32767
+            info.dwPOV = 0xFFFF
+            info.dwButtons = 1 << index
+            return 0
+        winmm.joyGetDevCapsW.side_effect = capabilities
+        winmm.joyGetPosEx.side_effect = read
+        with patch.object(controller.os, 'name', 'nt'), \
+             patch.object(controller.C, 'WinDLL', return_value=winmm, create=True):
+            stable = controller.PSPWinMMReader().read()
+            msc = controller.PSPWinMMReader(expected_product=0x01CC).read()
+        self.assertEqual(stable['button_mask'], 1)
+        self.assertEqual(msc['button_mask'], 2)
+        self.assertEqual([call.args[0] for call in winmm.joyGetPosEx.call_args_list], [0, 1])
+        for product in (True, 0x02D2, '01CC'):
+            with self.assertRaises(JoyProbeError):
+                controller.PSPWinMMReader(expected_product=product)
 
 if __name__ == "__main__":
     unittest.main()

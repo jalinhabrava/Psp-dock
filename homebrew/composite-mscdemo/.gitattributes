@@ -1,0 +1,7 @@
+*.sh text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.py text eol=lf
+*.exp text eol=lf
+Makefile* text eol=lf
+*.PNG binary

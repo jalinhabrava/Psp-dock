@@ -74,11 +74,12 @@ static PdcDevice pdc_device_full __attribute__((aligned(64)))=PDC_DEVICE(0x0200,
 #define PDC_ENDPOINT(addr,kind,packet,interval) {.wire={.bLength=7,.bDescriptorType=5, \
     .bEndpointAddress=(addr),.bmAttributes=(kind),.wMaxPacketSize=(packet),.bInterval=(interval)}}
 static PdcEndpoint pdc_endpoints_hi[4] __attribute__((aligned(64)))={
-    PDC_ENDPOINT(PDC_HID_IN,3,8,10),PDC_ENDPOINT(PDC_BULK_IN,2,512,0),
+    /* HS interval is 2^(6-1) microframes = 4 ms, matching sampling. */
+    PDC_ENDPOINT(PDC_HID_IN,3,8,6),PDC_ENDPOINT(PDC_BULK_IN,2,512,0),
     PDC_ENDPOINT(PDC_BULK_OUT,2,512,0),{.wire={.bLength=0}}
 };
 static PdcEndpoint pdc_endpoints_full[4] __attribute__((aligned(64)))={
-    PDC_ENDPOINT(PDC_HID_IN,3,8,10),PDC_ENDPOINT(PDC_BULK_IN,2,64,0),
+    PDC_ENDPOINT(PDC_HID_IN,3,8,4),PDC_ENDPOINT(PDC_BULK_IN,2,64,0),
     PDC_ENDPOINT(PDC_BULK_OUT,2,64,0),{.wire={.bLength=0}}
 };
 #define PDC_HID_IF(ep) {.wire={.bLength=9,.bDescriptorType=4,.bInterfaceNumber=0, \

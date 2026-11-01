@@ -159,7 +159,7 @@ class CompositeClientTests(unittest.TestCase):
         self.assertEqual(backend.closed, 1)
 
     def test_exact_interface_descriptor_mismatch_blocks_all_bulk_commands(self):
-        for change in ({'pid': 0x02d2}, {'revision': 0x0104}, {'class': 3},
+        for change in ({'pid': 0x02d2}, {'revision': 0x0104}, {'revision': 0x0203}, {'class': 3},
                        {'interface': 0}, {'pipes': [(0x81, 3, 8)]}):
             fake = FakeUSB()
             fake.info.update(change)

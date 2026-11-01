@@ -15,8 +15,7 @@ import json
 import os
 import time
 
-from bridge_hid import VID, PID, probe as hid_probe
-from dock import windows_devices
+from bridge_hid import VID, PID, MSC_TEST_PID, probe as hid_probe
 
 
 class JoyProbeError(ValueError):
@@ -58,10 +57,12 @@ class JoySnapshot:
     pov: int
 
 
-def matching_joystick_capabilities(candidates: list[dict]) -> dict:
+def matching_joystick_capabilities(candidates: list[dict], *, expected_product: int = PID) -> dict:
     """Never infer a physical PSP by name alone."""
+    if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID):
+        raise JoyProbeError('PID PSP Dock no reconocido.')
     matches = [item for item in candidates
-               if item.get("vendor_id") == VID and item.get("product_id") == PID]
+               if item.get("vendor_id") == VID and item.get("product_id") == expected_product]
     if len(matches) != 1:
         raise JoyProbeError("WinMM no presenta una única PSP Type D con VID/PID esperados.")
     return matches[0]
@@ -92,6 +93,7 @@ def main() -> int:
         hid = hid_probe()
         if not hid.get("supported") or hid.get("errors") or len(hid.get("devices", [])) != 1:
             raise JoyProbeError("Falta una única sesión PDK1 HID verificada.")
+        from dock import windows_devices
         if windows_devices():
             raise JoyProbeError("Storage PSP está montado; no probar joystick simultáneo.")
         winmm = C.WinDLL("winmm", use_last_error=True)
