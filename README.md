@@ -1,5 +1,16 @@
 # PSP Dock · prototipo para Windows
 
+## Motor determinista reutilizable de texturas (investigación)
+
+La extracción de recursos se divide en **detección por firma**, **códec**,
+**decodificación de texeles GE/CLUT**, **correlación con PPSSPP** y posterior
+escalado. La ejecución no depende de un LLM ni del nombre del juego.
+La búsqueda genérica ISO/CSO reconoce DZIP y diferencia otras familias con
+nombre parecido; un DZIP detectado permanece **sin decodificar** hasta
+disponer de un códec confirmado con muestras independientes. Incluye códecs
+comunes y decodificadores reutilizables de formatos de PSP.
+Ver [arquitectura, límites y validaciones](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+
 ## Investigación de texturas Dariusburst (ULJM05558)
 
 La PR de investigación sobre el generador HD híbrido permite inventariar

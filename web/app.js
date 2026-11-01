@@ -1581,11 +1581,12 @@ function xmbHybridTextureAction(id, data) {
         }) });
   }
   const isDarius = hd.disc_id === 'ULJM05558';
-  options.push({ t: isDarius ? 'Investigar Dariusburst · ISO y DZIP' : 'Buscar imágenes dentro de ISO/CSO',
-    s: isDarius ? 'Analizar TX2, XXI y BXN sin modificar la ISO' : 'Inventario offline: sin hashes PPSSPP',
+  options.push({ t: isDarius ? 'Investigar Dariusburst · ISO y DZIP' : 'Analizar formatos ISO/CSO',
+    s: isDarius ? 'Analizar TX2, XXI y BXN sin modificar la ISO' :
+      'Detectar familias, formatos gráficos y compresiones conocidas sin usar IA',
     run: () => xmbConfirm('¿Inspeccionar la copia ISO/CSO del PC?<small>' +
       (isDarius ? 'Se clasificarán contenedores DZIP y sus tamaños declarados, sin afirmar haberlos descomprimido. ' :
-        'Se buscarán PNG, JPEG y otros recursos reconocibles. ') +
+        'Se buscarán PNG, JPEG y contenedores reconocibles por firma; las variantes no compatibles no se decodificarán. ') +
       'No se generarán hashes de PPSSPP sin evidencia.</small>',
       false, async () => {
         if (await mutate('/api/hd-iso-scan', { id },
@@ -1642,6 +1643,7 @@ function xmbGraphicsRows(id) {
         (hd.enabled ? 'Activo' : 'Desactivado') + ' · ' +
         (hd.generated || 0) + ' texturas HD / ' + (hd.dumped || 0) + ' capturadas' +
         ' · ' + (hd.iso_candidates || 0) + ' candidatos ISO sin mapear' +
+        (hd.iso_dzip_detected ? ' · ' + hd.iso_dzip_detected + ' DZIP sin decodificador' : '') +
         (hd.worker?.active ? ' · procesando' : '') +
         (hd.iso_scan?.active ? ' · explorando ISO' : '');
       rows.push({ key: 'hybrid-hd', t: 'Generador HD híbrido', icon: 'hd',
@@ -1652,6 +1654,8 @@ function xmbGraphicsRows(id) {
         const snaps = re.capture || {};
         rows.push({ key: 'darius-re', t: 'Ingeniería inversa · Dariusburst', icon: 'info',
           s: assets.dzip_files ? assets.dzip_files + ' recursos DZIP detectados, no descomprimidos' +
+            (assets.variant_prefixes_observed ?
+              ' · ' + assets.variant_prefixes_observed + ' huellas internas provisionales' : '') +
             ' · ' + (snaps.captured || 0) + ' capturas PPSSPP' +
             (snaps.compared ? ' · ' + snaps.repeated + ' PNG repetidos entre inventarios' : '') :
             'Pendiente: analizar TX2/XXI/BXN · edición ULJM05558',

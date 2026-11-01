@@ -1522,6 +1522,8 @@ class Dock:
             'worker':worker if worker['disc_id']==disc_id else {'active':False},
             'iso_scan':scan_state if scan_state['disc_id']==disc_id else {'active':False},
             'iso_candidates':len(inventory.get('candidates',[])),
+            'iso_dzip_detected':inventory.get('format_profiles',{}).get('dzip_unknown',0),
+            'iso_codec_unsupported':inventory.get('recognized_unsupported',0),
             'iso_unmapped':True,
             'iso_limited':bool(inventory.get('limited')),
             'darius_re':darius_re,
@@ -1616,8 +1618,13 @@ class Dock:
                         'declared_unpacked_bytes':forensic['total_declared_unpacked_bytes'],
                         'extension_counts':forensic['extension_counts'],
                         'group_counts':forensic['group_counts'],
+                        'signature_variants':forensic['signature_variants'],
+                        'variant_prefixes_observed':sum(
+                            len(by_extension) for by_extension
+                            in forensic['signature_variants'].values()),
                         'errors':len(forensic['errors']),
                         'decoded_assets':0,'replacements_proven':0,
+                        'decoder_ready':False,
                         'status':'dzip_header_only',
                     }
                     atomic_json(inside(cache_dir,'dzip-summary.json'),summary)
