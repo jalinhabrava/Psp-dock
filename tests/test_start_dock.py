@@ -69,7 +69,7 @@ class ExistingDockWindowTests(unittest.TestCase):
              patch.object(start_dock,'launch_xmb_window') as window:
             self.assertEqual(start_dock.launch(self.data),'started')
         start.assert_called_once()
-        self.assertEqual(start.call_args.args[1:],(0,True,False,True))
+        self.assertEqual(start.call_args.args[1:],(0,True,True,True))
         window.assert_not_called()
 
 

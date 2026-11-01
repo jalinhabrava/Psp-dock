@@ -56,7 +56,10 @@ def launch(data: Path | None = None) -> str:
     # A stale server.json does not bypass Dock's OS-level folder lock:
     # if a service is already running but nonresponsive, this raises,
     # rather than starting a second writer.
-    serve(Dock(data),0,True,False,True)
+    # A device-triggered launch can remain open until the operator exits.
+    # If the same PSP is connected again in that process lifetime, reuse
+    # the XMB window on the verified HID rising edge as well.
+    serve(Dock(data),0,True,True,True)
     return 'started'
 
 
