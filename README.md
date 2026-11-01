@@ -1,9 +1,22 @@
 # PSP Dock · prototipo para Windows
 
+## Emuladores retro de PSP → Windows (nueva sección XMB)
+
+La categoría **Retro** reconoce homebrew de emulación en `PSP/GAME`,
+separa sus `EBOOT.PBP` de los juegos de PSP, inventaría las ROMs de sus
+carpetas y las enlaza con el núcleo RetroArch equivalente a cada consola
+(gpSP → mGBA, Snes9xTYL → Snes9x, NesterJ → Mesen, etc.). La copia al PC
+es individual, consentida y verificada por SHA-256; el lanzamiento exige
+RetroArch instalado con el núcleo, una ROM local verificada, partidas
+preparadas y mando PSP HID PDK1 verificado. Las partidas retro no se
+importan ni exportan entre emuladores automáticamente.
+
+**Guía, tabla de equivalencias, límites y pruebas:** [RETRO-EMULATORS.md](RETRO-EMULATORS.md).
+
 ## New feature branch: media, storage location and graceful shutdown
 
-See MVP-HANDOFF-USB-MEDIA.md for the changes based on Claude's
-five-category XMB design. PSP ISO/PBP previews now include original
+See MVP-HANDOFF-USB-MEDIA.md for the changes based on the previous
+five-category XMB design (now extended by the Retro section). PSP ISO/PBP previews now include original
 PIC0/PIC1 images and SND0 music, cached privately on the PC.
 PC storage location can be selected from Windows and verified
 before activation. HD texture installation requires curated,
@@ -75,7 +88,7 @@ Los tests JavaScript se pueden ejecutar con
 node tests/xmb_controller_navigation.test.js.
 
 **Interfaz XMB (01/11/2026).** La pantalla principal funciona como el XMB de
-la PSP: Ajustes · Dock · Juegos · Partidas · Gráficos en horizontal y su
+la PSP: Ajustes · Dock · Juegos · Retro · Partidas · Gráficos en horizontal y su
 contenido en vertical. ✕ entra o juega, ○ vuelve, △ abre las opciones del
 juego, START vuelve a Juegos y SELECT lleva a «Salir del Dock» (que pide
 Sí/No). Los gráficos son por juego: cada valor se guarda en el perfil del

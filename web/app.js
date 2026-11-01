@@ -8,7 +8,7 @@ const ui = {
   gamepadId: '', skippedCopies: new Set(), operation: '',
   transferInFlight: false, transferRun: 0, transferPollTimer: null,
   transferStatus: null, transferCancelRequested: false, transferCancelling: false,
-  transferFinished: false,
+  transferFinished: false, transferKind: 'psp',
   nativePadConnected: false, nativePadLastAt: 0,
   nativePadHeld: {}, nativePadDirection: '', nativePadAt: 0,
   graphicsGame: null,
@@ -69,8 +69,8 @@ async function mutate(path, body, success) {
     if (message) toast(message);
     return true;
   } catch (error) {
-    if (path === '/api/prepare-ppsspp' || path === '/api/transfer') await refresh();
-    const cancelledTransfer = path === '/api/transfer' &&
+    if (path === '/api/prepare-ppsspp' || path === '/api/transfer' || path === '/api/retro-transfer') await refresh();
+    const cancelledTransfer = (path === '/api/transfer' || path === '/api/retro-transfer') &&
       (ui.transferStatus?.phase === 'cancelled' || /cancelad|cancelled/i.test(error.message));
     if (cancelledTransfer) {
       toast('Copia cancelada. Los juegos terminados y los archivos de la PSP se han conservado.');
@@ -176,7 +176,9 @@ function render() {
   $('empty-title').textContent = state.selected_device ? 'Tu biblioteca empieza aquí.' : 'La partida continúa aquí.';
   $('empty-description').replaceChildren();
   $('empty-description').textContent = state.scanning ? 'Comprobando unidades y biblioteca…' :
-    state.selected_device ? 'No se han encontrado juegos. Comprueba la carpeta ISO de la PSP y la biblioteca configurada.' :
+    state.selected_device ? (state.retro?.emulators?.length ?
+      'No hay juegos PSP en la carpeta ISO. Tus emuladores y ROMs aparecen en la sección Retro del XMB.' :
+      'No se han encontrado juegos. Comprueba la carpeta ISO de la PSP y la biblioteca configurada.') :
       state.controller_status?.connected ? 'El mando HID está detectado, pero no hay juegos locales preparados. Vuelve al almacenamiento USB para revisar la biblioteca.' :
       'Conecta tu PSP por USB y activa el modo USB. Tu biblioteca aparecerá en este espacio.';
   $('library-count').textContent = `${games.length} ${games.length === 1 ? 'juego' : 'juegos'}`;
@@ -222,8 +224,9 @@ function render() {
   if ($('transfer-dialog').open && ui.transferFinished && !ui.transferInFlight) {
     // A failed/cancelled transfer can have committed earlier games. As the
     // PC catalog refreshes, remove verified games from the retry selection.
+    const catalog = ui.transferKind === 'retro' ? state.retro?.roms || [] : games;
     const missing = ui.transfer.filter((game) =>
-      games.some((current) => current.id === game.id && current.availability === 'missing'));
+      catalog.some((current) => current.id === game.id && current.availability === 'missing'));
     if (missing.length !== ui.transfer.length) {
       ui.transfer = missing;
       renderTransferSelection();
@@ -235,13 +238,14 @@ function render() {
   $('transfer-all').disabled = !state.selected_device || state.recovery_required || state.session?.running || ui.serviceOffline;
   $('session-status').textContent = ui.serviceOffline ? 'Servicio desconectado · las operaciones están pausadas' :
     state.recovery_required ? 'Sesión interrumpida · recupera PPSSPP antes de continuar' :
-      state.session?.running ? '● PPSSPP en ejecución · vuelve al Dock al terminar' :
+      state.session?.running ? `● ${state.session?.launcher === 'retroarch' ? 'RetroArch' : 'PPSSPP'} en ejecución · vuelve al Dock al terminar` :
         state.session?.pending_return && state.session?.exit_requested ?
           'Salida solicitada · devuelve manualmente el almacenamiento para revisar las partidas' :
         state.session?.pending_return && state.controller_status?.connected ?
           'De vuelta en el XMB · puedes jugar a otro título o elegir Salir del Dock' :
         state.session?.pending_return ? 'Partida terminada · vuelve a almacenamiento para devolver los guardados' :
           state.controller_status?.connected ?
+            state.can_launch_retro && !games.length ? 'PSP HID PDK1 conectado · tus ROMs retro están preparadas para RetroArch' :
             state.runtime_prepared !== true ? 'Mando HID detectado · PPSSPP aún no está preparado en el PC' :
               state.can_launch_game ? 'Mando PSP HID PDK1 conectado · puedes abrir tus juegos locales en PPSSPP' :
                 'Mando HID detectado · aún queda una verificación pendiente' :
@@ -262,8 +266,9 @@ function preflightKey(state) {
 }
 function renderRuntimeReadiness(state, prepared) {
   const panel = $('runtime-readiness');
+  const retroOnly = !state.games?.length && !!state.retro?.emulators?.length;
   const known = typeof state.runtime_prepared === 'boolean';
-  panel.hidden = state.demo || !known || !(state.selected_device || prepared ||
+  panel.hidden = retroOnly || state.demo || !known || !(state.selected_device || prepared ||
     state.controller_status?.connected || state.session?.pending_return);
   if (panel.hidden) return;
 
@@ -294,6 +299,10 @@ function renderPreflight() {
   const panel = $('dock-preflight');
   if (!plan) { panel.hidden = true; return; }
   const disconnected = !state.selected_device && !state.demo;
+  const retroOnly = !state.games?.length && !!state.retro?.emulators?.length;
+  const retroRoms = state.retro?.roms || [];
+  const retroReady = retroRoms.filter(rom => rom.availability === 'ready').length;
+  const retroMissing = retroRoms.filter(rom => rom.availability === 'missing').length;
   const skipped = state.copy_policy === 'skip_missing' ||
     ui.skippedCopies.has(preflightKey(state));
   const prepared = plan.saves_prepared === true || state.saves_prepared === true;
@@ -305,11 +314,12 @@ function renderPreflight() {
   const playing = !!state.session?.running;
   const inHidXmb = !playing && !state.session?.exit_requested &&
     state.controller_status?.connected === true && prepared;
-  panel.hidden = disconnected && !state.games?.length && !returnPending && !state.recovery_required && !state.controller_status?.connected;
+  panel.hidden = disconnected && !state.games?.length && !retroOnly && !returnPending && !state.recovery_required && !state.controller_status?.connected;
   renderRuntimeReadiness(state, prepared);
   $('preflight-summary').textContent = [
     plan.ready_games + ' en PC',
     plan.missing_games + ' por copiar',
+    ...(retroOnly ? [`${retroReady} ROMs retro en PC`, `${retroMissing} ROMs por copiar`] : []),
     plan.connected || state.demo ?
       plan.save_actions + ' guardados pendientes · ' + plan.save_conflicts + ' conflictos' :
       returnPending ? 'Partidas por comparar al volver al almacenamiento' : 'Partidas sin comparar (PSP desconectada)',
@@ -329,12 +339,14 @@ function renderPreflight() {
     description = 'Revisa si PPSSPP sigue abierto y completa la recuperación antes de copiar o sincronizar archivos.';
   } else if (playing) {
     title = 'La partida está en marcha';
-    description = 'PPSSPP está ejecutándose. Cuando cierres el juego volverás a este XMB para elegir otro o salir del Dock.';
+    description = (state.session?.launcher === 'retroarch' ? 'RetroArch' : 'PPSSPP') + ' está ejecutándose. Cuando cierres el juego volverás a este XMB para elegir otro o salir del Dock.';
   } else if (inHidXmb) {
     title = state.session?.pending_return ?
       'De vuelta en el XMB · ¿otra partida?' :
       'PSP Dock activo · elige cuándo jugar';
-    description = state.runtime_prepared === true ?
+    description = retroOnly ?
+      'Mando PSP activo: elige una ROM verificada en Retro. RetroArch necesita el núcleo instalado. La vuelta a USB sigue siendo manual.' :
+      state.runtime_prepared === true ?
       'Mando PSP activo sin límite de tiempo. Selecciona un juego o elige Salir del Dock cuando quieras terminar; el cambio a almacenamiento todavía es manual.' :
       'PPSSPP necesita volver a prepararse en el PC. Sal del Dock y vuelve manualmente a almacenamiento USB antes de continuar.';
   } else if (returnPending) {
@@ -351,17 +363,22 @@ function renderPreflight() {
     description = 'La PSP y el PC están sincronizados. Antes de quitar el cable, usa la extracción segura del almacenamiento de Windows. El cambio automático de USB sigue pendiente.';
   } else if (state.controller_status?.connected) {
     title = 'Mando PSP HID detectado en Windows';
-    description = prepared && state.runtime_prepared === true ?
+    description = prepared && retroOnly ?
+      'Abre la sección Retro para iniciar tus ROMs verificadas en RetroArch. El mando puede necesitar configuración inicial en RetroArch.' :
+      prepared && state.runtime_prepared === true ?
       'Mando HID PDK1 detectado y PPSSPP preparado. Puedes elegir un juego local; este modo se activa manualmente.' :
       prepared ? 'Las partidas están preparadas pero PPSSPP sigue pendiente en el PC. Vuelve al almacenamiento USB y prepara PPSSPP antes de jugar.' :
       'Mando detectado; todavía hace falta preparar las partidas en modo almacenamiento antes de jugar.';
   } else if (disconnected && prepared) {
-    title = state.runtime_prepared === true ? 'Partidas y PPSSPP preparados · esperando mando' : 'Partidas listas · PPSSPP pendiente';
-    description = state.runtime_prepared === true ?
+    title = retroOnly ? 'Biblioteca retro preparada · esperando mando' :
+      state.runtime_prepared === true ? 'Partidas y PPSSPP preparados · esperando mando' : 'Partidas listas · PPSSPP pendiente';
+    description = retroOnly ?
+      'Activa manualmente el mando HID PDK1 de la PSP; después abre Retro para elegir una ROM.' :
+      state.runtime_prepared === true ?
       'El almacenamiento ya no está disponible. Activa manualmente el mando HID PDK1 en tu PSP y vuelve al Dock para iniciar PPSSPP.' :
       'Antes de usar el modo HID, vuelve al almacenamiento USB y utiliza «Preparar PPSSPP» en el PC.';
   } else if (disconnected) {
-    title = 'Biblioteca de la última PSP';
+    title = retroOnly ? 'Emuladores retro de la última PSP' : 'Biblioteca de la última PSP';
     description = 'El catálogo se conserva en Windows. Reconecta tu PSP para comparar juegos y partidas.';
   } else if (plan.missing_games && !skipped) {
     title = plan.missing_games + (plan.missing_games === 1 ? ' juego pendiente de copiar' : ' juegos pendientes de copiar');
@@ -378,6 +395,15 @@ function renderPreflight() {
   } else if (plan.different_games) {
     title = 'Hay juegos con versiones distintas';
     description = 'Se conservan ambas versiones. Elige manualmente qué hacer; no sobrescribiremos archivos diferentes.';
+  } else if (retroOnly && retroMissing) {
+    title = `${retroMissing} ROMs pendientes de copiar`;
+    description = 'Abre Retro, selecciona un emulador y una ROM y confirma su copia al PC. No se sobrescribe ninguna ROM existente.';
+  } else if (retroOnly && !prepared) {
+    title = 'ROMs retro disponibles · prepara las partidas';
+    description = 'Confirma la comparación de guardados para preparar esta Memory Stick. RetroArch no necesita PPSSPP.';
+  } else if (retroOnly) {
+    title = 'Biblioteca retro lista en Windows';
+    description = 'Activa el mando HID de la PSP y selecciona la ROM en Retro. Necesitarás RetroArch y su núcleo instalado.';
   } else if (!prepared && plan.connected && plan.ready_games) {
     title = 'Revisa las partidas para preparar el juego';
     description = 'Confirma la comparación de los guardados aunque no haya diferencias. Después podrás abrir juegos en PPSSPP.';
@@ -552,9 +578,10 @@ function transferFeedback(message) {
 }
 function renderTransferSelection() {
   const total = ui.transfer.reduce((sum, game) => sum + Number(game.size || 0), 0);
+  const itemName = ui.transferKind === 'retro' ? 'ROM' : 'juego';
   $('transfer-summary').textContent = ui.transfer.length ?
-    `${ui.transfer.length} ${ui.transfer.length === 1 ? 'juego pendiente' : 'juegos pendientes'} · ${bytes(total)} en total.` :
-    'No quedan juegos seleccionados pendientes de copiar en el PC.';
+    `${ui.transfer.length} ${ui.transfer.length === 1 ? itemName + ' pendiente' : itemName === 'ROM' ? 'ROMs pendientes' : 'juegos pendientes'} · ${bytes(total)} en total.` :
+    'No quedan archivos seleccionados pendientes de copiar en el PC.';
   $('transfer-list').replaceChildren(...ui.transfer.map((game) => {
     const li = el('li');
     li.append(el('strong', '', game.title), el('span', '', bytes(game.size)));
@@ -575,7 +602,7 @@ function renderTransferControls() {
     ui.transferCancelling ? 'Solicitando cancelación…' : 'Cancelar copia';
   $('transfer-confirm').hidden = copying;
   $('transfer-confirm').disabled = copying || ui.busy || !ui.transfer.length || ui.serviceOffline;
-  $('transfer-confirm').textContent = ui.transferFinished ? 'Copiar juegos pendientes' : 'Confirmar copia';
+  $('transfer-confirm').textContent = ui.transferFinished ? (ui.transferKind === 'retro' ? 'Copiar ROM pendiente' : 'Copiar juegos pendientes') : 'Confirmar copia';
 }
 function renderTransferStatus(status) {
   if (!status || typeof status !== 'object') return;
@@ -585,7 +612,8 @@ function renderTransferStatus(status) {
   const copied = Math.max(0, Math.min(total, Number(status.copied_bytes) || 0));
   const index = Math.max(0, Math.trunc(Number(status.game_index) || 0));
   const count = Math.max(0, Math.trunc(Number(status.games_total) || 0));
-  const item = count ? `juego ${Math.min(index || 1, count)} de ${count}` : 'juegos';
+  const itemType = ui.transferKind === 'retro' ? 'ROM' : 'juego';
+  const item = count ? `${itemType} ${Math.min(index || 1, count)} de ${count}` : (itemType === 'ROM' ? 'ROMs' : 'juegos');
   const title = typeof status.title === 'string' ? status.title : '';
   const game = index > 0 ? ui.transfer[index - 1] : null;
   const filename = typeof game?.relative === 'string' ?
@@ -621,7 +649,7 @@ function renderTransferStatus(status) {
   } else if (phase === 'failed') {
     transferFeedback(`La copia se ha detenido: ${typeof status.error === 'string' && status.error ? status.error : 'error desconocido'}.`);
   } else if (phase === 'done') {
-    transferFeedback('Todos los juegos seleccionados se han copiado y verificado en el PC.');
+    transferFeedback('Todos los archivos seleccionados se han copiado y verificado en el PC.');
   } else if (ui.transferCancelRequested) {
     transferFeedback('Cancelación solicitada. Esperando a que la copia termine de forma segura…');
   } else if (!ui.transferCancelling) {
@@ -683,8 +711,9 @@ async function startTransfer() {
   void pollTransferStatus(run);
   let completed = false;
   try {
-    completed = await mutate('/api/transfer', { ids: ui.transfer.map((game) => game.id) },
-      'Juegos copiados y verificados en el PC.');
+    completed = await mutate(ui.transferKind === 'retro' ? '/api/retro-transfer' : '/api/transfer',
+      { ids: ui.transfer.map((game) => game.id) },
+      ui.transferKind === 'retro' ? 'ROMs copiadas y verificadas en el PC.' : 'Juegos copiados y verificados en el PC.');
   } finally {
     ui.transferInFlight = false;
     ++ui.transferRun;
@@ -701,8 +730,9 @@ async function startTransfer() {
       transferFeedback('No se pudo consultar el estado final. Comprueba la biblioteca antes de reintentar.');
     }
     ui.transferFinished = true;
+    const catalog = ui.transferKind === 'retro' ? ui.state?.retro?.roms : ui.state?.games;
     ui.transfer = ui.transfer.filter((game) =>
-      ui.state?.games?.some((current) => current.id === game.id && current.availability === 'missing'));
+      catalog?.some((current) => current.id === game.id && current.availability === 'missing'));
     renderTransferSelection();
     renderTransferControls();
   }
@@ -712,12 +742,29 @@ function openTransfer(ids) {
   if (ui.transferInFlight || ui.busy || $('transfer-dialog').open || ui.serviceOffline ||
       !ui.state?.selected_device || ui.state?.recovery_required || ui.state?.session?.running ||
       ui.state?.session?.pending_return) return;
+  ui.transferKind = 'psp';
   ui.transfer = (ui.state?.games || []).filter((game) => ids.includes(game.id) && game.availability === 'missing');
   if (!ui.transfer.length) return;
   ui.transferFinished = false;
   ui.transferStatus = null;
   ui.transferCancelRequested = false;
   ui.transferCancelling = false;
+  $('transfer-title').textContent = 'Copiar juegos al PC';
+  renderTransferSelection();
+  renderTransferControls();
+  $('transfer-dialog').showModal();
+}
+function openRetroTransfer(rom) {
+  if (ui.transferInFlight || ui.busy || $('transfer-dialog').open || ui.serviceOffline ||
+      !ui.state?.selected_device || ui.state?.recovery_required || ui.state?.session?.running ||
+      ui.state?.session?.pending_return || rom?.availability !== 'missing') return;
+  ui.transferKind = 'retro';
+  ui.transfer = [rom];
+  ui.transferFinished = false;
+  ui.transferStatus = null;
+  ui.transferCancelRequested = false;
+  ui.transferCancelling = false;
+  $('transfer-title').textContent = 'Copiar ROM al PC';
   renderTransferSelection();
   renderTransferControls();
   $('transfer-dialog').showModal();
@@ -902,7 +949,7 @@ async function openSettings() {
   $('settings-save').disabled = true;
   try {
     const settings = await request('/api/settings');
-    for (const key of ['emulator', 'library', 'memstick', 'psp_root', 'scale', 'backend']) {
+    for (const key of ['emulator', 'retroarch', 'library', 'memstick', 'psp_root', 'scale', 'backend']) {
       const field = $('settings-form').elements.namedItem(key);
       field.value = settings[key] ?? (key === 'scale' ? '3' : key === 'backend' ? 'directx11' : '');
     }
@@ -1277,6 +1324,7 @@ const XMB_ICONS = {
   ajustes: XMB_SVG('<path d="M3.5 9.5h17v9.5h-17z"/><path d="M8.5 9.5V7a1.5 1.5 0 0 1 1.5-1.5h4A1.5 1.5 0 0 1 15.5 7v2.5"/><path d="M3.5 13.5h17"/><path d="M10.5 12.5h3v2h-3z"/>'),
   dock: XMB_SVG('<path d="M12 2.8v15.5"/><path d="M9.2 5.8L12 2.8l2.8 3"/><path d="M12 12.5l-4.3-3V7.4"/><circle cx="7.7" cy="6.6" r=".9"/><path d="M12 14.5l4.3-2.8V9.6"/><path d="M15.4 8.4h1.8v1.8h-1.8z"/><circle cx="12" cy="19.6" r="1.7"/>'),
   juegos: XMB_SVG('<path d="M7.3 7.5h9.4c2.2 0 3.6 1.4 4.2 3.6l1 4.4c.4 1.9-1.6 3.2-3 1.9L16.5 15h-9L5.1 17.4c-1.4 1.3-3.4 0-3-1.9l1-4.4C3.7 8.9 5.1 7.5 7.3 7.5z"/><path d="M7.2 9.9v3.4M5.5 11.6h3.4"/><circle cx="16.2" cy="10.3" r=".55"/><circle cx="17.9" cy="12" r=".55"/><circle cx="14.5" cy="12" r=".55"/><circle cx="16.2" cy="13.7" r=".55"/>'),
+  retro: XMB_SVG('<rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M6.5 9.5v5M4 12h5M15.5 10.5h.01M18 13.5h.01"/><path d="M9 6V4h6v2"/>'),
   partidas: XMB_SVG('<path d="M7 3.5h10a1 1 0 0 1 1 1V20a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 6 20V4.5a1 1 0 0 1 1-1z"/><path d="M8.5 3.5v3.5M10.5 3.5v3.5M12.5 3.5v3.5M14.5 3.5v3.5"/><path d="M8.5 11.5h7v5.5h-7z"/>'),
   graficos: XMB_SVG('<path d="M3 5h18v11.5H3z"/><path d="M9 20h6M12 16.5V20"/><path d="M12 7.6l.9 2 2.2.2-1.7 1.5.5 2.2-1.9-1.1-1.9 1.1.5-2.2-1.7-1.5 2.2-.2z"/>'),
   play: XMB_SVG('<path d="M8 5l11 7-11 7z"/>'),
@@ -1292,7 +1340,7 @@ const XMB_ICONS = {
   theme: XMB_SVG('<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z"/>'),
   warn: XMB_SVG('<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.01"/>'),
 };
-const XMB_SECTIONS = [['ajustes', 'Ajustes'], ['dock', 'Dock'], ['juegos', 'Juegos'], ['partidas', 'Partidas'], ['graficos', 'Gráficos']];
+const XMB_SECTIONS = [['ajustes', 'Ajustes'], ['dock', 'Dock'], ['juegos', 'Juegos'], ['retro', 'Retro'], ['partidas', 'Partidas'], ['graficos', 'Gráficos']];
 const XMB_GFX = {
   quality: [['auto', 'Automático · según el monitor'], ['balanced', 'Equilibrado · menos carga'], ['quality', 'Calidad · más resolución'],
     ['ultra', 'Ultra · sobremuestreo'], ['manual', 'Manual · escala de Ajustes']],
@@ -1395,7 +1443,7 @@ async function xmbSaveSetting(key, value, label) {
   if (!xmb.settings) await xmbLoadSettings();
   if (!xmb.settings) { toast('No se pudieron leer los ajustes actuales.'); return; }
   const fields = {};
-  for (const name of ['emulator', 'library', 'memstick', 'psp_root', 'scale', 'backend']) fields[name] = xmb.settings[name] ?? '';
+  for (const name of ['emulator', 'retroarch', 'library', 'memstick', 'psp_root', 'scale', 'backend']) fields[name] = xmb.settings[name] ?? '';
   fields[key] = value;
   fields.scale = Number(fields.scale) || 3;
   if (await mutate('/api/settings', fields, `${label}: guardado.`)) await xmbLoadSettings();
@@ -1441,7 +1489,7 @@ function xmbBuildSections() {
     { key: 'storage', t: 'Carpeta principal de datos',
       s: () => settingsValue('storage_root',settingsValue('library','')),
       icon: 'folder', activate: () => xmbStorageLocation() },
-    ...[['emulator', 'Emulador PPSSPP'], ['library', 'Biblioteca del PC'], ['memstick', 'Memory Stick de PPSSPP'], ['psp_root', 'Raíz de la PSP']].map(([key, t]) => ({
+    ...[['emulator', 'Emulador PPSSPP'], ['retroarch', 'RetroArch (consolas clásicas)'], ['library', 'Biblioteca del PC'], ['memstick', 'Memory Stick de PPSSPP'], ['psp_root', 'Raíz de la PSP']].map(([key, t]) => ({
       key: 'path-' + key, t, s: () => settingsValue(key, '') || (key === 'psp_root' ? 'Detección automática' : 'Sin configurar'), icon: 'folder',
       activate: () => { openSettings(); toast('Las carpetas se escriben con el teclado. ○ cierra sin guardar.'); },
     })),
@@ -1484,6 +1532,22 @@ function xmbBuildSections() {
     activate: () => xmbLaunch(game), menu: () => xmbGameMenu(game),
   })) : [{ key: 'empty', t: xmbText('empty-title') || 'Conecta tu PSP', s: xmbText('empty-description'), icon: 'search',
     activate: async () => { toast('Buscando PSP…'); await refresh(); } }];
+
+  const retro = state.retro || {};
+  out.retro = (retro.emulators || []).map((emulator) => {
+    const roms = (retro.roms || []).filter((rom) => rom.emulator_id === emulator.id);
+    const ready = roms.filter((rom) => rom.availability === 'ready').length;
+    return {
+      key: 'emulator-' + emulator.id, t: emulator.name, icon: 'retro',
+      s: `${emulator.systems.join(' / ').toUpperCase()} · ${roms.length} ROMs · ${ready} en el PC`,
+      chip: ready ? ['pc', `${ready} EN PC`] : roms.length ? ['copy', 'COPIAR'] : ['inh', 'VACÍO'],
+      activate: () => xmbRetroEmulatorMenu(emulator),
+      menu: () => xmbRetroEmulatorMenu(emulator),
+    };
+  });
+  if (!out.retro.length) out.retro = [{ key:'no-retro', t:'No hay emuladores reconocidos',
+    s:'Se detectan gpSP, TempGBA, Snes9xTYL, NesterJ, PicoDrive, Daedalus y otros.',
+    icon:'search', activate:()=>toast('Conecta la PSP en almacenamiento USB para detectar los emuladores instalados y sus ROMs.') }];
 
   const partidas = [];
   partidas.push({ key: 'sync', t: xmbText('sync-button') || 'Sincronizar partidas',
@@ -1678,6 +1742,63 @@ function xmbGameMenu(game) {
     else if (index === 2) xmbGoto('partidas');
     else { ui.selected = game.id; renderSelected(false); toast(`${game.relative || game.title} · ${xmbText('launch-note')}`); }
   });
+}
+function xmbRetroEmulatorMenu(emulator) {
+  const roms = (ui.state?.retro?.roms || []).filter((rom) => rom.emulator_id === emulator.id);
+  if (!roms.length) {
+    xmbSide(emulator.name, [{t:'No se han encontrado ROMs',s:'Comprueba la carpeta ROMS del emulador en tu PSP.'}],
+      () => toast('No se han localizado archivos ROM compatibles en la carpeta de este emulador.'));
+    return;
+  }
+  xmbSide(emulator.name, roms.map((rom) => ({
+    t:rom.title,
+    s:`${rom.system_name} · ${rom.availability === 'ready' ? 'En el PC' :
+      rom.availability === 'missing' ? 'Copiar desde PSP' :
+      rom.availability === 'checking' ? 'Comprobando' : 'Versión diferente'}`,
+  })), index => xmbRetroRomMenu(roms[index]));
+}
+function xmbRetroRomMenu(rom) {
+  const items = [
+    { t:'Jugar en Windows', s:rom.windows_emulator + (rom.core_available ? ' · núcleo instalado' : ' · núcleo pendiente') },
+    { t:'Copiar ROM al PC', s:rom.availability === 'missing' ? bytes(rom.size) + ' · transferencia verificada' : 'No se sobrescribe el archivo local' },
+    { t:'Información', s:rom.system_name + ' · ' + rom.format + ' · ' + bytes(rom.size) },
+  ];
+  xmbSide(rom.title, items, (index) => {
+    if (index === 0) xmbLaunchRetro(rom);
+    else if (index === 1) {
+      if (rom.availability !== 'missing') toast('Solo se copian ROMs ausentes del PC; no se sobrescriben versiones diferentes.');
+      else if (!ui.state?.selected_device) toast('Vuelve al almacenamiento USB Sony para copiar esta ROM al PC.');
+      else openRetroTransfer(rom);
+    } else toast(`${rom.title} · ${rom.system_name} · ${rom.windows_emulator} · ${rom.relative}. Las partidas y savestates de PSP no se importan automáticamente.`);
+  });
+}
+function xmbLaunchRetro(rom) {
+  const state = ui.state || {};
+  if (state.demo || ui.busy || ui.serviceOffline || state.recovery_required) {
+    toast('Los juegos retro solo se ejecutan con el Dock real y sin recuperación pendiente.');
+    return;
+  }
+  if (state.session?.running) { toast('Ya hay un emulador abierto en Windows.'); return; }
+  if (rom.availability === 'missing') {
+    if (state.selected_device) openRetroTransfer(rom);
+    else toast('ROM no copiada. Vuelve al almacenamiento Sony para transferirla antes de jugar.');
+    return;
+  }
+  if (rom.availability !== 'ready') { toast('Comprueba la ROM: la copia del PC no coincide con la PSP.'); return; }
+  if (!rom.core_available) {
+    toast(`Configura RetroArch en Ajustes e instala el núcleo compatible con ${rom.system_name}.`);
+    return;
+  }
+  if (state.saves?.actions?.length || state.saves?.conflicts?.length || state.preflight?.saves_prepared !== true) {
+    if (state.selected_device) openSaves();
+    else toast('Primero prepara las partidas en el almacenamiento Sony original.');
+    return;
+  }
+  if (state.selected_device || state.controller_status?.connected !== true || !state.can_launch_retro) {
+    toast('Activa manualmente el mando HID PDK1 de la PSP y comprueba que las partidas estén preparadas.');
+    return;
+  }
+  mutate('/api/retro-launch',{id:rom.id},`Abriendo ${rom.system_name} en RetroArch…`);
 }
 function xmbGoto(id) {
   const cat = XMB_SECTIONS.findIndex(([key]) => key === id);
