@@ -1,5 +1,17 @@
 # PSP Dock · prototipo para Windows
 
+## Nueva interfaz del homebrew PSP (01/11/2026)
+
+El cliente nativo `PSP/GAME/PSPDock` ya se puede compilar en PC con un
+ICON0/PIC0/PIC1 personalizado y un renderer gráfico para la PSP: antes se
+mostraban cadenas blancas de depuración sobre negro. El nuevo asistente
+ilustra preparación, carga de HID, conectar USB, vista ambiente de mando,
+errores y salida; no requiere pulsar una segunda ✕ cuando HID ya está
+presentándose a Windows. No inventa progreso de sincronización ni confirma
+una conexión que solo Windows puede verificar. Es **código compilado y
+testeado en PC, aún NO probado ni instalado en PSP real**. Capturas,
+comandos de build y procedimiento de validación: `docs/PSP-HOMEBREW-UI.md`.
+
 ## Estado de integración — 1 de noviembre de 2026
 
 Las PR #1 y #2 están fusionadas en main. La instalación LIVE de Windows
