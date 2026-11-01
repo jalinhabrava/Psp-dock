@@ -46,6 +46,8 @@ class Op(IntEnum):
     READ=5
     DATA=6
     EOF=7
+    LIST=8
+    LIST_DATA=9
     ERROR=255
 
 

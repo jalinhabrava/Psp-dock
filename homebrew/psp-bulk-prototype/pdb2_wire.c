@@ -19,7 +19,7 @@ static void put64(uint8_t *d, uint64_t n) {
     put32(d + 4, (uint32_t)(n >> 32));
 }
 static int supported(uint8_t op) {
-    return (op >= PDB2_OP_HELLO && op <= PDB2_OP_EOF) ||
+    return (op >= PDB2_OP_HELLO && op <= PDB2_OP_LIST_DATA) ||
            op == PDB2_OP_ERROR;
 }
 static int nonzero_session(const uint8_t *s) {

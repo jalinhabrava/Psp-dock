@@ -3,6 +3,15 @@
 Estado: diseño y prototipo ejecutable/compilable en PC, **no probado en hardware**.
 Fecha: 1 de noviembre de 2026.
 
+## Actualización: controlador ejecutable en revisión
+
+La rama `feat/composite-usb-driver` contiene un PRX PSP de lectura,
+EBOOT separado y cliente WinUSB. La compilación, ABI enlazada y pruebas
+C/Python se documentan en `COMPOSITE-DRIVER-VALIDATION.md` y
+`homebrew/composite-readonly/README.md`. La enumeración física sigue
+pendiente y esta versión no implementa devolución de guardados.
+Las secciones siguientes conservan el diseño del prototipo anterior.
+
 ## Qué está demostrado
 
 Físicamente: la PSP-2003 con ARK controla el XMB de Windows y PPSSPP

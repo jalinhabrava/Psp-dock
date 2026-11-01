@@ -24,6 +24,8 @@ enum Pdb2Op {
     PDB2_OP_READ = 5,
     PDB2_OP_DATA = 6,
     PDB2_OP_EOF = 7,
+    PDB2_OP_LIST = 8,
+    PDB2_OP_LIST_DATA = 9,
     PDB2_OP_ERROR = 255
 };
 
