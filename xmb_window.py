@@ -78,6 +78,24 @@ def maximize_existing_xmb() -> bool:
     return True
 
 
+def close_existing_xmb() -> bool:
+    """Close only a uniquely identified PSP Dock window, not other apps.
+
+    Never use Alt-F4 or kill Chrome. Only WM_CLOSE is delivered after the
+    original Sony USBSTOR returned with SAVEDATA verified. Ambiguous
+    matching browser windows are deliberately left alone.
+    """
+    if os.name != 'nt':
+        return False
+    hwnd=unique_target(enumerate_xmb_windows())
+    if hwnd is None:
+        return False
+    user32=C.WinDLL('user32',use_last_error=True)
+    user32.PostMessageW.argtypes=[W.HWND,W.UINT,W.WPARAM,W.LPARAM]
+    user32.PostMessageW.restype=W.BOOL
+    return bool(user32.PostMessageW(hwnd,0x0010,0,0))  # WM_CLOSE
+
+
 def maximize_when_ready(*, seconds=5, interval=0.15) -> bool:
     """Graceful wait for an app window when Chrome starts asynchronously."""
     if not 0 < seconds <= 10 or not 0.05 <= interval <= 1:

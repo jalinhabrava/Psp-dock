@@ -1,5 +1,19 @@
 # PSP Dock · prototipo para Windows
 
+## New feature branch: media, storage location and graceful shutdown
+
+See MVP-HANDOFF-USB-MEDIA.md for the changes based on Claude's
+five-category XMB design. PSP ISO/PBP previews now include original
+PIC0/PIC1 images and SND0 music, cached privately on the PC.
+PC storage location can be selected from Windows and verified
+before activation. HD texture installation requires curated,
+hash-verified archive sources. The triangle button still opens
+the RIGHT-SIDE menu, never directly starts a game transfer.
+
+USBSTOR to HID and back is NOT physically automated yet. The
+feature branch contains no PSP firmware changes and must not
+be presented as a fully seamless one-cable product.
+
 ## Arranque USB sin monitor residente (piloto)
 
 **No hay proceso de PSP Dock lanzado al iniciar sesión de Windows.**
