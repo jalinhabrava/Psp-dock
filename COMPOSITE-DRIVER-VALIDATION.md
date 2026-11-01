@@ -1,6 +1,113 @@
 # Controlador compuesto PSP Dock: evidencia y siguiente ensayo
 
-## Estado actual: 0206 instalada; aceptación física pendiente
+## Estado actual: 0207 instalada; aceptación física pendiente
+
+**PSP Dock - USB Storage + HID 0207** está compilada, auditada e instalada
+con relectura SHA-256 de sus cuatro archivos: **368.243 bytes** en
+`PSP/GAME/PSPDockStorageTest`. El PSP Dock estable conserva su carpeta.
+El disco de esta prueba sigue siendo FAT12 ficticio de 512 KiB, solo
+lectura y generado en memoria. No ofrece la Memory Stick real.
+
+### Resultado físico de 0206: estabilidad y punto pendiente
+
+El usuario informó «esta vez todo bien» y envió una fotografía de la
+pantalla final. Se ve **PSP DOCK**, revisión 0206, resultado retenido y
+parada **START+SELECT / solicitud del usuario**. En este intento no se
+repitió la salida espontánea al XMB que había descrito para 0205.
+
+| Telemetría conservada en la foto | Valor |
+|---|---:|
+| Informes HID completados | 1.187 |
+| CSW SCSI completados, incluidos posibles estados fallidos | 26 |
+| Bytes relevantes contabilizados | 18.284 |
+| Errores RX / código RX / código TX | 0 / 0 / 0 |
+| Configuraciones / desconfiguraciones / generación | 7 / 5 / 5 |
+| Último estado BOT / comando / datos relevantes frente a petición | 4 (CSW_WAIT) / 0x1A (MODE SENSE 6) / 32 de 192 |
+
+El monitor estuvo activo durante el intento. Su evidencia está en
+`data/msc-0206-evidence/physical-20261101-214307/`: `transitions.jsonl`,
+`windows-events.json` y `user-photo-0206.jpg`. La foto original tiene SHA-256
+`2c17f357b3f6d128fdd956acf52e78894ede0fd3996c8ce6965cfcd819053324`.
+
+| Hora UTC del 1 de noviembre de 2026 | Observación de Windows |
+|---|---|
+| 21:45:55 | Padre `usbccgp`, MI00 `HidUsb` y MI01 `USBSTOR`, revisión 0206, operativos. |
+| 21:47:06 | Disco `PSPDOCK MSC HID TEST REV0001` presente y operativo en PnP. |
+| 21:47:08.715 | Cuatro eventos Disk 11, error de controlador en Harddisk6/DR33; StorDiag identifica el disco 6 como PSPDOCK. |
+| 21:47:30.005 | Se inicia el dispositivo PnP `STORAGE/Volume` con `volume.inf`; esto no acredita un sistema FAT montado. |
+| 21:47:33.428 | StorDiag registra MODE SENSE `1A003F00C000`, con un reintento, fallido al retirarse el dispositivo. |
+| 21:47:42 | La observación de descubrimiento ya no contiene los dispositivos de la prueba. |
+| 21:53:51 | Vuelve el almacenamiento Sony nativo. |
+
+Las horas JSONL de 0206 se escribían después de consultas que podían
+ser lentas; no son timestamps exactos de llegada/retirada del bus.
+La observación no devolvió volúmenes asociados y `probe_attempts` quedó
+en **0**. No hubo lectura de aceptación, hash de PROBE.DAT ni verificación
+de movimiento durante copias. Un PDO de volumen no equivale a FAT con letra.
+
+La foto señala la ruta **respuesta IN corta, HALT y CSW**: MODE SENSE
+produjo 32 bytes para una petición de 192 y el último estado conservado
+esperaba completar CSW. Es una hipótesis de transporte sustentada por la
+foto y los eventos, no una traza que pruebe un defecto concreto del bus
+Sony. El CDB EVPD página 0 del log es válido y lo acepta el motor; su
+sense 5/24 no demuestra rechazo del parser. READ CAPACITY(16) sí estaba
+sin implementar y devolvía 5/20.
+
+### Qué cambia en 0207
+
+- BOT caso 5 (`Hi > Di`) envía los datos relevantes y rellena con ceros
+  hasta la longitud del host. MODE SENSE 32/192 termina la fase USB de
+  192 bytes y conserva residuo 160. EVPD 7/255 conserva residuo 248.
+  El CSW no se genera hasta confirmar todos los bytes por callback.
+  El relleno no incrementa el contador de bytes relevantes. Esta opción
+  está permitida por [USB-IF BOT 1.0, sección 6.7.2](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf).
+- READ CAPACITY(16), servicio 0x10, devuelve último LBA 1023 y bloques
+  de 512 bytes, con allocation length y validaciones de CDB/LBA/PMI.
+  El formato se contrasta con [T10](https://www.t10.org/ftp/t10/document.03/03-387r2.pdf).
+- La UI coloca texto en píxeles, con fondo opaco y separación vertical.
+  Se comprobó con un render de app.c y el bitmap real del SDK; no se
+  presenta ese render como una captura física. Mantiene la identidad
+  visual de 0206 y el resultado retenido.
+- Windows registra cada etapa CIM: disco, partición y unidad lógica.
+  Los candidatos globales sin padre correlacionado quedan solo como
+  diagnóstico y nunca habilitan una lectura. Las observaciones llevan
+  hora inicial/final y se guardan antes del diagnóstico pesado.
+
+El caso 4 (`Hi > Dn`), los errores de fase y CBW inválidos conservan sus
+reglas HALT/reset. No se cambian flags Sony desconocidos. El nuevo
+comportamiento de caso 5 requiere la siguiente comprobación física.
+
+### Verificación e instalación de 0207
+
+- Build PSPDEV/WSL con `-Werror`; 13 casos BOT, FAT12/SCSI, respuestas
+  observadas, límites UINT32_MAX y 50.000 entradas malformadas, con ASan/UBSan.
+- **14 escenarios asíncronos** del wrapper real con ambos sanitizadores,
+  incluidos relleno, transferencia incompleta y reset durante el envío.
+- Auditoría ELF MIPS/USER, disco FAT12 y tres recursos XMB: PASS.
+  El kernel no importa `sceIo*` ni `IoFileMgr`.
+- **66 tests focales Windows:** 31 aceptación, 10 paquete, 18 instalación
+  y 7 diagnóstico. El script PowerShell real también ejecuta el preflight
+  y devuelve `waiting_pnp_disk` sin errores con Sony nativo conectado.
+- Backup crítico revalidado contra la PSP actual: 42 archivos, 4.908.072 bytes.
+- Upgrade por recibo de 0206; cuatro archivos nuevos releídos y verificados.
+
+| Binario 0207 instalado | Tamaño | SHA-256 |
+|---|---:|---|
+| `EBOOT.PBP` | 300.364 bytes | `be1a6a8cd62f1c7f6c4f004dbecc237128fa7ee36704611e55acb1a5824107fa` |
+| `dockmsc.prx` | 29.546 bytes | `22474a2490052c770292543be66d90c7d76ed35d08a7a2dbcbc3f214096f244d` |
+
+Recibo: `data/msc-0207-evidence/installation.json`. Build y tests están
+en esa misma carpeta. La 0206 anterior queda archivada y verificada en
+`C:\Users\ladir\Documents\PSP-Dock-Backups\msc-0206-before-0207-20261101-220716`.
+El título SFO es **PSP Dock - USB Storage + HID 0207**; ICON0, PIC0 y PIC1
+coinciden byte a byte con las fuentes revisadas de 0206.
+
+**Pendiente:** montaje FAT, lecturas sin caché con SHA-256/nonce correctos
+y cambios HID durante esas lecturas. El próximo intento debe seguir el
+[procedimiento 0207](homebrew/composite-mscdemo/README.md#prueba-física-agrupada).
+La compilación y la instalación verificadas no acreditan esa aceptación.
+
+## Historial: instalación y cambios de 0206
 
 La revisión **PSP Dock - USB Storage + HID 0206** está compilada, auditada
 e instalada en `PSP/GAME/PSPDockStorageTest`, con relectura SHA-256 de
@@ -11,7 +118,7 @@ FAT12 de 512 KiB. **No ofrece acceso a la Memory Stick real.**
 
 | Variante | Interfaces | Contenido accesible | Estado |
 |---|---|---|---|
-| 0206, `054C:01CC` | HID + controlador Windows USBSTOR, MSC `08/06/50` | Disco FAT12 ficticio de 512 KiB | Instalada y releída por SHA-256; aceptación física pendiente |
+| 0206, `054C:01CC` | HID + controlador Windows USBSTOR, MSC `08/06/50` | Disco FAT12 ficticio de 512 KiB | Ejecutada; parada explícita conservada; lectura de archivos no verificada |
 | 0205, `054C:01CC` | HID + controlador Windows USBSTOR, MSC `08/06/50` | El mismo disco ficticio | Instalada y ejecutada; PnP e identidad SCSI observados antes de la retirada |
 | 0204, `054C:01CB` | HID + interfaz de archivos WinUSB | Servicio de archivos de solo lectura | Compilada y auditada; no instalada en este ensayo |
 
@@ -153,7 +260,7 @@ dockmsc.prx  cf1ef97f32ef87862c424435bdfb931da7daa448441b1bef45ce9315fbfcc689
 
 La aceptación debe confirmar que Windows monta el disco, lee los bytes
 esperados y recibe cambios del mando durante esas lecturas. El monitor
-exige mismo padre USB, revisión `0206`, nonce común y lecturas sin caché.
+exige mismo padre USB, revisión `0207`, nonce común y lecturas sin caché.
 Un hash correcto sin movimiento no pasa la aceptación combinada.
 
 El disco sigue generado en memoria y protegido contra escritura. Dar
@@ -164,7 +271,7 @@ estado EP0 diferido del reset BOT. Son comprobaciones de hardware aún
 pendientes; no se han presentado como comportamientos demostrados.
 
 Procedimiento y comandos vigentes:
-[USBSTOR + HID 0206](homebrew/composite-mscdemo/README.md).
+[USBSTOR + HID 0207](homebrew/composite-mscdemo/README.md).
 
 ## Ruta alternativa WinUSB: revisión y evidencia previa
 

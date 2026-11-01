@@ -25,12 +25,13 @@ enum MscStatus { MSC_STATUS_PASSED=0, MSC_STATUS_FAILED=1, MSC_STATUS_PHASE_ERRO
 typedef struct {
     uint32_t host_length;
     uint32_t device_length;
-    uint32_t transfer_length;
+    uint32_t transfer_length; /* Relevant bytes; excludes optional IN fill. */
+    uint32_t wire_length; /* USB data bytes, including zero fill for case 5. */
     uint8_t direction;
     uint8_t status;
     uint8_t case_id; /* USB MSC BOT 1.0, table 6.1 (1..13). */
     uint8_t valid_cbw;
-    /* Apply these stalls AFTER transfer_length data bytes, BEFORE the CSW.
+    /* Apply these stalls AFTER wire_length data bytes, BEFORE the CSW.
      * The USB wrapper must handle the host's CLEAR_FEATURE(ENDPOINT_HALT).
      * For invalid CBW, both are set and NO CSW may be returned. */
     uint8_t stall_in;
@@ -41,7 +42,8 @@ typedef struct {
 typedef struct {
     MscPlan plan;
     uint32_t tag;
-    uint32_t completed; /* Actual successfully transferred data bytes. */
+    uint32_t completed; /* Relevant successfully transferred data bytes. */
+    uint32_t wire_completed; /* All successful USB data bytes, including fill. */
     uint32_t first_lba;
     uint32_t response_length;
     uint8_t response[64];
@@ -69,12 +71,16 @@ MscPlan msc_plan_transfer(uint32_t host_length, enum MscDirection host_direction
  * -1 invalid/nonmeaningful wrapper, -2 reset recovery required/in progress.
  * CBW buffer must contain exactly one 31-byte USB transfer. */
 int msc_begin(MscBot *bot, const uint8_t *cbw, size_t size);
-/* Generate up to cap bytes of this command's IN data at offset. Does not
- * count data as sent: call msc_data_complete after USB completion. */
+/* Generate up to cap bytes of this command's IN data at WIRE offset,
+ * including zero fill after the relevant bytes for BOT case 5 (Hi > Di).
+ * Does not count data as sent: call msc_data_complete after USB completion. */
 size_t msc_read_data(const MscBot *bot, uint32_t offset, uint8_t *out, size_t cap);
-/* Returns 0 for an exact in-range completion, -1 for overrun/state error. */
+/* Count actual USB data bytes, including fill, only after successful DMA.
+ * completed counts the relevant prefix; wire_completed counts all bytes.
+ * Returns 0 for an in-range completion, -1 for overrun/state error. */
 int msc_data_complete(MscBot *bot, uint32_t bytes);
-/* Serialize the 13-byte CSW only after the entire planned data phase.
+/* Serialize the 13-byte CSW only after the entire planned WIRE data phase.
+ * Residue is host_length minus completed, so fill never reduces residue.
  * Returns 13 on success or -1. Phase errors keep CBW intake locked until
  * msc_reset. The caller must finish sending this CSW before another CBW. */
 int msc_csw(MscBot *bot, uint8_t out[MSC_CSW_SIZE]);

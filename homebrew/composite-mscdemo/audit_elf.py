@@ -109,8 +109,8 @@ def audit(raw: bytes) -> dict:
         require(device[:4] == b"\x12\x01\x00\x02", "Expected USB 2.0 device descriptor")
         require(device[4:8] == b"\0\0\0\x40" and device[17] == 1,
                 "Composite parent class, EP0 size or configuration count invalid")
-        require(struct.unpack_from("<H", device, 12)[0] == 0x0206,
-                "Wrong synthetic MSC diagnostic revision; expected 0206")
+        require(struct.unpack_from("<H", device, 12)[0] == 0x0207,
+                "Wrong synthetic MSC diagnostic revision; expected 0207")
         table = struct.unpack("<6I", elf.data(settings, 24))
         require(table == (elf.address(interfaces), 0, 1, elf.address(interfaces) + 24, 0, 1),
                 "Expected two separate 12-byte interface-settings records")
@@ -154,7 +154,7 @@ def audit(raw: bytes) -> dict:
                    "sceUsbbdRegister", "sceUsbbdReqRecv", "sceUsbbdReqSend", "sceUsbbdStall", "sceUsbActivate"):
         elf.address(symbol)
     require(elf.module_attributes() & 0x1000, "USB driver is not a kernel module")
-    return {"elf_machine": "MIPS", "revision": "0206", "interfaces": ["HID", "USBSTOR-SCSI-BOT"],
+    return {"elf_machine": "MIPS", "revision": "0207", "interfaces": ["HID", "USBSTOR-SCSI-BOT"],
             "descriptor_tables_verified": True, "kernel_filesystem_imports": [],
             "expected_usb_identity": {"vid": "054C", "pid": "01CC", "wire_identity_verified": False},
             "hid_poll_interval_ms": {"high_speed": 4, "full_speed": 4},

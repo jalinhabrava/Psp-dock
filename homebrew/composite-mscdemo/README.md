@@ -1,21 +1,19 @@
-# PSP Dock: USBSTOR + HID, prueba 0206
+# PSP Dock: USBSTOR + HID, prueba 0207
 
-**Estado: 0206 instalada y releída por SHA-256; aceptación física
-pendiente.** El título visible en el XMB es **PSP Dock - USB Storage + HID
-0206**. La carpeta de esta prueba sigue siendo
+**Estado: 0207 instalada y releída por SHA-256; aceptación física pendiente.**
+Nombre XMB: **PSP Dock - USB Storage + HID 0207**. La carpeta sigue siendo
 `PSP/GAME/PSPDockStorageTest`, separada del PSP Dock estable.
 
-La instalación verificada contiene **cuatro archivos y 367.483 bytes**.
-El título SFO y los bytes exactos de ICON0, PIC0 y PIC1 se comprobaron
-dentro del EBOOT. El recibo está en
-`data/msc-0206-evidence/installation.json`; la versión 0205 quedó archivada
-en el PC antes del reemplazo. Los tamaños, hashes y la ruta de ese archivo
-se registran en [la validación del controlador](../../COMPOSITE-DRIVER-VALIDATION.md#instalación-verificada-de-0206).
+La instalación contiene cuatro archivos y **368.243 bytes**. El título SFO
+y los bytes exactos de ICON0, PIC0 y PIC1 están comprobados dentro del EBOOT.
+Recibo: `data/msc-0207-evidence/installation.json`. La 0206 quedó archivada
+antes del reemplazo. Hashes y evidencias en
+[la validación del controlador](../../COMPOSITE-DRIVER-VALIDATION.md).
 
 La aplicación presenta un mando HID y almacenamiento estándar
 MSC/SCSI/Bulk-Only como dos interfaces del mismo dispositivo USB.
 Windows utiliza sus controladores `usbccgp`, `HidUsb` y `USBSTOR`.
-El producto diagnóstico `054C:01CC`, revisión `0206`, es distinto al
+El producto diagnóstico `054C:01CC`, revisión `0207`, es distinto al
 `01CB` del mando estable y del prototipo de archivos WinUSB.
 
 **El disco es ficticio, de 512 KiB y de solo lectura.** El controlador
@@ -23,6 +21,32 @@ genera sus sectores FAT12 en memoria; no abre dispositivos, juegos ni
 partidas de la Memory Stick. La fase actual debe confirmar montaje y
 lecturas simultáneas con el mando. Dar acceso a la Memory Stick real,
 devolver partidas y completar el ciclo del Dock siguen pendientes.
+
+## Qué aportó la prueba física 0206 y qué cambia en 0207
+
+El usuario confirmó esta vez una ejecución estable. La foto conserva
+PSP DOCK y la parada solicitada por START+SELECT: 1.187 informes HID,
+26 CSW completados y 18.284 bytes relevantes. Windows enumeró el disco
+PSPDOCK y llegó a iniciar un PDO de volumen, pero el monitor no observó
+una unidad asociada y no ejecutó lecturas de aceptación (`probe_attempts=0`).
+
+El último estado conservado fue `BOT 4 / CDB 1A / Datos 32/192`:
+MODE SENSE(6), esperando CSW tras respuesta IN corta. Los eventos SCSI
+Windows aportan el mismo CDB con un reintento; no prueban por sí solos
+el defecto exacto del endpoint Sony.
+
+0207 envía relleno cero en BOT caso 5 hasta la longitud pedida por el host,
+y conserva como residuo los bytes no relevantes. MODE SENSE 32/192 termina
+192 bytes USB y declara residuo 160; EVPD 7/255 declara 248. No genera CSW
+antes de confirmar el envío completo. Los contadores útiles excluyen el
+relleno. La opción está permitida por USB-IF BOT 1.0, sección 6.7.2.
+Añade READ CAPACITY(16) servicio 0x10, que Windows solicitó en este intento.
+
+Los casos de fase, consultas IN sin datos y CBW inválidos conservan sus
+reglas HALT/reset. El diagnóstico Windows ahora distingue disco CIM,
+particiones y letras; los volúmenes globales sin padre correlacionado no
+habilitan el probe. La UI usa coordenadas en píxeles y separación vertical;
+se verificó con el bitmap real del SDK, pendiente de verlo en la PSP.
 
 ## Qué se observó en la PSP con 0205
 
@@ -123,14 +147,14 @@ bash homebrew/composite-mscdemo/build-wsl.sh
 El build usa una carpeta propia y trata los avisos como errores. Ejecuta
 los 13 casos de fase BOT, comandos SCSI, límites, residuos, reset, FAT12 y
 50.000 entradas malformadas bajo AddressSanitizer y UndefinedBehaviorSanitizer.
-El wrapper real se compila en un harness con 11 escenarios asíncronos,
+El wrapper real se compila en un harness con 14 escenarios asíncronos,
 incluidos desconfiguración/reconfiguración y cancelación de EP0. Un parser
 Python separado recorre las cadenas FAT y comprueba los dos archivos de
 la imagen generada. También se auditan los imports reales del kernel y
 de la aplicación USER y los bytes incrustados de los tres recursos XMB.
 
-Estas comprobaciones pasan en WSL para 0206. En Windows pasan también
-**60 pruebas focales: 18 del instalador y 42 de aceptación, diagnóstico y
+Estas comprobaciones pasan en WSL para 0207. En Windows pasan también
+**66 pruebas focales: 18 del instalador y 48 de aceptación, diagnóstico y
 paquetes**. Los otros recuentos históricos pertenecen a revisiones
 anteriores, como detalla
 [la validación del controlador](../../COMPOSITE-DRIVER-VALIDATION.md).
@@ -144,7 +168,7 @@ En Windows, elegir una carpeta nueva de un disco fijo del PC. Sustituir
 las rutas de ejemplo y la letra de unidad por las verificadas en esa sesión:
 
 ```powershell
-python psp_msc_package.py --prepare C:\ruta\paquete-msc-0206
+python psp_msc_package.py --prepare C:\ruta\paquete-msc-0207
 ```
 
 ### Instalación nueva
@@ -152,8 +176,8 @@ python psp_msc_package.py --prepare C:\ruta\paquete-msc-0206
 Utilizar esta opción solo si no existe `PSP/GAME/PSPDockStorageTest`:
 
 ```powershell
-python psp_msc_install.py --package C:\ruta\paquete-msc-0206 --backup C:\ruta\backup-verificado --drive G:\
-python psp_msc_install.py --package C:\ruta\paquete-msc-0206 --backup C:\ruta\backup-verificado --drive G:\ --install --receipt C:\ruta\instalacion-msc-0206.json
+python psp_msc_install.py --package C:\ruta\paquete-msc-0207 --backup C:\ruta\backup-verificado --drive G:\
+python psp_msc_install.py --package C:\ruta\paquete-msc-0207 --backup C:\ruta\backup-verificado --drive G:\ --install --receipt C:\ruta\instalacion-msc-0207.json
 ```
 
 La primera llamada valida el plan sin instalar. Con `--install` se copian
@@ -161,21 +185,21 @@ y releen los cuatro archivos del paquete. Una carpeta existente se
 rechaza: para reemplazar una prueba revisada se utiliza la actualización
 por recibo descrita a continuación.
 
-### Actualizar la prueba 0205 instalada
+### Actualizar la prueba 0206 instalada
 
 Se necesita el recibo real de aquella instalación y una carpeta de archivo
 **nueva en un disco fijo del PC**, fuera de la PSP:
 
 ```powershell
-python psp_msc_install.py --package C:\ruta\paquete-msc-0206 --backup C:\ruta\backup-verificado --drive G:\ --upgrade-from-receipt C:\ruta\instalacion-msc-0205.json --archive C:\ruta\archivo-msc-0205
-python psp_msc_install.py --package C:\ruta\paquete-msc-0206 --backup C:\ruta\backup-verificado --drive G:\ --upgrade-from-receipt C:\ruta\instalacion-msc-0205.json --archive C:\ruta\archivo-msc-0205 --install --receipt C:\ruta\instalacion-msc-0206.json
+python psp_msc_install.py --package C:\ruta\paquete-msc-0207 --backup C:\ruta\backup-verificado --drive G:\ --upgrade-from-receipt C:\ruta\instalacion-msc-0206.json --archive C:\ruta\archivo-msc-0206
+python psp_msc_install.py --package C:\ruta\paquete-msc-0207 --backup C:\ruta\backup-verificado --drive G:\ --upgrade-from-receipt C:\ruta\instalacion-msc-0206.json --archive C:\ruta\archivo-msc-0206 --install --receipt C:\ruta\instalacion-msc-0207.json
 ```
 
 El plan verifica identidad USB/volumen, backup crítico vigente y los
 cuatro archivos exactos del recibo anterior. Rechaza archivos distintos,
 extras o enlaces. La actualización guarda primero la versión anterior en
-`archivo-msc-0205/files/`, verifica sus hashes y deja las fases en
-`archivo-msc-0205/upgrade.jsonl`.
+`archivo-msc-0206/files/`, verifica sus hashes y deja las fases en
+`archivo-msc-0206/upgrade.jsonl`.
 
 Después prepara la nueva carpeta y publica mediante dos renombrados en
 la misma Memory Stick. Si falla la publicación o el journal tras el primer
@@ -195,14 +219,14 @@ el PC y confirmar que sigue esperando. Su espera máxima es de 30 minutos;
 una ejecución que ya terminó no captura un intento posterior.
 
 ```powershell
-python psp_msc_acceptance.py --run --output C:\ruta\evidencia-msc-0206-nueva --rounds 8 --min-duration-seconds 8 --wait-seconds 1800
+python psp_msc_acceptance.py --run --output C:\ruta\evidencia-msc-0207-nueva --rounds 8 --min-duration-seconds 15 --wait-seconds 1800
 ```
 
 1. En la PSP, salir de Conexión USB y retirar el cable.
-2. En Juego → Memory Stick, seleccionar **PSP Dock - USB Storage + HID 0206**.
+2. En Juego → Memory Stick, seleccionar **PSP Dock - USB Storage + HID 0207**.
    Comprobar thumbnail y fondo; abrir y pulsar X cuando lo solicite.
 3. Esperar **LISTO: conecta el cable USB** y conectar una vez.
-4. Mover la cruceta y pulsar botones durante al menos 10 segundos mientras
+4. Mover la cruceta y pulsar botones durante un minuto mientras
    Windows monta el disco y el monitor lee `PROBE.DAT`. Si la pantalla
    indica reconfiguración, dejar que termine y conservar su diagnóstico.
 5. Mantener START+SELECT un segundo para solicitar el cierre. Esperar a
@@ -215,12 +239,15 @@ El monitor conserva `before.json`, `latest.json`, `after.json` y
 `transitions.jsonl`: estados observados que cambian, con secuencia,
 marca UTC y tiempo transcurrido, sin reemplazar los anteriores. Así una
 captura final vacía no borra los dispositivos vistos previamente.
+También conserva las etapas CIM y los inventarios globales no correlacionados,
+con hora inicial y final de cada observación. Un error de asociación CIM
+bloquea la aceptación, y los candidatos globales nunca abren archivos.
 El límite del historial es 8 MiB; si se alcanza, se detiene la observación
 con la evidencia ya registrada.
 
 Cuando una unidad candidata y su HID están preparados, el monitor ejecuta
 una única aceptación y guarda los archivos y `evidence.json` en `probe/`.
-Exige mismo padre USB, revisión `0206`, producto `01CC`, etiqueta/serial
+Exige mismo padre USB, revisión `0207`, producto `01CC`, etiqueta/serial
 del disco y nonce PDK1. Las lecturas usan archivos normales con
 `FILE_FLAG_NO_BUFFERING` para comprobar los bytes a través del dispositivo.
 También deben observarse cambios de botones o cruceta durante las lecturas:
@@ -239,6 +266,7 @@ aceptación física ni prueban el Dock completo con juegos y partidas reales.
 ## Referencias primarias
 
 - [USB-IF, Bulk-Only Transport 1.0](https://www.usb.org/sites/default/files/usbmassbulk_10.pdf)
+- [T10, formato READ CAPACITY(16)](https://www.t10.org/ftp/t10/document.03/03-387r2.pdf)
 - [PSPSDK, UsbDriver y callbacks de configuración](https://pspdev.github.io/pspsdk/structUsbDriver.html)
 - [PSPSDK, estados USB y señal de cable](https://pspdev.github.io/pspsdk/pspusb_8h_source.html)
 - [Microsoft, identificadores generados por USBSTOR](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/identifiers-generated-by-usbstor-sys)

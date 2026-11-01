@@ -2,6 +2,7 @@ import copy
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
@@ -24,13 +25,13 @@ def hid_report(session=NONCE):
 PARENT = r'USB\VID_054C&PID_01CC\PSPMSC'
 STORAGE = r'USB\VID_054C&PID_01CC&MI_01\STORAGE'
 JOYSTICK = r'USB\VID_054C&PID_01CC&MI_00\JOYSTICK'
-DISK = r'USBSTOR\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST&REV_0206\PSPMSC&0'
+DISK = r'USBSTOR\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST&REV_0001\PSPMSC&0'
 HID_NODE = '\\'.join(HID_PATH[4:].split('#')[:3])
 
 
 def node(instance, parent, service):
     return {'instance': instance, 'parent': parent, 'status': 'OK',
-            'service': service, 'hardware_ids': [r'USB\VID_054C&PID_01CC&REV_0206']}
+            'service': service, 'hardware_ids': [r'USB\VID_054C&PID_01CC&REV_0207']}
 
 
 def snapshot():
@@ -379,10 +380,151 @@ class MSCAcceptanceTests(unittest.TestCase):
         self.assertLessEqual((output / 'transitions.jsonl').stat().st_size, 500)
         self.assertTrue(json.loads((output / 'monitor.json').read_text())['transition_history_limit_reached'])
 
-    def test_previous_0205_firmware_stays_unready_for_0206_host(self):
+    def test_previous_0206_firmware_stays_unready_for_0207_host(self):
         old = snapshot()
-        old['volumes'][0]['chain'][2]['hardware_ids'] = [r'USB\VID_054C&PID_01CC&REV_0205']
+        old['volumes'][0]['chain'][2]['hardware_ids'] = [r'USB\VID_054C&PID_01CC&REV_0206']
         self.assertFalse(msc.pnp_readiness(old)['ready'])
+
+    def test_native_discovery_distinguishes_each_missing_cim_association(self):
+        base = snapshot()
+        base.update(backend='windows-cim', usb_nodes=[])
+        base['storage_inventory'] = {
+            'queried': True, 'pnp_disk_count': 1, 'hid_pnp_count': 1,
+            'disks': [], 'errors': [],
+        }
+        rows = (
+            ([], [], 'pnp_disk_without_cim_disk'),
+            ([{'pnp_id': DISK, 'index': 6, 'partitions': []}], [],
+             'cim_disk_without_partition'),
+            ([{'pnp_id': DISK, 'index': 6, 'partitions': [
+                {'device_id': 'Disk #6, Partition #0', 'logical_disks': []}]}], [],
+             'partition_without_logical_disk'),
+            ([{'pnp_id': DISK, 'index': 6, 'partitions': [
+                {'device_id': 'Disk #6, Partition #0', 'logical_disks': [{'device_id': 'Z:'}]}]}],
+             snapshot()['volumes'], 'linked_logical_volume'),
+        )
+        for disks, volumes, expected in rows:
+            data = copy.deepcopy(base)
+            data['volumes'] = volumes
+            data['storage_inventory']['disks'] = disks
+            run = Mock(return_value=SimpleNamespace(
+                returncode=0, stdout=json.dumps(data), stderr=''))
+            with self.subTest(stage=expected), patch.object(msc.os, 'name', 'nt'):
+                actual = msc.discover_volumes(run=run)
+            self.assertEqual(actual['discovery_stage'], expected)
+            self.assertEqual(actual['storage_inventory']['disks'], disks)
+            self.assertEqual(actual['volumes'], volumes)
+            self.assertTrue(run.call_args.args[0][-1].startswith('$includeGlobalVolumes=$false\n'))
+
+    def test_matching_global_volume_remains_uncorrelated_and_never_starts_probe(self):
+        data = snapshot()
+        data['volumes'] = []
+        data['storage_inventory'] = {
+            'queried': True, 'pnp_disk_count': 1, 'hid_pnp_count': 1, 'errors': [],
+            'disks': [{'pnp_id': DISK, 'index': 6, 'partitions': []}],
+        }
+        data['uncorrelated_volume_inventory'] = {
+            'queried': True, 'parent_correlation': 'none', 'errors': [],
+            'logical_disks': [{'device_id': 'Z:', 'label': msc.VOLUME_LABEL,
+                               'serial': msc.VOLUME_SERIAL, 'filesystem': 'FAT'}],
+            'volumes': [{'device_id': '\\\\?\\Volume{UNPAIRED}\\', 'drive_letter': 'Z:',
+                         'label': msc.VOLUME_LABEL, 'serial': int(msc.VOLUME_SERIAL, 16)}],
+        }
+        output = self.root / 'global-only'
+        acceptance = Mock()
+        with self.assertRaises(WinUSBError):
+            msc.monitor(output, wait_seconds=0, discover=lambda: data,
+                        diagnostics=lambda: {'devices': []}, acceptance=acceptance)
+        acceptance.assert_not_called()
+        self.assertFalse((output / 'probe').exists())
+        events = [json.loads(line) for line in (output / 'transitions.jsonl').read_text().splitlines()]
+        event = next(item for item in events if item['kind'] == 'observation')
+        self.assertEqual(event['state']['volumes'], [])
+        self.assertEqual(event['state']['storage_inventory'], data['storage_inventory'])
+        self.assertEqual(event['state']['uncorrelated_volume_inventory'],
+                         data['uncorrelated_volume_inventory'])
+        self.assertEqual(event['state']['readiness']['discovery_stage'], 'cim_disk_without_partition')
+        self.assertIn('observed_utc', event)
+        self.assertIn('completed_utc', event)
+
+    def test_partial_cim_query_failure_blocks_an_otherwise_valid_volume(self):
+        data = snapshot()
+        data['storage_inventory'] = {
+            'queried': True, 'pnp_disk_count': 1, 'disks': [],
+            'errors': [{'stage': 'partitions', 'instance': DISK, 'error': 'Provider timeout'}],
+        }
+        self.assertEqual(msc.discovery_stage(data), 'cim_query_error')
+        self.assertFalse(msc.pnp_readiness(data)['ready'])
+        with self.assertRaisesRegex(WinUSBError, 'consulta CIM'):
+            self.run_test(discover=lambda: data)
+        self.assertEqual(self.files.opened, [])
+
+    def test_cim_query_error_stage_survives_a_later_empty_snapshot(self):
+        failed = {'volumes': [], 'usb_nodes': [], 'hid_nodes': [],
+                  'storage_inventory': {'queried': True, 'pnp_disk_count': 1, 'disks': [],
+                                        'errors': [{'stage': 'logical_disks',
+                                                    'instance': 'Disk #6, Partition #0',
+                                                    'error': 'CIM transient failure'}]}}
+        discovery = Mock(side_effect=[failed, {'volumes': [], 'usb_nodes': [], 'hid_nodes': []}])
+        clock = [0.0]
+        def advance(seconds):
+            clock[0] += seconds
+        output = self.root / 'cim-error-history'
+        with patch.object(msc.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(msc.time, 'sleep', side_effect=advance), self.assertRaises(WinUSBError):
+            msc.monitor(output, wait_seconds=1, discover=discovery,
+                        diagnostics=lambda: {'devices': []})
+        events = [json.loads(line) for line in (output / 'transitions.jsonl').read_text().splitlines()]
+        error = next(event['state']['storage_inventory']['errors'][0] for event in events
+                     if event['kind'] == 'observation' and 'storage_inventory' in event['state'])
+        self.assertEqual(error['stage'], 'logical_disks')
+        self.assertEqual(error['error'], 'CIM transient failure')
+        latest = json.loads((output / 'latest.json').read_text())
+        self.assertNotIn('storage_inventory', latest['observation']['storage'])
+
+    def test_global_inventory_is_rate_limited_even_when_provider_fails(self):
+        clock, scanned = [0.0], []
+        def advance(seconds):
+            clock[0] += seconds
+        def discover(*, include_global_volumes):
+            if include_global_volumes:
+                scanned.append(clock[0])
+            return {'volumes': [], 'usb_nodes': [], 'hid_nodes': [],
+                    'uncorrelated_volume_inventory': {
+                        'queried': include_global_volumes, 'parent_correlation': 'none',
+                        'errors': [{'stage': 'global_volumes', 'error': 'Provider unavailable'}]
+                                  if include_global_volumes else [],
+                    }}
+        acceptance = Mock()
+        with patch.object(msc, 'discover_volumes', discover), \
+             patch.object(msc.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(msc.time, 'sleep', side_effect=advance), self.assertRaises(WinUSBError):
+            msc.monitor(self.root / 'global-cadence', wait_seconds=16, discover=discover,
+                        diagnostics=lambda: {'devices': []}, acceptance=acceptance)
+        self.assertEqual(scanned, [0, 15])
+        acceptance.assert_not_called()
+
+    def test_observation_is_journaled_before_slow_diagnostics(self):
+        clock, captures = [0.0], [0]
+        def discover():
+            clock[0] = 16
+            return {'volumes': [], 'usb_nodes': [], 'hid_nodes': []}
+        def diagnostics():
+            captures[0] += 1
+            if captures[0] > 1:
+                clock[0] += 5
+            return {'devices': [{'instance': 'observation-' + str(captures[0])}]}
+        output = self.root / 'capture-timing'
+        with patch.object(msc.time, 'monotonic', side_effect=lambda: clock[0]), \
+             self.assertRaises(WinUSBError):
+            msc.monitor(output, wait_seconds=0, discover=discover, diagnostics=diagnostics)
+        events = [json.loads(line) for line in (output / 'transitions.jsonl').read_text().splitlines()]
+        observed = next(event for event in events if event['kind'] == 'observation')
+        delayed = next(event for event in events if event['kind'] == 'diagnostics'
+                       and event['state']['devices'][0]['instance'] == 'observation-2')
+        self.assertEqual(observed['elapsed_seconds'], 16)
+        self.assertEqual(delayed['elapsed_seconds'], 21)
+        self.assertLess(observed['sequence'], delayed['sequence'])
 
 
 if __name__ == '__main__':

@@ -26,7 +26,7 @@ from psp_composite_client import PROBE_SIZE, PROBE_SHA256, _new_local_destinatio
 from psp_winusb_transport import WinUSBError
 from bridge_hid import MSC_TEST_PID
 
-MSC_REVISION = 0x0206
+MSC_REVISION = 0x0207
 MSC_PRODUCT = MSC_TEST_PID
 VOLUME_LABEL = 'PSPDOCKTEST'
 VOLUME_SERIAL = '50444334'
@@ -74,33 +74,121 @@ $hids=@($nodes | Where-Object {
 })
 $disks=@($nodes | Where-Object {$_.instance -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)'})
 $volumes=@()
+$inventory=[ordered]@{queried=$false;pnp_disk_count=$disks.Count;hid_pnp_count=$hids.Count;
+    skipped_reason='';disks=@();errors=@()}
+function New-QueryError([string]$stage,[string]$instance,$exception) {
+    $message=[string]$exception.Message
+    if($message.Length -gt 240) {$message=$message.Substring(0,240)}
+    [PSCustomObject]@{stage=$stage;instance=$instance;error=$message}
+}
 # No disk/partition WMI traversal until both function stacks are present.
 # Parent/MI01 failures are still returned immediately in usb_nodes.
 if($disks.Count -gt 0 -and $hids.Count -gt 0) {
-    $volumes=@(Get-CimInstance Win32_DiskDrive | Where-Object {
-        $_.PNPDeviceID -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)'
-    } | ForEach-Object {
-        $disk=$_
+    $inventory.queried=$true
+    $cimDisks=@()
+    try {
+        $cimDisks=@(Get-CimInstance Win32_DiskDrive -ErrorAction Stop | Where-Object {
+            $_.PNPDeviceID -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)'
+        })
+    } catch {
+        $inventory.errors+=New-QueryError 'disk' '' $_.Exception
+    }
+    foreach($disk in $cimDisks) {
+        $diskRow=[ordered]@{pnp_id=$disk.PNPDeviceID;device_id=$disk.DeviceID;index=$disk.Index;
+            size=$disk.Size;bytes_per_sector=$disk.BytesPerSector;media_loaded=$disk.MediaLoaded;
+            status=$disk.Status;reported_partition_count=$disk.Partitions;partitions=@()}
         $chain=@(Get-DeviceChain $disk.PNPDeviceID)
-        $parts=@(Get-CimAssociatedInstance -InputObject $disk -Association Win32_DiskDriveToDiskPartition)
+        $parts=@()
+        try {
+            $parts=@(Get-CimAssociatedInstance -InputObject $disk -Association Win32_DiskDriveToDiskPartition -ErrorAction Stop)
+        } catch {
+            $inventory.errors+=New-QueryError 'partitions' $disk.PNPDeviceID $_.Exception
+        }
         foreach($part in $parts) {
-            $logical=@(Get-CimAssociatedInstance -InputObject $part -Association Win32_LogicalDiskToPartition)
+            $partRow=[ordered]@{device_id=$part.DeviceID;disk_index=$part.DiskIndex;index=$part.Index;
+                starting_offset=$part.StartingOffset;size=$part.Size;type=$part.Type;
+                boot_partition=$part.BootPartition;logical_disks=@()}
+            $logical=@()
+            try {
+                $logical=@(Get-CimAssociatedInstance -InputObject $part -Association Win32_LogicalDiskToPartition -ErrorAction Stop)
+            } catch {
+                $inventory.errors+=New-QueryError 'logical_disks' $part.DeviceID $_.Exception
+            }
             foreach($volume in $logical) {
-                [PSCustomObject]@{root=($volume.DeviceID+'\');label=$volume.VolumeName;
+                $partRow.logical_disks+=[PSCustomObject]@{device_id=$volume.DeviceID;
+                    label=$volume.VolumeName;serial=$volume.VolumeSerialNumber;
+                    filesystem=$volume.FileSystem;size=$volume.Size;drive_type=$volume.DriveType}
+                $volumes+=[PSCustomObject]@{root=($volume.DeviceID+'\');label=$volume.VolumeName;
                     serial=$volume.VolumeSerialNumber;filesystem=$volume.FileSystem;
                     disk_pnp_id=$disk.PNPDeviceID;disk_index=$disk.Index;chain=$chain}
             }
+            $diskRow.partitions+=[PSCustomObject]$partRow
         }
-    })
+        $inventory.disks+=[PSCustomObject]$diskRow
+    }
+} elseif($disks.Count -eq 0) {
+    $inventory.skipped_reason='waiting_pnp_disk'
+} else {
+    $inventory.skipped_reason='waiting_hid'
 }
-ConvertTo-Json -InputObject @{supported=$true;backend='windows-cim';volumes=$volumes;hid_nodes=$hids;usb_nodes=$nodes} -Depth 8 -Compress
+# These candidates are diagnostic only. A matching label/serial does not
+# identify the USB parent and must NEVER become an acceptance volume.
+# The caller requests this slower inventory at most once every 15 seconds.
+$globalInventory=[ordered]@{queried=$false;parent_correlation='none';
+    logical_disks=@();volumes=@();errors=@()}
+if($includeGlobalVolumes -and $disks.Count -gt 0 -and $volumes.Count -eq 0) {
+    $globalInventory.queried=$true
+    try {
+        $globalInventory.logical_disks=@(Get-CimInstance Win32_LogicalDisk -OperationTimeoutSec 5 -ErrorAction Stop |
+            Where-Object {$_.VolumeName -eq 'PSPDOCKTEST' -or $_.VolumeSerialNumber -eq '50444334'} |
+            ForEach-Object {[PSCustomObject]@{device_id=$_.DeviceID;label=$_.VolumeName;
+                serial=$_.VolumeSerialNumber;filesystem=$_.FileSystem;size=$_.Size;drive_type=$_.DriveType}})
+    } catch {
+        $globalInventory.errors+=New-QueryError 'global_logical_disks' '' $_.Exception
+    }
+    try {
+        $globalInventory.volumes=@(Get-CimInstance Win32_Volume -OperationTimeoutSec 5 -ErrorAction Stop |
+            Where-Object {$_.Label -eq 'PSPDOCKTEST' -or $_.SerialNumber -eq 0x50444334} |
+            ForEach-Object {[PSCustomObject]@{device_id=$_.DeviceID;drive_letter=$_.DriveLetter;
+                label=$_.Label;serial=$_.SerialNumber;filesystem=$_.FileSystem;
+                capacity=$_.Capacity;drive_type=$_.DriveType}})
+    } catch {
+        $globalInventory.errors+=New-QueryError 'global_volumes' '' $_.Exception
+    }
+}
+ConvertTo-Json -InputObject @{supported=$true;backend='windows-cim';volumes=$volumes;hid_nodes=$hids;usb_nodes=$nodes;
+    storage_inventory=$inventory;uncorrelated_volume_inventory=$globalInventory} -Depth 10 -Compress
 '''
 
 
-def discover_volumes(*, run=subprocess.run) -> dict:
+def discovery_stage(snapshot: dict) -> str:
+    """Describe a missing association without treating global volumes as proof."""
+    inventory = snapshot.get('storage_inventory')
+    if not isinstance(inventory, dict):
+        return 'not_recorded'
+    if inventory.get('errors'):
+        return 'cim_query_error'
+    if snapshot.get('volumes'):
+        return 'linked_logical_volume'
+    if not inventory.get('pnp_disk_count'):
+        return 'waiting_pnp_disk'
+    if not inventory.get('queried'):
+        return inventory.get('skipped_reason') or 'cim_not_queried'
+    disks = inventory.get('disks', [])
+    if not disks:
+        return 'pnp_disk_without_cim_disk'
+    if not any(disk.get('partitions') for disk in disks):
+        return 'cim_disk_without_partition'
+    return 'partition_without_logical_disk'
+
+
+def discover_volumes(*, run=subprocess.run, include_global_volumes: bool = False) -> dict:
+    if type(include_global_volumes) is not bool:
+        raise ValueError('La opción de inventario global debe ser booleana.')
     if os.name != 'nt':
         return {'supported': False, 'backend': 'unavailable', 'volumes': [], 'hid_nodes': [], 'usb_nodes': []}
-    completed = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', DISCOVER_SCRIPT],
+    script = '$includeGlobalVolumes=' + ('$true' if include_global_volumes else '$false') + '\n' + DISCOVER_SCRIPT
+    completed = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
                     capture_output=True, text=True, timeout=45, creationflags=0x08000000)
     if completed.returncode:
         raise WinUSBError('No se pudo correlacionar el volumen USB: ' + completed.stderr[:240])
@@ -113,6 +201,7 @@ def discover_volumes(*, run=subprocess.run) -> dict:
             not isinstance(data.get('hid_nodes'), list) or len(data['hid_nodes']) > 16 or
             not isinstance(data.get('usb_nodes'), list) or len(data['usb_nodes']) > 64):
         raise WinUSBError('Respuesta de volúmenes Windows no válida.')
+    data['discovery_stage'] = discovery_stage(data)
     return data
 
 
@@ -142,6 +231,9 @@ def _chain_parent(chain: list, interface_pattern, expected_service: str) -> str:
 
 
 def correlate_volume(snapshot: dict, hid_path: str) -> dict:
+    inventory = snapshot.get('storage_inventory')
+    if isinstance(inventory, dict) and inventory.get('errors'):
+        raise WinUSBError('La consulta CIM está incompleta; no aceptar una asociación parcial.')
     if not isinstance(hid_path, str) or re.match(
             r'^\\\\\?\\hid#vid_054c&pid_01cc&mi_00(?:&|#)', hid_path, re.I) is None:
         raise WinUSBError('El mando no pertenece al PID exclusivo del diagnostico MSC.')
@@ -374,7 +466,17 @@ def pnp_readiness(snapshot: dict) -> dict:
     if len(volumes) > 1 or len(hids) > 1:
         return dict(result, ambiguous=True, reason='Hay varios discos o mandos candidatos; no elegir uno.')
     if not volumes:
-        return dict(result, reason='Esperando al volumen PSPDOCKTEST.')
+        stage = snapshot.get('discovery_stage') or discovery_stage(snapshot)
+        reasons = {
+            'waiting_pnp_disk': 'Esperando al dispositivo de disco USBSTOR.',
+            'waiting_hid': 'El disco PnP aparece; esperando a HID antes de consultar CIM.',
+            'pnp_disk_without_cim_disk': 'El disco PnP aparece, pero CIM todavía no publica su disco.',
+            'cim_disk_without_partition': 'CIM publica el disco sin particiones asociadas.',
+            'partition_without_logical_disk': 'CIM publica particiones sin unidad lógica/letra asociada.',
+            'cim_query_error': 'La consulta CIM falló; se conserva el estadio y el error.',
+        }
+        return dict(result, discovery_stage=stage,
+                    reason=reasons.get(stage, 'Esperando al volumen PSPDOCKTEST.'))
     if not hids:
         return dict(result, reason='El volumen ya aparece; esperando a su interfaz HID.')
     instance = hids[0].get('instance', '') if isinstance(hids[0], dict) else ''
@@ -403,13 +505,19 @@ class TransitionHistory:
         with path.open('x', encoding='utf-8'):
             pass
 
-    def append(self, kind: str, state: dict) -> bool:
+    def append(self, kind: str, state: dict, *, observed_utc: str | None = None,
+               completed_utc: str | None = None) -> bool:
         canonical = json.dumps(state, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
         if self.previous.get(kind) == canonical:
             return True
         event = {'sequence': self.count + 1, 'utc': datetime.now(timezone.utc).isoformat(),
                  'elapsed_seconds': round(time.monotonic() - self.started, 4),
                  'kind': kind, 'state': state}
+        # Capture times are metadata, outside the deduplicated state.
+        if observed_utc is not None:
+            event['observed_utc'] = observed_utc
+        if completed_utc is not None:
+            event['completed_utc'] = completed_utc
         data = (json.dumps(event, sort_keys=True, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8')
         if self.bytes + len(data) > self.MAX_BYTES:
             self.full = True
@@ -431,6 +539,9 @@ def _transition_state(observation: dict) -> dict:
         values = storage.get(key, [])
         result[key] = sorted(values, key=lambda row: str(row.get(identity, ''))
                              if isinstance(row, dict) else str(row)) if isinstance(values, list) else values
+    for key in ('storage_inventory', 'uncorrelated_volume_inventory', 'discovery_stage'):
+        if key in storage:
+            result[key] = storage[key]
     for key in ('readiness', 'discovery_error'):
         if key in observation:
             result[key] = observation[key]
@@ -460,6 +571,7 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
     root.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     deadline = started + wait_seconds
+    last_global_scan = None
     history = TransitionHistory(root / 'transitions.jsonl', started)
     record = {
         'schema': 'pspdock-msc-monitor-v1',
@@ -472,6 +584,7 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
         'wait_seconds': wait_seconds, 'observations': 0,
         'probe_directory': str(root / 'probe'),
         'transition_history': str(history.path), 'transition_history_max_bytes': history.MAX_BYTES,
+        'global_volume_scan_interval_seconds': 15,
     }
 
     def capture():
@@ -502,24 +615,34 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
             record['observations'] += 1
             observation = {'observed_utc': datetime.now(timezone.utc).isoformat()}
             try:
-                snapshot = discover()
+                if discover is discover_volumes:
+                    scan_due = last_global_scan is None or time.monotonic() - last_global_scan >= 15
+                    snapshot = discover(include_global_volumes=scan_due)
+                    global_scan = snapshot.get('uncorrelated_volume_inventory', {})
+                    if isinstance(global_scan, dict) and global_scan.get('queried') is True:
+                        last_global_scan = time.monotonic()
+                else:
+                    snapshot = discover()
                 if not isinstance(snapshot, dict) or not isinstance(snapshot.get('volumes'), list):
                     raise WinUSBError('Respuesta de descubrimiento MSC no válida.')
                 observation['storage'] = snapshot
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 snapshot = {'volumes': []}
                 observation['discovery_error'] = (type(exc).__name__ + ': ' + str(exc))[:300]
+            observation['completed_utc'] = datetime.now(timezone.utc).isoformat()
             readiness = pnp_readiness(snapshot)
             observation['readiness'] = readiness
             record['last_readiness'] = readiness
+            if not history.append('observation', _transition_state(observation),
+                                  observed_utc=observation['observed_utc'],
+                                  completed_utc=observation['completed_utc']):
+                raise WinUSBError('El historial alcanzó 8 MiB; se detiene la observación sin descartar estados anteriores.')
             if readiness['ready'] or readiness['ambiguous'] or time.monotonic() - last_diagnostics >= 15:
                 latest = capture()
                 last_diagnostics = time.monotonic()
             latest['observation'] = observation
             _publish_json(root / 'latest.json', latest)
             _publish_json(root / 'monitor.json', record)
-            if not history.append('observation', _transition_state(observation)):
-                raise WinUSBError('El historial alcanzó 8 MiB; se detiene la observación sin descartar estados anteriores.')
             if readiness['ambiguous']:
                 raise WinUSBError(readiness['reason'])
             if readiness['ready']:

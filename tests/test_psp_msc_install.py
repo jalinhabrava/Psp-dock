@@ -160,14 +160,14 @@ class MSCInstallTests(unittest.TestCase):
 
     def prepare_upgrade(self):
         old = self.install()
-        old['revision'] = '0205'
+        old['revision'] = '0206'
         old['identity'] = {'volume_serial': 'SERIAL', 'usb_device_id': 'USB-ID'}
         self.receipt = self.root / 'previous.json'
         self.receipt.write_text(json.dumps(old))
         self.archive = self.root / 'previous-test'
         self.previous = {name: (self.target / name).read_bytes() for name in FILES}
         binary = self.package / REMOTE_FOLDER / 'dockmsc.prx'
-        binary.write_bytes(binary.read_bytes() + b'NEW-0206')
+        binary.write_bytes(binary.read_bytes() + b'NEW-0207')
         manifest_file = self.package / 'manifest.json'
         manifest = json.loads(manifest_file.read_text())
         manifest['files']['dockmsc.prx'] = {'size': binary.stat().st_size, 'sha256': digest(binary)}

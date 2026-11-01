@@ -31,20 +31,20 @@ static void finish(MscBot *b,uint8_t status,uint32_t residue) {
     assert(msc_csw(b,csw)==-1);
 }
 static void matrix(void) {
-    struct MatrixCase {uint32_t h,d;enum MscDirection hd,dd;uint8_t id,status,si,so;uint32_t transfer;} cases[]={
-        {0,0,MSC_DIR_NONE,MSC_DIR_NONE,1,0,0,0,0},
-        {0,64,MSC_DIR_NONE,MSC_DIR_IN,2,2,0,0,0},
-        {0,64,MSC_DIR_NONE,MSC_DIR_OUT,3,2,0,0,0},
-        {64,0,MSC_DIR_IN,MSC_DIR_NONE,4,0,1,0,0},
-        {128,64,MSC_DIR_IN,MSC_DIR_IN,5,0,1,0,64},
-        {64,64,MSC_DIR_IN,MSC_DIR_IN,6,0,0,0,64},
-        {32,64,MSC_DIR_IN,MSC_DIR_IN,7,2,0,0,32},
-        {64,64,MSC_DIR_IN,MSC_DIR_OUT,8,2,1,0,0},
-        {64,0,MSC_DIR_OUT,MSC_DIR_NONE,9,0,0,1,0},
-        {64,64,MSC_DIR_OUT,MSC_DIR_IN,10,2,0,1,0},
-        {128,64,MSC_DIR_OUT,MSC_DIR_OUT,11,0,0,1,64},
-        {64,64,MSC_DIR_OUT,MSC_DIR_OUT,12,0,0,0,64},
-        {32,64,MSC_DIR_OUT,MSC_DIR_OUT,13,2,0,0,32}
+    struct MatrixCase {uint32_t h,d;enum MscDirection hd,dd;uint8_t id,status,si,so;uint32_t transfer,wire;} cases[]={
+        {0,0,MSC_DIR_NONE,MSC_DIR_NONE,1,0,0,0,0,0},
+        {0,64,MSC_DIR_NONE,MSC_DIR_IN,2,2,0,0,0,0},
+        {0,64,MSC_DIR_NONE,MSC_DIR_OUT,3,2,0,0,0,0},
+        {64,0,MSC_DIR_IN,MSC_DIR_NONE,4,0,1,0,0,0},
+        {128,64,MSC_DIR_IN,MSC_DIR_IN,5,0,0,0,64,128},
+        {64,64,MSC_DIR_IN,MSC_DIR_IN,6,0,0,0,64,64},
+        {32,64,MSC_DIR_IN,MSC_DIR_IN,7,2,0,0,32,32},
+        {64,64,MSC_DIR_IN,MSC_DIR_OUT,8,2,1,0,0,0},
+        {64,0,MSC_DIR_OUT,MSC_DIR_NONE,9,0,0,1,0,0},
+        {64,64,MSC_DIR_OUT,MSC_DIR_IN,10,2,0,1,0,0},
+        {128,64,MSC_DIR_OUT,MSC_DIR_OUT,11,0,0,1,64,64},
+        {64,64,MSC_DIR_OUT,MSC_DIR_OUT,12,0,0,0,64,64},
+        {32,64,MSC_DIR_OUT,MSC_DIR_OUT,13,2,0,0,32,32}
     };
     size_t i;
     for(i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {
@@ -54,6 +54,7 @@ static void matrix(void) {
         assert(p.case_id==c->id && p.status==c->status);
         assert(p.stall_in==c->si && p.stall_out==c->so);
         assert(p.transfer_length==c->transfer && p.reset_required==(c->status==2));
+        assert(p.wire_length==c->wire);
         p=msc_plan_transfer(c->h,c->hd,c->d,c->dd,MSC_STATUS_FAILED);
         assert(p.status==(c->status==2?2:1));
     }
@@ -106,8 +107,10 @@ static void scsi_basics(void) {
     assert(r[1]==0x80 && r[4]==31);
     assert(!msc_data_complete(&b,36));assert(msc_data_complete(&b,1)==-1);finish(&b,0,0);
     cbw(c,0x12,6,64,1);c[19]=36;assert(!msc_begin(&b,c,31));
-    assert(b.plan.case_id==5 && b.plan.stall_in && b.plan.transfer_length==36);
-    assert(!msc_data_complete(&b,36));finish(&b,0,28);
+    assert(b.plan.case_id==5 && !b.plan.stall_in && b.plan.transfer_length==36 && b.plan.wire_length==64);
+    assert(msc_read_data(&b,0,r,sizeof(r))==64);
+    assert(!msc_data_complete(&b,36) && msc_csw(&b,csw)==-1);
+    assert(!msc_data_complete(&b,28) && b.completed==36 && b.wire_completed==64);finish(&b,0,28);
     cbw(c,0x12,6,7,1);c[16]=1;c[17]=0;c[19]=7;assert(!msc_begin(&b,c,31));
     assert(msc_read_data(&b,0,r,sizeof(r))==7 && r[3]==3 && r[6]==0x83);
     assert(!msc_data_complete(&b,7));finish(&b,0,0);
@@ -127,6 +130,100 @@ static void scsi_basics(void) {
     assert(!msc_data_complete(&b,28));finish(&b,0,0);
     cbw(c,0,6,0,0);assert(!msc_begin(&b,c,31));finish(&b,0,0);
     cbw(c,0x35,10,0,0);assert(!msc_begin(&b,c,31));finish(&b,0,0);
+}
+static void short_in_padding(void) {
+    static const uint8_t mode6[32]={31,0,0x80,8,0,0,4,0,0,0,2,0,8,18};
+    MscBot b;uint8_t c[31],r[1024],csw[13];uint32_t i;
+    msc_init(&b,NULL);
+    /* The exact last command observed in the 0206 hardware photograph:
+     * MODE SENSE (6), 32 relevant bytes, host allocation 192. */
+    cbw(c,0x1a,6,192,1);c[17]=0x3f;c[19]=192;
+    assert(!msc_begin(&b,c,31));
+    assert(b.plan.case_id==5 && b.plan.status==0 && !b.plan.reset_required);
+    assert(b.plan.transfer_length==32 && b.plan.wire_length==192);
+    assert(!b.plan.stall_in && !b.plan.stall_out);
+    memset(r,0xa5,sizeof(r));assert(msc_read_data(&b,0,r,sizeof(r))==192);
+    assert(!memcmp(r,mode6,32));
+    for(i=32;i<192;i++)assert(r[i]==0);
+    assert(r[192]==0xa5); /* The output capacity is not the transfer size. */
+    assert(!msc_data_complete(&b,17) && b.completed==17 && b.wire_completed==17);
+    assert(!msc_data_complete(&b,64) && b.completed==32 && b.wire_completed==81);
+    assert(msc_csw(&b,csw)==-1); /* Relevant bytes alone cannot finish the phase. */
+    memset(r,0xa5,sizeof(r));assert(msc_read_data(&b,81,r,sizeof(r))==111);
+    for(i=0;i<111;i++)assert(r[i]==0);
+    assert(r[111]==0xa5 && !msc_data_complete(&b,111));
+    assert(b.completed==32 && b.wire_completed==192);
+    assert(msc_data_complete(&b,1)==-1);finish(&b,0,160);
+
+    /* Exact Windows EVPD CDB 12 01 00 00 FF 00: valid page zero,
+     * 7 relevant bytes and 248 fill bytes. Keep parser validation intact. */
+    cbw(c,0x12,6,255,1);c[16]=1;c[19]=255;
+    assert(!msc_begin(&b,c,31) && b.plan.status==0 && !b.plan.stall_in);
+    assert(b.plan.transfer_length==7 && b.plan.wire_length==255);
+    assert(msc_read_data(&b,0,r,sizeof(r))==255);
+    assert(!memcmp(r,"\0\0\0\3\0\200\203",7));
+    for(i=7;i<255;i++)assert(r[i]==0);
+    assert(!msc_data_complete(&b,255) && b.completed==7);finish(&b,0,248);
+
+    /* Fill following block data must not expose the next generated sector. */
+    cbw(c,0x28,10,1024,1);put_be32(c+17,9);c[23]=1;
+    assert(!msc_begin(&b,c,31) && b.plan.transfer_length==512 && b.plan.wire_length==1024);
+    assert(msc_read_data(&b,0,r,sizeof(r))==1024);
+    for(i=0;i<512;i++)assert(r[i]==(uint8_t)(i*17u+3u));
+    for(i=512;i<1024;i++)assert(r[i]==0);
+    assert(!msc_data_complete(&b,512) && msc_csw(&b,csw)==-1);
+    assert(!msc_data_complete(&b,512));finish(&b,0,512);
+
+    /* Large host lengths are streamed, with bounded arithmetic and no
+     * allocation or access beyond the 32-byte SCSI response. */
+    cbw(c,0x1a,6,UINT32_MAX,1);c[17]=0x3f;c[19]=192;
+    assert(!msc_begin(&b,c,31));
+    assert(msc_read_data(&b,UINT32_MAX-7u,r,sizeof(r))==7);
+    for(i=0;i<7;i++)assert(r[i]==0);
+    assert(msc_read_data(&b,UINT32_MAX,r,sizeof(r))==0);
+    assert(!msc_data_complete(&b,64) && b.completed==32 && b.wire_completed==64);
+    msc_reset(&b);assert(!b.completed && !b.wire_completed && !b.command_active);
+}
+static void read_capacity16(void) {
+    static const uint8_t capacity[32]={0,0,0,0,0,0,3,0xff,0,0,2,0};
+    MscBot b;uint8_t c[31],r[64];uint32_t i;
+    msc_init(&b,NULL);
+    /* Exact READ CAPACITY (16), service action 10h, observed from Windows. */
+    cbw(c,0x9e,16,32,1);c[16]=0x10;put_be32(c+25,32);
+    assert(!msc_begin(&b,c,31) && b.plan.case_id==6 && b.plan.status==0);
+    assert(msc_read_data(&b,0,r,sizeof(r))==32 && !memcmp(r,capacity,32));
+    assert(!msc_data_complete(&b,32));finish(&b,0,0);
+    /* A shorter allocation truncates the same parameter data. */
+    cbw(c,0x9e,16,9,1);c[16]=0x10;put_be32(c+25,9);
+    assert(!msc_begin(&b,c,31) && b.plan.transfer_length==9);
+    assert(msc_read_data(&b,0,r,sizeof(r))==9 && !memcmp(r,capacity,9));
+    assert(!msc_data_complete(&b,9));finish(&b,0,0);
+    /* Allocation greater than the 32-byte response uses BOT fill. */
+    cbw(c,0x9e,16,64,1);c[16]=0x10;put_be32(c+25,UINT32_MAX);
+    assert(!msc_begin(&b,c,31) && b.plan.transfer_length==32 && b.plan.wire_length==64);
+    assert(msc_read_data(&b,0,r,sizeof(r))==64 && !memcmp(r,capacity,32));
+    for(i=32;i<64;i++)assert(r[i]==0);
+    assert(!msc_data_complete(&b,64));finish(&b,0,32);
+    cbw(c,0x9e,16,0,1);c[16]=0x10;
+    assert(!msc_begin(&b,c,31) && b.plan.status==0);finish(&b,0,0);
+    /* Invalid service action/reserved bits, either LBA half, PMI and
+     * undersized CDB all stay rejected with INVALID FIELD IN CDB. */
+    for(i=0;i<6;i++) {
+        cbw(c,0x9e,16,32,1);c[16]=0x10;put_be32(c+25,32);
+        if(i==0)c[16]=0x11;
+        else if(i==1)c[16]=0x30;
+        else if(i==2)c[17]=1;
+        else if(i==3)c[24]=1;
+        else if(i==4)c[29]=1;
+        else c[14]=15;
+        assert(!msc_begin(&b,c,31) && b.plan.status==1 && b.sense_key==5 && b.sense_asc==0x24);
+        finish(&b,1,32);
+    }
+    cbw(c,0x1b,6,0,0);c[19]=2;
+    assert(!msc_begin(&b,c,31));finish(&b,0,0);assert(!b.medium_present);
+    cbw(c,0x9e,16,32,1);c[16]=0x10;put_be32(c+25,32);
+    assert(!msc_begin(&b,c,31) && b.plan.status==1 && b.sense_key==2 && b.sense_asc==0x3a);
+    finish(&b,1,32);
 }
 static void reads_and_failures(void) {
     MscBot b;uint8_t c[31],data[65536],sense[18];uint32_t offset=0,i;size_t n;
@@ -194,12 +291,13 @@ static void malformed(void) {
             size_t got=msc_read_data(&b,0,out,sizeof(out));
             assert(got<=sizeof(out));assert(!msc_data_complete(&b,(uint32_t)got));
             (void)msc_read_data(&b,UINT32_MAX,out,sizeof(out));
-            if(b.completed==b.plan.transfer_length)assert(msc_csw(&b,out)==13);
+            if(b.wire_completed==b.plan.wire_length)assert(msc_csw(&b,out)==13);
+            else assert(msc_csw(&b,out)==-1);
         } else assert(!b.plan.valid_cbw);
     }
 }
 int main(int argc,char **argv) {
-    matrix();volume();scsi_basics();reads_and_failures();medium_state();malformed();
+    matrix();volume();scsi_basics();short_in_padding();read_capacity16();reads_and_failures();medium_state();malformed();
     if(argc==3 && !strcmp(argv[1],"--dump-image")) {
         MscBot b;uint8_t sector[512],session[16];uint32_t lba;FILE *f;
         for(lba=0;lba<16;lba++)session[lba]=(uint8_t)(lba+1);
@@ -207,6 +305,6 @@ int main(int argc,char **argv) {
         for(lba=0;lba<1024;lba++) {assert(!msc_read_sector(&b,lba,sector));assert(fwrite(sector,1,512,f)==512);}
         assert(!fclose(f));
     }
-    puts("MSC synthetic disk: 13 BOT cases, FAT12, SCSI, residue, reset, 50000 malformed inputs PASS");
+    puts("MSC synthetic disk: 13 BOT cases, FAT12, SCSI, IN fill/residue, reset, 50000 malformed inputs PASS");
     return 0;
 }

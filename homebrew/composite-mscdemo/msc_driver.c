@@ -20,7 +20,7 @@
 #include "msc_scsi.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockStorageTest",PSP_MODULE_KERNEL,2,6);
+PSP_MODULE_INFO("PSPDockStorageTest",PSP_MODULE_KERNEL,2,7);
 
 static volatile int running,active,connected,stop_requested,ever_connected;
 static volatile int hid_busy,ctl_busy,rx_busy,tx_busy,rx_ready,bulk_fault;
@@ -401,21 +401,24 @@ static int advance_bot(void){
     }
     if(bot_phase==BOT_DATA){
         if(take_tx(&code,&size)){
+            uint32_t relevant_before=bot.completed;
             if(code!=0 || size!=(int)data_pending)return code<0?code:-1311;
             if(msc_data_complete(&bot,(uint32_t)size)<0)return -1312;
-            if(ui){ui->bytes_read+=(uint32_t)size;ui->scsi_completed=bot.completed;}
+            if(ui){ui->bytes_read+=bot.completed-relevant_before;ui->scsi_completed=bot.completed;}
             data_pending=0;
         }
         /* A completion may arrive immediately after take_tx tested its
          * flag. Keep the outstanding chunk reserved until its completion
          * is consumed; tx_busy alone cannot prove the buffer is free. */
         if(data_pending || tx_busy)return 0;
-        if(bot.completed<bot.plan.transfer_length){
+        if(bot.wire_completed<bot.plan.wire_length){
             /* Every command implemented by the synthetic backend is
              * IN or NONE. WRITE/MODE SELECT fail DATA PROTECT with OUT
              * stalled; there is no real-storage or discard-write path. */
             if(bot.plan.direction!=MSC_DIR_IN)return -1313;
-            count=msc_read_data(&bot,bot.completed,response_buffer,sizeof(response_buffer));
+            /* A short SCSI response can have zero-filled wire bytes left
+             * after every relevant byte has completed (BOT case 5). */
+            count=msc_read_data(&bot,bot.wire_completed,response_buffer,sizeof(response_buffer));
             if(!count || count>sizeof(response_buffer))return -1314;
             data_pending=(unsigned)count;return bulk_submit(0,(unsigned)count);
         }

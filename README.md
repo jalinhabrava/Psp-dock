@@ -1,46 +1,38 @@
 # PSP Dock · prototipo para Windows
 
-## USBSTOR + HID 0206 instalada; aceptación física pendiente
+## USBSTOR + HID 0207 instalada; aceptación física pendiente
 
-La prueba **PSP Dock - USB Storage + HID 0206** mantiene un mando HID y
-un disco USB estándar en el mismo dispositivo compuesto. Está instalada
-en `PSP/GAME/PSPDockStorageTest`: **cuatro archivos, 367.483 bytes,
-releídos y verificados por SHA-256**. Conserva aparte el PSP Dock estable.
-La versión 0205 anterior quedó verificada y archivada en el PC.
-El disco es ficticio, de 512 KiB y solo lectura: todavía no ofrece los
-archivos reales de la Memory Stick ni devolución de partidas.
+**PSP Dock - USB Storage + HID 0207** está instalada en
+`PSP/GAME/PSPDockStorageTest`: cuatro archivos, **368.243 bytes**, releídos
+por SHA-256. La 0206 anterior quedó archivada en el PC. Mantiene el nombre
+PSP DOCK, thumbnail, placa de presentación y fondo grafito dentro del EBOOT;
+la pantalla de diagnóstico ahora separa sus líneas mediante posiciones en píxeles.
 
-**0205 ya tuvo una ejecución física.** El 1 de noviembre, entre
-22:19:45 y 22:20:06 de Madrid, Windows enumeró el padre `usbccgp`,
-`MI_00` con `HidUsb`, `MI_01` con `USBSTOR` y el disco identificado por
-nuestro SCSI INQUIRY. Después retiró esos dispositivos y el homebrew
-volvió al XMB sin reiniciar la PSP. No se confirmó montaje del volumen,
-lectura de archivos ni movimiento HID durante una lectura. El monitor
-anterior había terminado antes de ese intento; un timeout seguido de
-reset es una hipótesis, no la causa demostrada.
+La prueba física de **0206** conservó el resultado hasta la salida explícita
+por START+SELECT. La foto registra 1.187 informes HID, 26 CSW completados y
+18.284 bytes relevantes; Windows enumeró HID, USBSTOR y el disco PSPDOCK.
+No se verificó lectura de archivos: el monitor no encontró volumen asociado
+y no inició su probe. El último estado de la PSP fue MODE SENSE 32/192 con
+CSW pendiente; los eventos Windows registran errores SCSI del mismo disco.
 
-0206 corrige la interpretación de la desconfiguración USB: cancela y
-espera las transferencias antiguas, permite una nueva configuración y
-solo trata como desconexión física la ausencia confirmada del cable.
-La pantalla final conserva contadores, motivo de parada y errores hasta
-que se pulse **O**. El título XMB incluye la revisión; la nueva identidad
-usa **PSP DOCK** grande en ICON0 y PIC0 y un fondo grafito sin texto,
-para evitar duplicar el nombre al componer las capas del XMB.
+0207 completa las respuestas IN cortas con relleno permitido por BOT,
+contabiliza por separado los datos relevantes y mantiene el residuo correcto.
+Añade READ CAPACITY(16), observado en Windows, y diagnóstico de las etapas
+disco/partición/letra sin aceptar candidatos globales no correlacionados.
+La ruta HALT/CSW de respuesta corta es la hipótesis que se contrasta ahora;
+no se presenta como causa física definitivamente demostrada.
 
-La compilación y auditoría PSPDEV/WSL pasan, incluidos 13 casos BOT,
-50.000 entradas malformadas y 11 escenarios asíncronos del wrapper bajo
-sanitizadores. Pasan también **60 pruebas focales en Windows**: 18 del
-instalador y 42 de aceptación, diagnóstico y paquetes. Se verificaron el
-título SFO y los bytes exactos de los tres recursos XMB nuevos dentro del
-EBOOT. **La aceptación física de 0206 sigue pendiente**: la instalación
-verificada no demuestra montaje ni lecturas simultáneas con el mando.
-Los recuentos de tests no se suman a las suites históricas de más abajo.
+Pasan el build PSPDEV/WSL, auditorías ELF/USER/PBP/FAT12, 13 casos BOT,
+50.000 entradas malformadas y 14 escenarios asíncronos con ASan/UBSan,
+además de **66 tests focales en Windows**. Estos resultados no sustituyen
+el próximo intento físico de montaje, SHA-256/nonce y movimiento HID durante
+lecturas sin caché. El disco sigue siendo **ficticio, de 512 KiB y solo lectura**;
+aún no ofrece juegos, partidas ni los archivos reales de la Memory Stick.
 
-Procedimiento: [USBSTOR + HID 0206](homebrew/composite-mscdemo/README.md).
-Captura física, límites y estado de cada variante:
+Procedimiento: [USBSTOR + HID 0207](homebrew/composite-mscdemo/README.md).
+Evidencia, hashes, límites e historial:
 [validación del controlador](COMPOSITE-DRIVER-VALIDATION.md).
-Esta sección contiene el estado vigente del controlador compuesto;
-los apartados siguientes conservan el historial del producto.
+Los apartados siguientes conservan el historial del producto.
 
 ## Estado de integración — 1 de noviembre de 2026
 

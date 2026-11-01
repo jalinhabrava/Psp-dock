@@ -57,6 +57,57 @@ static void cbw_read(uint32_t bytes,unsigned blocks){
     command_buffer[20]=MSC_DATA_LBA;
     command_buffer[22]=(uint8_t)(blocks>>8);command_buffer[23]=(uint8_t)blocks;
 }
+static void cbw_mode_sense(uint32_t bytes){
+    memset(command_buffer,0,sizeof(command_buffer));memcpy(command_buffer,"USBC",4);
+    command_buffer[4]=9;
+    command_buffer[8]=(uint8_t)bytes;command_buffer[9]=(uint8_t)(bytes>>8);
+    command_buffer[10]=(uint8_t)(bytes>>16);command_buffer[11]=(uint8_t)(bytes>>24);
+    command_buffer[12]=0x80;command_buffer[14]=6;command_buffer[15]=0x1a;
+    command_buffer[17]=0x3f;command_buffer[19]=192;
+}
+static uint32_t read_le32(const uint8_t *p){
+    return (uint32_t)p[0]|((uint32_t)p[1]<<8)|((uint32_t)p[2]<<16)|((uint32_t)p[3]<<24);
+}
+static void test_mode_sense_192_fills_before_csw_without_halt(void){
+    unsigned i;
+    fixture();assert(advance_bot()==0);cbw_mode_sense(192);complete(3,0,31);
+    assert(advance_bot()==0 && pending[2] && pending[2]->size==192);
+    assert(response_buffer[0]==31 && response_buffer[2]==0x80 && response_buffer[12]==8);
+    for(i=32;i<192;i++)assert(response_buffer[i]==0);
+    assert(!halted[2] && !halted[3] && bot.plan.case_id==5);
+    assert(bot.completed==0 && bot.wire_completed==0 && commands==0);
+    assert(advance_bot()==0 && submissions[2]==1); /* No CSW before real data completion. */
+    complete(2,0,192);assert(advance_bot()==0);
+    assert(bot.completed==32 && bot.wire_completed==192 && state.bytes_read==32);
+    assert(pending[2] && pending[2]->size==13 && !memcmp(response_buffer,"USBS",4));
+    assert(read_le32(response_buffer+4)==9 && read_le32(response_buffer+8)==160 && response_buffer[12]==0);
+    assert(!halted[2] && !halted[3] && !pending[3] && commands==0);
+    complete(2,0,13);assert(advance_bot()==0 && commands==1 && bot_phase==BOT_CBW);
+    assert(advance_bot()==0 && pending[3]);
+}
+static void test_fill_crosses_dma_buffers_without_repeating_scsi_data(void){
+    unsigned i;
+    fixture();advance_bot();cbw_mode_sense(66048);complete(3,0,31);
+    assert(advance_bot()==0 && pending[2]->size==65536);
+    for(i=32;i<65536;i++)assert(response_buffer[i]==0);
+    complete(2,0,65536);assert(advance_bot()==0 && pending[2]->size==512);
+    assert(bot.completed==32 && bot.wire_completed==65536);
+    for(i=0;i<512;i++)assert(response_buffer[i]==0);
+    complete(2,0,512);assert(advance_bot()==0 && pending[2]->size==13);
+    assert(bot.completed==32 && bot.wire_completed==66048 && state.bytes_read==32);
+    assert(read_le32(response_buffer+8)==66016 && response_buffer[12]==0 && !halted[2]);
+    complete(2,0,13);assert(advance_bot()==0 && commands==1);
+}
+static void test_incomplete_fill_never_produces_a_csw(void){
+    struct DeviceRequest reset={0x21,0xff,0,1,0};
+    fixture();advance_bot();cbw_mode_sense(192);complete(3,0,31);advance_bot();
+    complete(2,0,191);assert(advance_bot()==-1311);
+    assert(!pending[2] && !commands && !bot.wire_completed && !bot.completed);
+    fixture();advance_bot();cbw_mode_sense(192);complete(3,0,31);advance_bot();
+    receive_control(0,0,&reset);assert(recover_bot()==0);
+    assert(!pending[2] && !commands && !bot.command_active && !bot.wire_completed && !bot.completed);
+    assert(pending[0] && pending[0]->size==0);
+}
 static void test_read_crosses_dma_buffers(void){
     fixture();assert(advance_bot()==0);assert(pending[3] && pending[3]->size==512);
     cbw_read(66560,130);complete(3,0,31);assert(advance_bot()==0);
@@ -166,6 +217,9 @@ static void test_submissions_paused_and_stale_reset_discarded(void){
     attach(2,NULL,NULL);assert(quiesce_link()==0 && !bot_reset_pending && connected);
 }
 int main(void){
+    test_mode_sense_192_fills_before_csw_without_halt();
+    test_fill_crosses_dma_buffers_without_repeating_scsi_data();
+    test_incomplete_fill_never_produces_a_csw();
     test_read_crosses_dma_buffers();test_completions_cannot_be_overwritten();
     test_bad_cbw_reset_preserves_halts();test_reset_cancels_old_data_before_ack();
     test_queue_error_and_short_completion();
@@ -176,5 +230,5 @@ int main(void){
     test_cable_absence_requires_continuous_confirmation();
     test_submissions_paused_and_stale_reset_discarded();
     fixture();assert(attach(3,NULL,NULL)==-1 && stop_requested && bulk_fault==-10);
-    puts("MSC actual transport: 11 asynchronous ownership/reset/reconfigure scenarios passed");return 0;
+    puts("MSC actual transport: 14 asynchronous ownership/reset/reconfigure/fill scenarios passed");return 0;
 }

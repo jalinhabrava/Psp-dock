@@ -12,7 +12,7 @@
  * Sony's bus supplies VID 054C when sceUsbActivate is called. These are
  * diagnostic values, not a claim to a newly allocated production VID/PID. */
 #define PDC_TEST_PRODUCT 0x01cc
-#define PDC_REVISION 0x0206
+#define PDC_REVISION 0x0207
 #define PDC_USB_INTERFACE 1
 #define PDC_HID_IN 0x81
 #define PDC_BULK_IN 0x82
@@ -20,7 +20,7 @@
 #define PDC_COMMAND_CELL 64u
 #define PDC_RESPONSE_CELL 65536u
 #define PDC_STATUS_REQUEST 0x53u
-#define PDC_LAUNCH_MAGIC 0x36434450u
+#define PDC_LAUNCH_MAGIC 0x37434450u
 #define PDC_CAPABILITIES 1u
 
 enum PdcStage {
@@ -36,7 +36,7 @@ enum PdcStopReason {
 
 /* Status only: never a filesystem authority. Kernel owns every field except
  * request_stop; the USER launcher retains this storage until module unload.
- * Revision 0206 changes the launch magic together with this ABI/size.
+ * Each revision changes the launch magic so USER and kernel stay paired.
  * Legacy ctrl_os_* slots remain unused; no MS OS descriptors are served. */
 typedef struct {
     uint32_t magic, size;

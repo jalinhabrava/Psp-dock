@@ -96,7 +96,11 @@ MscPlan msc_plan_transfer(uint32_t h, enum MscDirection hd, uint32_t d,
         else {
             p.direction=MSC_DIR_IN; p.transfer_length=smaller(h,d);
             p.case_id=(uint8_t)(h>d?5:(h==d?6:7));
-            if(h>d) p.stall_in=1;
+            /* BOT 1.0 section 6.7.2 permits filling a short IN response
+             * up to the host's requested length. Send zero fill for case
+             * 5 instead of a short transfer followed by HALT. Residue
+             * still counts only relevant bytes, never this fill. */
+            if(h>d) p.wire_length=h;
             if(h<d) p.status=MSC_STATUS_PHASE_ERROR;
         }
     } else {
@@ -109,6 +113,7 @@ MscPlan msc_plan_transfer(uint32_t h, enum MscDirection hd, uint32_t d,
             if(h<d) p.status=MSC_STATUS_PHASE_ERROR;
         }
     }
+    if(p.case_id!=5) p.wire_length=p.transfer_length;
     p.reset_required=(uint8_t)(p.status==MSC_STATUS_PHASE_ERROR);
     return p;
 }
@@ -120,7 +125,7 @@ void msc_init(MscBot *bot, const uint8_t session[16]) {
 void msc_reset(MscBot *bot) {
     if(!bot) return;
     memset(&bot->plan,0,sizeof(bot->plan)); bot->command_active=0; bot->reset_locked=0;
-    bot->completed=0; bot->source=0; bot->response_length=0;
+    bot->completed=0; bot->wire_completed=0; bot->source=0; bot->response_length=0;
 }
 static void fail(MscBot *b, uint8_t key, uint8_t asc, uint8_t ascq) {
     b->sense_key=key; b->sense_asc=asc; b->sense_ascq=ascq;
@@ -133,7 +138,7 @@ static uint8_t command_bytes(uint8_t op) {
         case 0x23: case 0x25: case 0x28: case 0x2a: case 0x2f:
         case 0x35: case 0x55: case 0x5a: return 10;
         case 0xa8: case 0xaa: return 12;
-        case 0x8a: case 0x88: return 16;
+        case 0x8a: case 0x88: case 0x9e: return 16;
         default: return 1;
     }
 }
@@ -213,6 +218,16 @@ static enum MscStatus scsi_command(MscBot *b, const uint8_t *c, uint8_t n,
             if(c[8] || be32(c+2)) { ok=0; break; }
             put_be32(b->response,MSC_BLOCK_COUNT-1); put_be32(b->response+4,MSC_BLOCK_SIZE);
             *length=response(b,8,8); break;
+        case 0x9e: /* SERVICE ACTION IN (16): READ CAPACITY (16) only. */
+            if(c[1]!=0x10) { ok=0; break; }
+            if(!ready(b)) return MSC_STATUS_FAILED;
+            /* Same PMI=0/zero-LBA scope as READ CAPACITY (10).
+             * SBC response: 64-bit last LBA, 32-bit block length, then
+             * zero flags: no protection, provisioning or alignment claim. */
+            if(c[14] || be32(c+2) || be32(c+6)) { ok=0; break; }
+            put_be32(b->response+4,MSC_BLOCK_COUNT-1);
+            put_be32(b->response+8,MSC_BLOCK_SIZE);
+            *length=response(b,32,be32(c+10)); break;
         case 0x23: /* READ FORMAT CAPACITIES */
             if(!ready(b)) return MSC_STATUS_FAILED;
             b->response[3]=8; put_be32(b->response+4,MSC_BLOCK_COUNT);
@@ -262,7 +277,7 @@ int msc_begin(MscBot *b, const uint8_t *cbw, size_t size) {
     enum MscStatus status; enum MscDirection hd,dd; uint32_t length,host;
     if(!b) return -1;
     if(b->reset_locked || b->command_active) return -2;
-    memset(&b->plan,0,sizeof(b->plan)); b->completed=0; b->source=0;
+    memset(&b->plan,0,sizeof(b->plan)); b->completed=0; b->wire_completed=0; b->source=0;
     if(!cbw || size!=MSC_CBW_SIZE || le32(cbw)!=UINT32_C(0x43425355) ||
        (cbw[12]&0x7fu) || cbw[13]!=0 || cbw[14]<1 || cbw[14]>16) {
         b->plan.stall_in=1; b->plan.stall_out=1; b->plan.reset_required=1;
@@ -274,27 +289,39 @@ int msc_begin(MscBot *b, const uint8_t *cbw, size_t size) {
     return 0;
 }
 size_t msc_read_data(const MscBot *b, uint32_t offset, uint8_t *out, size_t cap) {
-    uint8_t sector[MSC_BLOCK_SIZE]; uint32_t remaining,position,inside,take; size_t n=0;
-    if(!b || !out || !b->command_active || b->plan.direction!=MSC_DIR_IN || offset>=b->plan.transfer_length) return 0;
-    remaining=b->plan.transfer_length-offset;
-    if(cap<remaining) remaining=(uint32_t)cap;
-    if(b->source==1) { memcpy(out,b->response+offset,remaining); return remaining; }
-    if(b->source!=2) return 0;
-    while(remaining) {
-        position=offset+(uint32_t)n; inside=position%MSC_BLOCK_SIZE;
-        take=smaller(remaining,MSC_BLOCK_SIZE-inside);
-        if(msc_read_sector(b,b->first_lba+position/MSC_BLOCK_SIZE,sector)) return n;
-        memcpy(out+n,sector+inside,take); n+=take; remaining-=take;
+    uint8_t sector[MSC_BLOCK_SIZE]; uint32_t wire,relevant=0,remaining,position,inside,take;
+    size_t n=0;
+    if(!b || !out || !b->command_active || b->plan.direction!=MSC_DIR_IN || offset>=b->plan.wire_length) return 0;
+    wire=b->plan.wire_length-offset;
+    if(cap<wire) wire=(uint32_t)cap;
+    if(offset<b->plan.transfer_length) relevant=smaller(wire,b->plan.transfer_length-offset);
+    if(relevant && b->source==1) {
+        memcpy(out,b->response+offset,relevant); n=relevant;
+    } else if(relevant && b->source==2) {
+        remaining=relevant;
+        while(remaining) {
+            position=offset+(uint32_t)n; inside=position%MSC_BLOCK_SIZE;
+            take=smaller(remaining,MSC_BLOCK_SIZE-inside);
+            if(msc_read_sector(b,b->first_lba+position/MSC_BLOCK_SIZE,sector)) return n;
+            memcpy(out+n,sector+inside,take); n+=take; remaining-=take;
+        }
+    } else if(relevant) {
+        return 0;
     }
-    return n;
+    /* The fill region has no SCSI or disk source. Do not read beyond a
+     * small response buffer or expose sectors outside the requested CDB. */
+    if(wire>relevant) memset(out+n,0,wire-relevant);
+    return wire;
 }
 int msc_data_complete(MscBot *b, uint32_t bytes) {
-    if(!b || !b->command_active || b->completed>b->plan.transfer_length ||
-       bytes>b->plan.transfer_length-b->completed) return -1;
-    b->completed+=bytes; return 0;
+    if(!b || !b->command_active || b->wire_completed>b->plan.wire_length ||
+       bytes>b->plan.wire_length-b->wire_completed) return -1;
+    b->wire_completed+=bytes;
+    b->completed=smaller(b->wire_completed,b->plan.transfer_length); return 0;
 }
 int msc_csw(MscBot *b, uint8_t out[MSC_CSW_SIZE]) {
-    if(!b || !out || !b->plan.valid_cbw || !b->command_active || b->completed!=b->plan.transfer_length) return -1;
+    if(!b || !out || !b->plan.valid_cbw || !b->command_active ||
+       b->wire_completed!=b->plan.wire_length || b->completed!=b->plan.transfer_length) return -1;
     put_le32(out,UINT32_C(0x53425355)); put_le32(out+4,b->tag);
     put_le32(out+8,b->plan.host_length-b->completed); out[12]=b->plan.status;
     b->command_active=0;
