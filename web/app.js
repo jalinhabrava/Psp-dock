@@ -110,6 +110,7 @@ async function refresh() {
       $('device-status').classList.add('offline');
       $('device-label').textContent = 'Servicio sin conexión';
       $('device-role').textContent = 'RECONEXIÓN PENDIENTE';
+      xmbRender();
     }
   }
 }
@@ -251,6 +252,7 @@ function render() {
   $('save-count').hidden = !count;
   $('save-count').textContent = count;
   if ($('saves-dialog').open) renderSaves();
+  xmbRender();
 }
 function preflightKey(state) {
   return JSON.stringify([
@@ -721,9 +723,9 @@ function openTransfer(ids) {
   $('transfer-dialog').showModal();
 }
 function openSaves() {
-  if ($('saves-dialog').open) return;
+  // En el XMB las partidas son una sección propia, no un diálogo.
   renderSaves();
-  $('saves-dialog').showModal();
+  xmbGoto('partidas');
 }
 function preparePpsspp() {
   const state = ui.state;
@@ -836,6 +838,8 @@ function renderSaves() {
     'Resolviendo la partida. Si es el último conflicto, PPSSPP se preparará automáticamente en el PC…';
 }
 async function openGraphics() {
+  // Los gráficos por juego viven en la sección Gráficos del XMB.
+  if (ui.selected && !ui.busy && !ui.serviceOffline) { xmbOpenGraphics(ui.selected); return; }
   if (!ui.selected || ui.busy || ui.serviceOffline || ui.state?.session?.running) return;
   const game = ui.state?.games?.find((item) => item.id === ui.selected);
   if (!game || ui.state?.recovery_required) return;
@@ -977,22 +981,11 @@ $('resolve-confirm').addEventListener('click', async () => {
 document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => $(button.dataset.close).close()));
 document.addEventListener('keydown', (event) => {
   if (ui.busy || document.querySelector('dialog[open]') || event.altKey || event.ctrlKey || event.metaKey || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
-  if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') { event.preventDefault(); moveSelection(event.key === 'ArrowRight' ? 1 : -1); }
-  if (event.key === 'Home' || event.key === 'End') {
-    event.preventDefault();
-    const games = ui.state?.games || [];
-    if (games.length) selectGame(games[event.key === 'Home' ? 0 : games.length - 1].id, true);
-  }
-  if (event.key === 'ArrowDown' && ui.selected) {
-    event.preventDefault();
-    focusGameAction(1);
-  }
-  if (event.key === 'ArrowUp' && ui.selected) {
-    event.preventDefault();
-    focusGameAction(-1);
-  }
-  if (event.key === 'Escape') document.querySelector('.game-card.selected')?.focus({ preventScroll: true });
-  if (event.key === 'Enter' && event.target.classList.contains('game-card')) { event.preventDefault(); launch(); }
+  const button = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'accept', ' ': 'accept',
+    Escape: 'back', Backspace: 'back', t: 'menu', T: 'menu', ContextMenu: 'menu', PageUp: 'pageLeft', PageDown: 'pageRight', Home: 'start' }[event.key];
+  if (!button) return;
+  event.preventDefault();
+  xmbPress(button);
 });
 function focusGameAction(delta = 1) {
   const candidates = [
@@ -1080,11 +1073,10 @@ function gamepadLoop(time) {
     const navigate = direction && (direction !== ui.gamepadDirection || time - ui.gamepadAt > 230);
     const dialog = Array.from(document.querySelectorAll('dialog[open]')).at(-1);
     if (!ui.busy) {
-      if (edge('back')) {
-        if (dialog) dialog.close();
-        else document.querySelector('.game-card.selected')?.focus({ preventScroll: true });
-      } else if (dialog) {
-        if (navigate) {
+      if (dialog) {
+        if (edge('back')) {
+          if (!(dialog.id === 'transfer-dialog' && ui.transferInFlight)) dialog.close();
+        } else if (navigate) {
           navigateDialogControl(dialog, direction);
           ui.gamepadAt = time;
         } else if (edge('accept')) {
@@ -1093,22 +1085,11 @@ function gamepadLoop(time) {
           else focusDialogControl(dialog, 1);
         }
       } else if (!ui.serviceOffline) {
-        if (edge('settings')) openSettings();
-        else if (edge('graphics')) openGraphics();
-        else if (edge('saves')) openSaves();
-        else if (edge('pageLeft') || edge('pageRight')) moveSelection(edge('pageRight') ? 5 : -5);
-        else if (navigate) {
-          if (direction === 'left' || direction === 'right') moveSelection(direction === 'right' ? 1 : -1);
-          else focusGameAction(direction === 'down' ? 1 : -1);
-          ui.gamepadAt = time;
-        } else if (edge('accept')) {
-          const target = document.activeElement;
-          if (target?.tagName === 'BUTTON' && !target.disabled &&
-              !target.classList.contains('game-card') &&
-              target.getClientRects().length) target.click();
-          else if (ui.state?.games?.length) launch();
-          else $('refresh-button').click();
-        }
+        const button = edge('exit') ? 'select' : edge('settings') ? 'start' : edge('graphics') ? 'menu' :
+          edge('pageLeft') ? 'pageLeft' : edge('pageRight') ? 'pageRight' : edge('accept') ? 'accept' :
+            edge('back') ? 'back' : navigate ? direction : '';
+        if (navigate) ui.gamepadAt = time;
+        if (button) xmbPress(button);
       }
     }
     ui.gamepadHeld = input;
@@ -1129,13 +1110,12 @@ function processNativePspFrame(input, now) {
     (direction !== ui.nativePadDirection || now - ui.nativePadAt > 230);
   const dialog = Array.from(document.querySelectorAll('dialog[open]')).at(-1);
   if (!ui.busy && !ui.serviceOffline && !ui.state?.session?.running) {
-    if (edge('back')) {
-      // Closing the progress dialog by Circle must not mask an active
-      // verified copy. The user must choose its Cancelar copia action.
-      if (dialog && !(dialog.id === 'transfer-dialog' && ui.transferInFlight)) dialog.close();
-      else if (!dialog) document.querySelector('.game-card.selected')?.focus({ preventScroll: true });
-    } else if (dialog) {
-      if (navigate) {
+    if (dialog) {
+      if (edge('back')) {
+        // Closing the progress dialog by Circle must not mask an active
+        // verified copy. The user must choose its Cancelar copia action.
+        if (!(dialog.id === 'transfer-dialog' && ui.transferInFlight)) dialog.close();
+      } else if (navigate) {
         navigateDialogControl(dialog, direction);
         ui.nativePadAt = now;
       } else if (edge('accept')) {
@@ -1143,25 +1123,13 @@ function processNativePspFrame(input, now) {
         if (target?.tagName === 'BUTTON' && !target.disabled) target.click();
         else focusDialogControl(dialog, 1);
       }
-    } else if (edge('exit')) {
-      // SELECT only focuses the Exit action; CROSS explicitly confirms it.
-      const button = $('preflight-exit-dock');
-      if (button && !button.hidden && !button.disabled) button.focus({ preventScroll: true });
-    } else if (edge('settings')) openSettings();
-    else if (edge('graphics')) openGraphics();
-    else if (edge('saves')) openSaves();
-    else if (edge('pageLeft') || edge('pageRight')) moveSelection(edge('pageRight') ? 5 : -5);
-    else if (navigate) {
-      if (direction === 'left' || direction === 'right') moveSelection(direction === 'right' ? 1 : -1);
-      else focusGameAction(direction === 'down' ? 1 : -1);
-      ui.nativePadAt = now;
-    } else if (edge('accept')) {
-      const target = document.activeElement;
-      if (target?.tagName === 'BUTTON' && !target.disabled &&
-          !target.classList.contains('game-card') &&
-          target.getClientRects().length) target.click();
-      else if (ui.state?.games?.length) launch();
-      else $('refresh-button').click();
+    } else {
+      // XMB: SELECT solo lleva a «Salir del Dock»; ✕ y «Sí» lo confirman.
+      const button = edge('exit') ? 'select' : edge('settings') ? 'start' : edge('graphics') ? 'menu' :
+        edge('pageLeft') ? 'pageLeft' : edge('pageRight') ? 'pageRight' : edge('accept') ? 'accept' :
+          edge('back') ? 'back' : navigate ? direction : '';
+      if (navigate) ui.nativePadAt = now;
+      if (button) xmbPress(button);
     }
   }
   ui.nativePadHeld = input;
@@ -1203,7 +1171,619 @@ async function pollNativePspInput() {
     setTimeout(pollNativePspInput, ui.nativePadConnected ? 80 : 400);
   }
 }
-function updateClock() { $('clock').textContent = new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' }).format(new Date()); }
+// ===================================================================
+// XMB · modelo de navegación puro (sin DOM). Probado por
+// tests/xmb_navigation_model.test.js. Secciones en horizontal,
+// elementos en vertical, submenú, menú △ y confirmación Sí/No.
+// ===================================================================
+function xmbStep(nav, view, button) {
+  const next = { ...nav, idx: { ...nav.idx } };
+  const clamp = (value, count) => Math.max(0, Math.min(Math.max(1, count) - 1, value));
+  const done = (effect = null) => ({ nav: next, effect });
+  if (next.confirm) {
+    if (button === 'left' || button === 'right' || button === 'up' || button === 'down')
+      next.confirm = { yes: !next.confirm.yes };
+    else if (button === 'accept') { const yes = next.confirm.yes; next.confirm = null; return done({ type: 'confirm', yes }); }
+    else if (button === 'back') { next.confirm = null; return done({ type: 'confirm', yes: false }); }
+    return done();
+  }
+  if (next.side) {
+    const count = Math.max(1, view.sideCount || 0);
+    if (button === 'up') next.side = { i: (next.side.i - 1 + count) % count };
+    else if (button === 'down') next.side = { i: (next.side.i + 1) % count };
+    else if (button === 'accept') { const index = next.side.i; next.side = null; return done({ type: 'pick', index }); }
+    else if (button === 'back' || button === 'menu' || button === 'left') next.side = null;
+    return done();
+  }
+  const sections = view.sections || [];
+  const games = sections.findIndex((section) => section.id === 'juegos');
+  if (button === 'start') {
+    next.level = 'list'; next.subIdx = 0;
+    if (games >= 0) next.cat = games;
+    return done();
+  }
+  if (next.level === 'sub') {
+    const count = view.subCount || 0;
+    if (button === 'up') next.subIdx = clamp(next.subIdx - 1, count);
+    else if (button === 'down') next.subIdx = clamp(next.subIdx + 1, count);
+    else if (button === 'pageLeft') next.subIdx = clamp(next.subIdx - 5, count);
+    else if (button === 'pageRight') next.subIdx = clamp(next.subIdx + 5, count);
+    else if (button === 'back' || button === 'left') { next.level = 'list'; next.subIdx = 0; }
+    else if ((button === 'accept' || button === 'right') && count) return done({ type: 'row', index: next.subIdx });
+    return done();
+  }
+  const section = sections[next.cat];
+  const count = section?.count || 0;
+  const current = clamp(next.idx[section?.id] || 0, count);
+  if (button === 'left') next.cat = clamp(next.cat - 1, sections.length);
+  else if (button === 'right') next.cat = clamp(next.cat + 1, sections.length);
+  else if (section && button === 'up') next.idx[section.id] = clamp(current - 1, count);
+  else if (section && button === 'down') next.idx[section.id] = clamp(current + 1, count);
+  else if (section && button === 'pageLeft') next.idx[section.id] = clamp(current - 5, count);
+  else if (section && button === 'pageRight') next.idx[section.id] = clamp(current + 5, count);
+  else if (section && count && button === 'accept') return done({ type: 'activate', section: section.id, index: current });
+  else if (section && count && button === 'menu') return done({ type: 'menu', section: section.id, index: current });
+  else if (button === 'select') return done({ type: 'select' });
+  return done();
+}
+function xmbMonthColors(month, hour) {
+  // Aproximación del tema «Original» de la PSP: un color por mes y
+  // más oscuro de noche, más claro a primera hora de la tarde.
+  const base = ['#a9adb4', '#c9a83a', '#7fae3f', '#d9799e', '#3f9a50', '#8c62bf',
+    '#2aa0a6', '#2f6fd0', '#5a4ab3', '#cf8a28', '#8a5a34', '#b3302d'][((month % 12) + 12) % 12];
+  const light = .45 + .55 * Math.max(0, Math.cos((hour - 13) / 24 * 2 * Math.PI)) ** .7;
+  const shade = (hex, factor) => {
+    const n = parseInt(hex.slice(1), 16);
+    return '#' + [n >> 16, (n >> 8) & 255, n & 255]
+      .map((v) => Math.max(0, Math.min(255, Math.round(v * factor))).toString(16).padStart(2, '0')).join('');
+  };
+  return { top: shade(base, .95 * light + .1), bottom: shade(base, .28 * light + .04) };
+}
+// ==== fin del modelo puro ====
+
+const XMB_SVG = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const XMB_ICONS = {
+  ajustes: XMB_SVG('<path d="M3.5 9.5h17v9.5h-17z"/><path d="M8.5 9.5V7a1.5 1.5 0 0 1 1.5-1.5h4A1.5 1.5 0 0 1 15.5 7v2.5"/><path d="M3.5 13.5h17"/><path d="M10.5 12.5h3v2h-3z"/>'),
+  dock: XMB_SVG('<path d="M12 2.8v15.5"/><path d="M9.2 5.8L12 2.8l2.8 3"/><path d="M12 12.5l-4.3-3V7.4"/><circle cx="7.7" cy="6.6" r=".9"/><path d="M12 14.5l4.3-2.8V9.6"/><path d="M15.4 8.4h1.8v1.8h-1.8z"/><circle cx="12" cy="19.6" r="1.7"/>'),
+  juegos: XMB_SVG('<path d="M7.3 7.5h9.4c2.2 0 3.6 1.4 4.2 3.6l1 4.4c.4 1.9-1.6 3.2-3 1.9L16.5 15h-9L5.1 17.4c-1.4 1.3-3.4 0-3-1.9l1-4.4C3.7 8.9 5.1 7.5 7.3 7.5z"/><path d="M7.2 9.9v3.4M5.5 11.6h3.4"/><circle cx="16.2" cy="10.3" r=".55"/><circle cx="17.9" cy="12" r=".55"/><circle cx="14.5" cy="12" r=".55"/><circle cx="16.2" cy="13.7" r=".55"/>'),
+  partidas: XMB_SVG('<path d="M7 3.5h10a1 1 0 0 1 1 1V20a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 6 20V4.5a1 1 0 0 1 1-1z"/><path d="M8.5 3.5v3.5M10.5 3.5v3.5M12.5 3.5v3.5M14.5 3.5v3.5"/><path d="M8.5 11.5h7v5.5h-7z"/>'),
+  graficos: XMB_SVG('<path d="M3 5h18v11.5H3z"/><path d="M9 20h6M12 16.5V20"/><path d="M12 7.6l.9 2 2.2.2-1.7 1.5.5 2.2-1.9-1.1-1.9 1.1.5-2.2-1.7-1.5 2.2-.2z"/>'),
+  play: XMB_SVG('<path d="M8 5l11 7-11 7z"/>'),
+  copy: XMB_SVG('<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>'),
+  info: XMB_SVG('<circle cx="12" cy="12" r="8"/><path d="M12 11v5M12 8v.01"/>'),
+  sync: XMB_SVG('<path d="M4 12a8 8 0 0 1 14-5.3M20 12a8 8 0 0 1-14 5.3"/><path d="M18 3v4h-4M6 21v-4h4"/>'),
+  exit: XMB_SVG('<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>'),
+  folder: XMB_SVG('<path d="M3 7h6l2 2h10v10H3z"/>'),
+  pad: XMB_SVG('<rect x="3" y="8" width="18" height="9" rx="4.5"/><path d="M7 11v3M5.5 12.5h3"/>'),
+  search: XMB_SVG('<circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/>'),
+  reset: XMB_SVG('<path d="M4 12a8 8 0 1 0 2.3-5.7L4 8.5"/><path d="M4 4v4.5h4.5"/>'),
+  hd: XMB_SVG('<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 9v6M7 12h3M10 9v6M14 9v6h1.5a3 3 0 0 0 0-6z"/>'),
+  theme: XMB_SVG('<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z"/>'),
+  warn: XMB_SVG('<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.01"/>'),
+};
+const XMB_SECTIONS = [['ajustes', 'Ajustes'], ['dock', 'Dock'], ['juegos', 'Juegos'], ['partidas', 'Partidas'], ['graficos', 'Gráficos']];
+const XMB_GFX = {
+  quality: [['auto', 'Automático · según el monitor'], ['balanced', 'Equilibrado · menos carga'], ['quality', 'Calidad · más resolución'],
+    ['ultra', 'Ultra · sobremuestreo'], ['manual', 'Manual · escala de Ajustes']],
+  aspect: [['fit', 'Original · sin deformar'], ['stretch', 'Estirar a toda la pantalla']],
+  texture: [['off', 'Originales'], ['xbrz2', 'xBRZ 2× (CPU)'], ['xbrz3', 'xBRZ 3× (CPU)'], ['xbrz4', 'xBRZ 4× (CPU)'], ['bicubic2', 'Bicubic 2× (CPU)']],
+};
+const XMB_GFX_NAMES = { quality: 'Calidad de renderizado', aspect: 'Proporción de pantalla', texture: 'Mejorar texturas' };
+const xmb = {
+  nav: { cat: 2, idx: {}, level: 'list', subIdx: 0, side: null, confirm: null },
+  sections: [], sub: null, side: null, confirm: null,
+  gfx: {}, gfxLoading: new Set(), settings: null, els: new Map(), icons: new Map(),
+  theme: 'month',
+};
+try { xmb.theme = localStorage.getItem('psp-dock-theme') || 'month'; } catch { /* sin almacenamiento */ }
+
+function xmbText(id) { return ($(id)?.textContent || '').trim(); }
+function xmbUsable(id) { const node = $(id); return !!node && !node.hidden && !node.disabled; }
+function xmbGfxLabel(key, value) { return (XMB_GFX[key].find(([v]) => v === value) || [value, value])[1]; }
+function xmbGfxSummary(choice) {
+  if (!choice) return 'Cargando perfil…';
+  return [xmbGfxLabel('quality', choice.quality).split(' · ')[0], choice.aspect === 'stretch' ? 'Estirada' : 'Original',
+    choice.texture && choice.texture !== 'off' ? xmbGfxLabel('texture', choice.texture).replace(' (CPU)', '') : null]
+    .filter(Boolean).join(' · ');
+}
+function xmbGfxKey(id) { return id || 'default'; }
+async function xmbLoadGraphics(id, force = false) {
+  const key = xmbGfxKey(id);
+  if (xmb.gfxLoading.has(key) || (!force && xmb.gfx[key])) return;
+  xmb.gfxLoading.add(key);
+  try {
+    xmb.gfx[key] = await request(id ? '/api/graphics/' + encodeURIComponent(id) : '/api/graphics');
+  } catch (error) {
+    xmb.gfx[key] = { error: error.message };
+  } finally {
+    xmb.gfxLoading.delete(key);
+    xmbRender();
+  }
+}
+async function xmbSaveGraphics(id, body, message) {
+  const ok = await mutate('/api/graphics', id ? { id, ...body } : body, message);
+  if (ok) { await xmbLoadGraphics(id, true); if (!id) xmb.gfx = { default: xmb.gfx.default }; }
+  return ok;
+}
+async function xmbLoadSettings() {
+  try { xmb.settings = await request('/api/settings'); } catch { xmb.settings = null; }
+  xmbRender();
+}
+function xmbSettingsLocked() {
+  const state = ui.state || {};
+  return state.recovery_required ? 'Recupera la sesión interrumpida antes de cambiar los ajustes.' :
+    state.session?.running || state.session?.pending_return ? 'Cierra y devuelve la sesión a la PSP antes de cambiar los ajustes.' : '';
+}
+async function xmbSaveSetting(key, value, label) {
+  const locked = xmbSettingsLocked();
+  if (locked) { toast(locked); return; }
+  if (!xmb.settings) await xmbLoadSettings();
+  if (!xmb.settings) { toast('No se pudieron leer los ajustes actuales.'); return; }
+  const fields = {};
+  for (const name of ['emulator', 'library', 'memstick', 'psp_root', 'scale', 'backend']) fields[name] = xmb.settings[name] ?? '';
+  fields[key] = value;
+  fields.scale = Number(fields.scale) || 3;
+  if (await mutate('/api/settings', fields, `${label}: guardado.`)) await xmbLoadSettings();
+}
+
+function xmbGameIcon(game) { return { game }; }
+function xmbBuildSections() {
+  const state = ui.state || {};
+  const games = state.games || [];
+  const saves = state.saves || { actions: [], conflicts: [], unchanged: 0 };
+  if (ui.state) renderSaves();
+  const availability = { ready: ['pc', 'EN PC'], missing: ['copy', 'COPIAR'], different: ['conf', 'REVISAR'], checking: ['inh', 'COMPROBANDO'] };
+  const availabilityText = { ready: 'En el PC', missing: 'Solo en la PSP', different: 'Versión distinta en el PC', checking: 'Comprobando en la PSP' };
+  const out = {};
+
+  const settingsValue = (key, fallback) => xmb.settings?.[key] ?? fallback;
+  out.ajustes = [
+    { key: 'gfx-default', t: 'Gráficos predeterminados', s: () => xmbGfxSummary(xmb.gfx.default?.choice) + ' · para juegos sin perfil propio', icon: 'graficos',
+      focus: () => xmbLoadGraphics(null), activate: () => xmbOpenGraphics(null) },
+    { key: 'backend', t: 'Motor gráfico', s: () => ({ directx11: 'Direct3D 11', vulkan: 'Vulkan', gles: 'OpenGL' })[settingsValue('backend', 'directx11')] || settingsValue('backend', ''), icon: 'hd',
+      activate: () => xmbValues('Motor gráfico', [['directx11', 'Direct3D 11'], ['vulkan', 'Vulkan'], ['gles', 'OpenGL']], settingsValue('backend', 'directx11'),
+        (value) => xmbSaveSetting('backend', value, 'Motor gráfico')) },
+    { key: 'scale', t: 'Escala manual de respaldo', s: () => `${settingsValue('scale', 3)}×`, icon: 'hd',
+      activate: () => xmbValues('Escala manual de respaldo', [1, 2, 3, 4, 5, 6].map((n) => [String(n), n === 1 ? '1× · Original' : `${n}×`]),
+        String(settingsValue('scale', 3)), (value) => xmbSaveSetting('scale', Number(value), 'Escala manual')) },
+    { key: 'theme', t: 'Color del fondo', s: () => xmb.theme === 'month' ? 'Según el mes, como la PSP' : 'Azul PSP Dock', icon: 'theme',
+      activate: () => xmbValues('Color del fondo', [['month', 'Según el mes, como la PSP'], ['dock', 'Azul PSP Dock']], xmb.theme, (value) => {
+        xmb.theme = value;
+        try { localStorage.setItem('psp-dock-theme', value); } catch { /* sin almacenamiento */ }
+        xmbApplyTheme();
+      }) },
+    { key: 'pad', t: 'Mando', s: () => xmbText('gamepad-status') || 'Sin detectar', icon: 'pad', activate: () => toast(xmbText('gamepad-status')) },
+    ...[['emulator', 'Emulador PPSSPP'], ['library', 'Biblioteca del PC'], ['memstick', 'Memory Stick de PPSSPP'], ['psp_root', 'Raíz de la PSP']].map(([key, t]) => ({
+      key: 'path-' + key, t, s: () => settingsValue(key, '') || (key === 'psp_root' ? 'Detección automática' : 'Sin configurar'), icon: 'folder',
+      activate: () => { openSettings(); toast('Las carpetas se escriben con el teclado. ○ cierra sin guardar.'); },
+    })),
+  ];
+
+  const dock = [];
+  if (ui.serviceOffline || state.error || state.recovery_required)
+    out.dockWarning = true, dock.push({ key: 'warning', t: 'Aviso', s: xmbText('error'), icon: 'warn', activate: () => toast(xmbText('error')) });
+  if (!$('dock-preflight').hidden) dock.push({ key: 'status', t: xmbText('preflight-title') || 'Estado del Dock', s: xmbText('preflight-description'), icon: 'info',
+    activate: () => toast([xmbText('preflight-summary'), xmbText('runtime-readiness-label'), xmbText('preflight-caveat')].filter(Boolean).join(' · ')) });
+  if (xmbUsable('preflight-copy')) dock.push({ key: 'copy', t: xmbText('preflight-copy'), s: 'Copia al PC los juegos que solo están en la PSP', icon: 'copy', activate: () => $('preflight-copy').click() });
+  if (xmbUsable('preflight-saves')) dock.push({ key: 'saves', t: xmbText('preflight-saves'), s: 'Abre la sección Partidas', icon: 'partidas', activate: () => xmbGoto('partidas') });
+  if (xmbUsable('preflight-prepare-runtime')) dock.push({ key: 'runtime', t: xmbText('preflight-prepare-runtime'), s: xmbText('runtime-readiness-label'), icon: 'play', activate: () => $('preflight-prepare-runtime').click() });
+  if (xmbUsable('preflight-skip')) dock.push({ key: 'skip', t: xmbText('preflight-skip'), s: 'No copia nada; los juegos pendientes siguen visibles', icon: 'play',
+    activate: () => xmbConfirm('¿Seguir solo con los juegos que ya están en el PC?<small>No se copiará nada.</small>', true, () => $('preflight-skip').click()) });
+  dock.push({ key: 'refresh', t: 'Buscar PSP de nuevo', s: xmbText('device-label') + (xmbText('device-role') ? ' · ' + xmbText('device-role').toLowerCase() : ''), icon: 'search',
+    activate: async () => { toast('Buscando PSP…'); await refresh(); } });
+  const canExit = xmbUsable('preflight-exit-dock');
+  dock.push({ key: 'exit', t: 'Salir del Dock', s: canExit ? 'Devuelve tus partidas y vuelve a jugar en la PSP' : 'Disponible con el mando PSP conectado y PPSSPP cerrado', icon: 'exit',
+    dim: !canExit,
+    activate: () => canExit ?
+      xmbConfirm('¿Salir del Dock?<small>Después mantén START+SELECT 1,5 s en la PSP y vuelve al modo USB para devolver las partidas.</small>', false, () => $('preflight-exit-dock').click()) :
+      toast('Salir del Dock se activa cuando la PSP está conectada como mando y no hay ningún juego abierto.') });
+  out.dock = dock;
+
+  out.juegos = games.length ? games.map((game) => ({
+    key: 'game-' + game.id, t: game.title, game,
+    s: `${availabilityText[game.availability] || 'Estado desconocido'} · ${game.format || 'JUEGO'} · ${bytes(game.size)}`,
+    chip: state.demo ? ['inh', 'DEMO'] : availability[game.availability], icon: xmbGameIcon(game),
+    focus: () => { if (ui.selected !== game.id) { ui.selected = game.id; renderSelected(false); } },
+    activate: () => xmbLaunch(game), menu: () => xmbGameMenu(game),
+  })) : [{ key: 'empty', t: xmbText('empty-title') || 'Conecta tu PSP', s: xmbText('empty-description'), icon: 'search',
+    activate: async () => { toast('Buscando PSP…'); await refresh(); } }];
+
+  const partidas = [];
+  partidas.push({ key: 'sync', t: xmbText('sync-button') || 'Sincronizar partidas',
+    s: document.querySelector('#saves-content .save-summary')?.textContent || '', icon: 'sync', dim: !xmbUsable('sync-button'),
+    activate: () => xmbUsable('sync-button') ?
+      xmbConfirm(`¿${xmbEscape(xmbText('sync-button'))}?<small>PSP → PC trae la partida al ordenador. PC → PSP escribe en la Memory Stick.</small>`, true, () => $('sync-button').click()) :
+      toast(document.querySelector('#saves-content .quiet')?.textContent || xmbText('sync-button')) });
+  (saves.actions || []).forEach((action) => partidas.push({
+    key: 'save-' + action.slot, t: action.slot, icon: 'partidas',
+    s: action.direction === 'to_pc' ? 'Copiar de la PSP al PC' : 'Copiar del PC a la PSP · escribe en la Memory Stick',
+    chip: action.direction === 'to_pc' ? ['pc', 'PSP → PC'] : ['toPsp', 'PC → PSP'],
+    activate: () => toast('Se copiará al confirmar la sincronización, en la primera fila.') }));
+  (saves.conflicts || []).forEach((conflict) => partidas.push({
+    key: 'conflict-' + conflict.slot, t: conflict.slot, icon: 'warn', s: 'Ha cambiado en la PSP y en el PC', chip: ['conf', 'CONFLICTO'],
+    activate: () => xmbResolve(conflict.slot) }));
+  if (!(saves.actions || []).length && !(saves.conflicts || []).length) {
+    const quiet = document.querySelector('#saves-content .quiet')?.textContent;
+    if (quiet) partidas.push({ key: 'saves-note', t: 'Sin cambios pendientes', s: quiet, icon: 'info', activate: () => toast(quiet) });
+  }
+  out.partidas = partidas;
+
+  out.graficos = [
+    ...games.map((game) => ({ key: 'gfx-' + game.id, t: game.title, icon: xmbGameIcon(game), gfxId: game.id,
+      s: () => xmb.gfx[game.id]?.error || xmbGfxSummary(xmb.gfx[game.id]?.choice),
+      chip: () => xmb.gfx[game.id]?.choice ? xmb.gfx[game.id].custom ? ['pc', 'PROPIO'] : ['inh', 'PREDETERMINADO'] : null,
+      focus: () => xmbLoadGraphics(game.id), activate: () => xmbOpenGraphics(game.id) })),
+    { key: 'gfx-default-all', t: 'Predeterminado para todos', s: () => xmbGfxSummary(xmb.gfx.default?.choice) + ' · lo usan los juegos sin perfil propio',
+      icon: 'graficos', focus: () => xmbLoadGraphics(null), activate: () => xmbOpenGraphics(null) },
+  ];
+  const pending = (saves.actions?.length || 0) + (saves.conflicts?.length || 0);
+  return XMB_SECTIONS.map(([id, label]) => ({ id, label, items: out[id], badge: id === 'partidas' && pending ? pending :
+    id === 'dock' && out.dockWarning ? '!' : null }));
+}
+
+function xmbGraphicsRows(id) {
+  const data = xmb.gfx[xmbGfxKey(id)];
+  const game = (ui.state?.games || []).find((item) => item.id === id);
+  const name = game ? game.title : 'Predeterminado';
+  if (!data || data.error) return [{ key: 'loading', t: data?.error ? 'No se pudo leer el perfil' : 'Leyendo el perfil…', s: data?.error || '', icon: 'info', activate: () => xmbLoadGraphics(id, true) }];
+  const choice = data.choice, base = data.default_choice || choice;
+  const tag = (key) => !id ? '' : data.custom && choice[key] !== base[key] ? 'PROPIO' : 'PREDET.';
+  const write = (key, value) => xmbSaveGraphics(id, { ...choice, [key]: value },
+    id ? `Guardado en el perfil de ${name}.` : 'Predeterminado guardado. Lo usan los juegos sin perfil propio.');
+  const rows = [];
+  if (id) rows.push({ key: 'own', t: 'Perfil de este juego', icon: 'ajustes',
+    s: data.custom ? `Propio · solo afecta a ${name}` : 'Usa el predeterminado',
+    activate: () => xmbValues('Perfil de este juego', [['default', 'Usar el predeterminado'], ['own', 'Perfil propio']], data.custom ? 'own' : 'default', (value) => {
+      if (value === 'own' && !data.custom) xmbSaveGraphics(id, { ...choice }, `${name} ahora tiene perfil propio.`);
+      if (value === 'default' && data.custom) xmbSaveGraphics(id, { reset: true }, `${name} vuelve a usar el predeterminado.`);
+    }, name) });
+  for (const key of ['quality', 'aspect', 'texture']) rows.push({
+    key, t: XMB_GFX_NAMES[key], icon: key === 'quality' ? 'hd' : 'graficos', tag: tag(key),
+    s: xmbGfxLabel(key, choice[key]),
+    activate: () => xmbValues(XMB_GFX_NAMES[key], XMB_GFX[key], choice[key], (value) => value !== choice[key] && write(key, value), id ? name : 'Predeterminado',
+      id ? base[key] : null) });
+  const plan = data.plan || {};
+  rows.push({ key: 'render', t: 'Resolución resultante', icon: 'info',
+    s: plan.internal_width ? `${plan.internal_resolution}× PSP · ${plan.internal_width} × ${plan.internal_height} · ${plan.backend || ''}` : '—',
+    activate: () => toast([plan.monitor ? `Monitor ${plan.monitor.width} × ${plan.monitor.height}${plan.monitor.ultrawide ? ' ultrawide' : ''}` : '',
+      data.hardware?.gpu ? `GPU ${data.hardware.gpu}` : '', plan.warning].filter(Boolean).join(' · ')) });
+  if (id) {
+    const disc = data.game_metadata?.disc_id;
+    rows.push({ key: 'pack', t: 'Pack de texturas HD', icon: 'folder',
+      s: disc ? `${disc} · ${data.hd_texture_pack_installed ? 'detectado en PPSSPP' : 'no instalado'}` : 'Edición sin identificar',
+      activate: () => toast(disc ? `Se busca en PSP/TEXTURES/${disc} de la Memory Stick de PPSSPP. No se descarga nada.` :
+        'Sin el ID de edición no se puede asociar un pack HD de forma segura.') });
+    const others = (ui.state?.games || []).filter((item) => item.id !== id);
+    if (others.length) rows.push({ key: 'copy', t: 'Copiar ajustes de otro juego', s: 'Trae calidad, proporción y texturas', icon: 'copy',
+      activate: () => xmbSide('Copiar ajustes de…', others.map((other) => ({ t: other.title, s: xmbGfxSummary(xmb.gfx[other.id]?.choice) })), async (index) => {
+        const other = others[index];
+        await xmbLoadGraphics(other.id);
+        const from = xmb.gfx[other.id]?.choice;
+        if (from) xmbSaveGraphics(id, { quality: from.quality, aspect: from.aspect, texture: from.texture || 'off' }, `Ajustes de ${other.title} copiados a ${name}.`);
+      }) });
+    if (data.custom) rows.push({ key: 'reset', t: 'Restablecer', s: 'Volver al predeterminado', icon: 'reset',
+      activate: () => xmbConfirm(`¿Quitar el perfil propio de ${xmbEscape(name)}?<small>Volverá a usar el predeterminado.</small>`, false,
+        () => xmbSaveGraphics(id, { reset: true }, `${name} vuelve a usar el predeterminado.`)) });
+  }
+  return rows;
+}
+function xmbOpenGraphics(id) {
+  const state = ui.state || {};
+  if (state.session?.running || state.session?.exit_requested || state.recovery_required) {
+    toast('Cierra PPSSPP y termina la devolución antes de cambiar los gráficos.');
+    return;
+  }
+  const section = XMB_SECTIONS.findIndex(([key]) => key === 'graficos');
+  const items = xmb.sections[section]?.items || [];
+  const index = items.findIndex((item) => (item.gfxId || null) === (id || null) && (id || item.key === 'gfx-default-all'));
+  xmb.nav = { ...xmb.nav, cat: section, level: 'sub', subIdx: 0, side: null, idx: { ...xmb.nav.idx, graficos: Math.max(0, index) } };
+  xmb.sub = { id, title: id ? (state.games || []).find((game) => game.id === id)?.title || 'Juego' : 'Predeterminado para todos' };
+  xmbLoadGraphics(id, true);
+  if (id) xmbLoadGraphics(null);
+  xmbRender();
+}
+function xmbValues(title, options, current, pick, owner = null, defaultValue = null) {
+  xmbSide(owner ? `${owner} · ${title}` : title, options.map(([value, label]) => ({ t: label, s: value === defaultValue ? 'predeterminado' : '' })),
+    (index) => pick(options[index][0]), Math.max(0, options.findIndex(([value]) => value === current)));
+}
+function xmbSide(title, opts, pick, start = 0) {
+  xmb.side = { title, opts, pick };
+  xmb.nav = { ...xmb.nav, side: { i: start } };
+  xmbRender();
+}
+function xmbConfirm(html, yesByDefault, done) {
+  xmb.confirm = { html, done };
+  xmb.nav = { ...xmb.nav, confirm: { yes: !!yesByDefault } };
+  xmbRender();
+}
+function xmbResolve(slot) {
+  const state = ui.state || {};
+  if (ui.busy || state.recovery_required || !state.selected_device || state.session?.running || ui.serviceOffline) {
+    toast('Para resolver un conflicto, conecta la PSP en modo almacenamiento USB y cierra PPSSPP.');
+    return;
+  }
+  xmbSide(`Conflicto · ${slot}`, [{ t: 'Usar la de la PSP', s: 'Reemplaza la copia del PC' }, { t: 'Usar la del PC', s: 'Escribe en la Memory Stick' }], (index) => {
+    const choice = index === 0 ? 'psp' : 'pc';
+    xmbConfirm(`¿Conservar la partida «${xmbEscape(slot)}» de ${choice === 'pc' ? 'este PC' : 'la PSP'} y reemplazar la otra?`, false, () => {
+      ui.resolve = { slot, choice };
+      $('resolve-confirm').click();
+    });
+  });
+}
+function xmbLaunch(game) {
+  ui.selected = game.id;
+  renderSelected(false);
+  const toastBefore = ui.toastTimer;
+  const navBefore = xmb.nav.cat;
+  launch();
+  // launch() explica la mayoría de bloqueos; si no dijo nada, muestra el motivo.
+  if (ui.toastTimer === toastBefore && !ui.busy && navBefore === xmb.nav.cat &&
+      !document.querySelector('dialog[open]') && $('launch-button').disabled) toast(xmbText('launch-note'));
+}
+function xmbGameMenu(game) {
+  const opts = [
+    { t: game.availability === 'missing' ? 'Copiar al PC' : 'Jugar', s: game.title },
+    { t: 'Ajustes gráficos de este juego', s: xmbGfxSummary(xmb.gfx[game.id]?.choice) },
+    { t: 'Partidas', s: 'Abre la sección Partidas' },
+    { t: 'Información', s: `${game.format || 'JUEGO'} · ${bytes(game.size)}` },
+  ];
+  xmbLoadGraphics(game.id);
+  xmbSide(game.title, opts, (index) => {
+    if (index === 0) xmbLaunch(game);
+    else if (index === 1) xmbOpenGraphics(game.id);
+    else if (index === 2) xmbGoto('partidas');
+    else { ui.selected = game.id; renderSelected(false); toast(`${game.relative || game.title} · ${xmbText('launch-note')}`); }
+  });
+}
+function xmbGoto(id) {
+  const cat = XMB_SECTIONS.findIndex(([key]) => key === id);
+  if (cat < 0) return;
+  xmb.nav = { ...xmb.nav, cat, level: 'list', subIdx: 0, side: null, confirm: null };
+  xmbRender();
+}
+function xmbCurrentItems() {
+  const section = xmb.sections[xmb.nav.cat];
+  return xmb.nav.level === 'sub' ? xmbGraphicsRows(xmb.sub?.id || null) : section?.items || [];
+}
+function xmbPress(button) {
+  if (!xmb.sections.length) xmb.sections = xmbBuildSections();
+  if (ui.state?.session?.running && button !== 'back') return;
+  const view = {
+    sections: xmb.sections.map((section) => ({ id: section.id, count: section.items.length })),
+    subCount: xmb.nav.level === 'sub' ? xmbGraphicsRows(xmb.sub?.id || null).length : 0,
+    sideCount: xmb.side?.opts.length || 0,
+  };
+  const before = xmb.nav;
+  const { nav, effect } = xmbStep(xmb.nav, view, button);
+  xmb.nav = nav;
+  if (before.level === 'sub' && nav.level === 'list') xmb.sub = null;
+  if (!nav.side && before.side) { const side = xmb.side; xmb.side = null; if (effect?.type === 'pick') side?.pick(effect.index); }
+  if (!nav.confirm && before.confirm) { const confirm = xmb.confirm; xmb.confirm = null; if (effect?.yes) confirm?.done(); }
+  if (effect?.type === 'activate' || effect?.type === 'menu') {
+    const item = xmb.sections[nav.cat]?.items[effect.index];
+    if (effect.type === 'activate') item?.activate?.();
+    else if (item?.menu) item.menu();
+  } else if (effect?.type === 'row') xmbGraphicsRows(xmb.sub?.id || null)[effect.index]?.activate?.();
+  else if (effect?.type === 'select') {
+    xmbGoto('dock');
+    const items = xmb.sections.find((section) => section.id === 'dock')?.items || [];
+    xmb.nav.idx = { ...xmb.nav.idx, dock: Math.max(0, items.length - 1) };
+    toast('Salir del Dock · pulsa ✕ para confirmar.');
+  }
+  xmbRender();
+}
+
+// ---------- pintado ----------
+const XMB_CAT_GAP = 12, XMB_CAT_X = 24;
+function xmbIconNode(icon) {
+  const box = document.createElement('div');
+  if (typeof icon === 'string') { box.className = 'xmb-ic round'; box.innerHTML = XMB_ICONS[icon] || XMB_ICONS.info; return box; }
+  box.className = 'xmb-ic';
+  const game = icon.game;
+  box.dataset.fallback = (game.title || 'PSP').toUpperCase();
+  let img = xmb.icons.get(game.id);
+  if (!img && !ui.state?.demo) {
+    // Una sola petición por juego: el servidor responde sin caché.
+    img = document.createElement('img');
+    img.alt = '';
+    img.decoding = 'async';
+    img.addEventListener('load', () => img.classList.add('ok'), { once: true });
+    img.addEventListener('error', () => img.remove(), { once: true });
+    img.src = '/api/icon/' + encodeURIComponent(game.id);
+    xmb.icons.set(game.id, img);
+  }
+  if (img) box.append(img);
+  return box;
+}
+function xmbItemNode(key, item) {
+  let node = xmb.els.get(key);
+  const val = (v) => typeof v === 'function' ? v() : v;
+  const chip = val(item.chip);
+  const signature = JSON.stringify([item.t, val(item.s), chip, item.tag, typeof item.icon === 'string' ? item.icon : item.icon?.game?.id, !!item.dim]);
+  if (!node) {
+    node = document.createElement('div');
+    node.className = 'xmb-item';
+    node.setAttribute('role', 'option');
+    xmb.els.set(key, node);
+  }
+  if (node.dataset.sig !== signature) {
+    node.dataset.sig = signature;
+    node.replaceChildren();
+    const text = document.createElement('div');
+    text.className = 'xmb-tx';
+    const title = document.createElement('b');
+    title.textContent = item.t;
+    if (chip) { const c = document.createElement('span'); c.className = 'xmb-chip ' + chip[0]; c.textContent = chip[1]; title.append(c); }
+    if (item.tag) { const c = document.createElement('span'); c.className = 'xmb-chip ' + (item.tag === 'PROPIO' ? 'pc' : 'inh'); c.textContent = item.tag; title.append(c); }
+    const sub = document.createElement('small');
+    sub.textContent = val(item.s) || '';
+    text.append(title, sub);
+    node.append(xmbIconNode(item.icon), text);
+    node.classList.toggle('dim-item', !!item.dim);
+  }
+  return node;
+}
+function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
+  const list = $('xmb-list');
+  items.forEach((item, i) => {
+    const r = i - focus;
+    if (r < -2 || r > 6 || collapsed && r !== 0) return;
+    const key = prefix + item.key;
+    const node = xmbItemNode(key, item);
+    used.add(key);
+    node.classList.toggle('on', r === 0 && !collapsed);
+    node.classList.toggle('collapsed', collapsed);
+    node.setAttribute('aria-selected', String(r === 0 && !collapsed));
+    node.style.left = x + 'cqw';
+    node.style.top = (r === 0 ? 20.5 : r > 0 ? 21 + r * 5.6 : 7.2 + (r + 1) * 5.2) + 'cqw';
+    node.style.opacity = collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
+    node.onclick = () => {
+      if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
+      else if (collapsed) xmbPress('back');
+      else if (r === 0) xmbPress('accept');
+      else { xmb.nav = { ...xmb.nav, idx: { ...xmb.nav.idx, [xmb.sections[xmb.nav.cat].id]: i } }; xmbRender(); }
+    };
+    if (node.parentNode !== list) list.append(node);
+  });
+}
+function xmbRender() {
+  if (!ui.state && !ui.serviceOffline) return;
+  xmb.sections = xmbBuildSections();
+  const nav = xmb.nav;
+  nav.cat = Math.max(0, Math.min(xmb.sections.length - 1, nav.cat));
+  const section = xmb.sections[nav.cat];
+  const focus = Math.max(0, Math.min(section.items.length - 1, nav.idx[section.id] || 0));
+  nav.idx[section.id] = focus;
+  const inSub = nav.level === 'sub';
+  const rows = inSub ? xmbGraphicsRows(xmb.sub?.id || null) : [];
+  if (inSub) nav.subIdx = Math.max(0, Math.min(rows.length - 1, nav.subIdx));
+  if (!inSub) section.items[focus]?.focus?.();
+
+  const cats = $('xmb-cats');
+  if (cats.childElementCount !== xmb.sections.length) {
+    cats.replaceChildren(...xmb.sections.map((item, i) => {
+      const node = document.createElement('button');
+      node.type = 'button';
+      node.className = 'xmb-cat';
+      node.tabIndex = -1;
+      node.style.left = (XMB_CAT_X + i * XMB_CAT_GAP) + 'cqw';
+      node.innerHTML = XMB_ICONS[item.id] + '<span></span><em class="xmb-badge" hidden></em>';
+      node.querySelector('span').textContent = item.label;
+      node.addEventListener('click', () => { xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
+      return node;
+    }));
+  }
+  Array.from(cats.children).forEach((node, i) => {
+    node.classList.toggle('on', i === nav.cat);
+    node.setAttribute('aria-current', i === nav.cat ? 'page' : 'false');
+    const badge = node.querySelector('.xmb-badge');
+    badge.hidden = !xmb.sections[i].badge;
+    badge.textContent = xmb.sections[i].badge || '';
+  });
+  cats.style.transform = `translateX(${-nav.cat * XMB_CAT_GAP}cqw)`;
+  cats.classList.toggle('faded', inSub);
+
+  const used = new Set();
+  xmbPlaceColumn('main:' + section.id + ':', section.items, focus, inSub ? 4 : XMB_CAT_X - 3.6, inSub, used);
+  if (inSub) xmbPlaceColumn('sub:', rows, nav.subIdx, 26, false, used);
+  for (const [key, node] of xmb.els) if (!used.has(key)) { node.remove(); xmb.els.delete(key); }
+
+  const state = ui.state || {};
+  $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
+  const hid = state.controller_status?.connected === true;
+  $('xmb-hid').classList.toggle('on', hid);
+  $('xmb-hid').classList.toggle('storage', !hid && !!state.selected_device);
+  $('xmb-hid-label').textContent = ui.serviceOffline ? 'Sin servicio' : hid ? 'PSP HID' : state.selected_device ? 'PSP USB' : 'Sin PSP';
+  $('xmb-busy').hidden = !ui.busy;
+  $('xmb-busy').textContent = ui.busy ? 'Procesando…' : '';
+
+  const side = $('xmb-side');
+  side.classList.toggle('open', !!nav.side && !!xmb.side);
+  if (nav.side && xmb.side) {
+    $('xmb-side-title').textContent = xmb.side.title.toUpperCase();
+    $('xmb-side-list').replaceChildren(...xmb.side.opts.map((opt, i) => {
+      const li = document.createElement('li');
+      li.className = i === nav.side.i ? 'on' : '';
+      li.textContent = opt.t;
+      if (opt.s) { const small = document.createElement('small'); small.textContent = opt.s; li.append(small); }
+      li.addEventListener('click', () => { xmb.nav = { ...xmb.nav, side: { i } }; xmbPress('accept'); });
+      return li;
+    }));
+  }
+  $('xmb-confirm').classList.toggle('open', !!nav.confirm && !!xmb.confirm);
+  if (nav.confirm && xmb.confirm) {
+    // El texto de confirmación lo escribe solo este archivo; los nombres de
+    // partidas o juegos se insertan escapados.
+    $('xmb-confirm-text').innerHTML = xmb.confirm.html;
+    $('xmb-yes').classList.toggle('on', nav.confirm.yes);
+    $('xmb-no').classList.toggle('on', !nav.confirm.yes);
+  }
+  $('xmb-running').classList.toggle('open', !!state.session?.running);
+  xmbRenderHints(inSub ? rows[nav.subIdx] : section.items[focus]);
+}
+function xmbRenderHints(item) {
+  const nav = xmb.nav, hints = [];
+  const add = (glyph, label) => hints.push([glyph, label]);
+  if (ui.state?.session?.running) add('', 'PPSSPP en ejecución');
+  else if (nav.confirm) { add('◀▶', 'Elegir'); add('✕', 'Aceptar'); add('○', 'Cancelar'); }
+  else if (nav.side) { add('▲▼', 'Elegir'); add('✕', 'Aceptar'); add('○', 'Cerrar'); }
+  else if (nav.level === 'sub') { add('▲▼', 'Ajuste'); add('✕', 'Cambiar'); add('○', 'Volver'); }
+  else {
+    add('◀▶', 'Sección'); add('▲▼', 'Elegir');
+    if (item?.game) { add('✕', item.game.availability === 'missing' ? 'Copiar' : 'Jugar'); add('△', 'Opciones'); }
+    else if (item) add('✕', 'Entrar');
+  }
+  $('xmb-hints').replaceChildren(...hints.map(([glyph, label]) => {
+    const span = document.createElement('span');
+    if (glyph) { const i = document.createElement('i'); i.textContent = glyph; span.append(i); }
+    span.append(label);
+    return span;
+  }));
+}
+function xmbApplyTheme() {
+  const now = new Date();
+  const colors = xmb.theme === 'month' ? xmbMonthColors(now.getMonth(), now.getHours()) : { top: '#0b5672', bottom: '#052433' };
+  $('xmb').style.setProperty('--xmb-top', colors.top);
+  $('xmb').style.setProperty('--xmb-bottom', colors.bottom);
+}
+function xmbWaves() {
+  const canvas = $('xmb-waves'), ctx = canvas.getContext('2d');
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const frame = (time) => {
+    const w = canvas.clientWidth, h = canvas.clientHeight, dpr = devicePixelRatio || 1;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const s = still ? 0 : time / 1000;
+    for (let k = 0; k < 3; k++) {
+      ctx.beginPath();
+      for (let x = 0; x <= w; x += 8) {
+        const y = h * (.62 + k * .05) + Math.sin(x / w * 3.2 + s * (.35 + k * .12) + k) * h * .06 + Math.sin(x / w * 7 + s * .5) * h * .012;
+        if (x) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+      }
+      ctx.strokeStyle = `rgba(255,255,255,${.22 - k * .05})`;
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+      ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+      ctx.fillStyle = `rgba(255,255,255,${.035 - k * .008})`;
+      ctx.fill();
+    }
+    if (!still && !document.hidden) requestAnimationFrame(frame);
+    else if (!still) document.addEventListener('visibilitychange', () => requestAnimationFrame(frame), { once: true });
+  };
+  requestAnimationFrame(frame);
+}
+function xmbEscape(text) { return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+xmbApplyTheme();
+setInterval(xmbApplyTheme, 60000);
+xmbWaves();
+xmbLoadSettings();
+
+function updateClock() {
+  // Como la PSP: día/mes y hora.
+  const now = new Date();
+  $('clock').textContent = `${now.getDate()}/${now.getMonth() + 1} ${new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' }).format(now)}`;
+}
 updateClock();
 setInterval(updateClock, 30000);
 refresh();

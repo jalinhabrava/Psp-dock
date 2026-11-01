@@ -60,6 +60,15 @@ arriba/abajo enfoca cada opción, izquierda/derecha cambia su valor.
 Los tests JavaScript se pueden ejecutar con
 node tests/xmb_controller_navigation.test.js.
 
+**Interfaz XMB (01/11/2026).** La pantalla principal funciona como el XMB de
+la PSP: Ajustes · Dock · Juegos · Partidas · Gráficos en horizontal y su
+contenido en vertical. ✕ entra o juega, ○ vuelve, △ abre las opciones del
+juego, START vuelve a Juegos y SELECT lleva a «Salir del Dock» (que pide
+Sí/No). Los gráficos son por juego: cada valor se guarda en el perfil del
+juego abierto y muestra si es PROPIO o heredado del predeterminado. El
+fondo cambia de color con el mes y la hora. Modelo puro probado con
+node tests/xmb_navigation_model.test.js.
+
 Se compiló en PC una variante experimental del HID-only LAB con
 15 minutos máximos, en homebrew/hid-extended/dist. **NO se instaló
 en la PSP ni reemplaza el lab de 90 segundos ya demostrado.**

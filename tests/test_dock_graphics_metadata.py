@@ -35,6 +35,21 @@ class VerifiedGameTextureTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def test_view_reports_own_profile_and_reset_follows_default(self):
+        with patch('ppsspp_graphics.primary_monitor',
+                   return_value=__import__('ppsspp_graphics').Monitor(1920,1080)):
+            first=self.dock.graphics_view(self.id)
+            self.assertFalse(first['custom'])
+            self.assertEqual(first['default_choice']['quality'],'auto')
+            own=self.dock.set_graphics_view({'id':self.id,'quality':'ultra','aspect':'fit','texture':'off'})
+            self.assertTrue(own['custom'])
+            self.assertEqual(own['choice']['quality'],'ultra')
+            back=self.dock.set_graphics_view({'id':self.id,'reset':True})
+            self.assertFalse(back['custom'])
+            self.assertEqual(back['choice']['quality'],'auto')
+            with self.assertRaises(ValueError):
+                self.dock.set_graphics_view({'id':None,'reset':True})
+
     def test_verified_pc_game_disc_id_used_for_texture_pack(self):
         with patch('psp_game_metadata.read_metadata',
                    wraps=__import__('psp_game_metadata').read_metadata) as loader:
