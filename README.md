@@ -1,5 +1,47 @@
 # PSP Dock · prototipo para Windows
 
+## Estado de integración — 1 de noviembre de 2026
+
+Las PR #1 y #2 están fusionadas en main. La instalación LIVE de Windows
+usa el XMB de Claude y las mejoras de sonido/fondo, transferencia de
+juegos, perfiles gráficos y carpeta de datos configurable. Se comprobó
+con Sony USBSTOR real: 35 títulos, Dariusburst disponible en PC,
+7 partidas sincronizadas, 35 vistas multimedia procesadas sin error.
+
+**Texturas HD:** PSP Dock incorpora un catálogo de fuentes de la
+comunidad con identificadores concretos de región/edición, autores y
+enlaces. El catálogo local auditable registra 23 proyectos o packs:
+19 proceden de EmuCoreA-Textures y cuatro son proyectos Patapon/MH
+para consulta. Hay 12 variantes regionales con archivo ZIP y SHA256
+publicados. La acción Gráficos → Packs HD muestra las fuentes; los
+proyectos sin ZIP aprobado no se descargan. El usuario puede buscar
+ampliaciones en el catálogo público de GitHub, explícitamente desde
+el XMB y sin monitor residente. Todo pack instalable se descarga
+al PC y valida tamaño, SHA256, contenido ZIP y DISC_ID. Se probó
+una descarga real de GTA Vice City Stories (207 texturas) en
+un sandbox temporal, sin modificar partidas ni contenido PSP.
+También se comprobaron GTA Liberty City Stories (285 texturas)
+y GTA Chinatown Wars (37 texturas) frente a sus tamaños y SHA256.
+Las pruebas PC del nuevo catálogo y del prototipo USB están
+incluidas en los **453 tests Python + 3 tests JavaScript** que
+pasaron el 1 de noviembre de 2026.
+
+**Un cable de verdad:** actualmente sigue pendiente. Se está
+prototipando un USB compuesto HID + interfaz de archivos BULK en lugar
+de alternar inseguramente entre USBSTOR y HID. La PSP mantendría
+siempre la propiedad de FAT; Windows pediría juegos y saves mediante
+un protocolo de archivos con manifiestos SHA256. El formato PDB2
+ya se ha probado en Python y en C; los descriptores USB de dos
+interfaces se han validado en Python y compilado como objeto MIPS
+mediante PSPDEV. Windows tiene un detector de la futura interfaz
+WinUSB, que actualmente no está enumerada. Todo esto es **código
+experimental NO instalado**; no existe todavía un dispositivo
+compuesto funcional ni sincronización sin cable reconectado.
+
+Consulta ONE-CABLE-USB-BULK.md antes de cualquier modificación de
+firmware o ensayo con la Memory Stick original. El antiguo USB Step
+Probe que provocó apagados permanece retirado permanentemente.
+
 ## New feature branch: media, storage location and graceful shutdown
 
 See MVP-HANDOFF-USB-MEDIA.md for the changes based on Claude's

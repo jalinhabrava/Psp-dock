@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from io import BytesIO
+import json
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -19,6 +19,7 @@ import urllib.parse
 import urllib.request
 import uuid
 import zipfile
+from functools import lru_cache
 
 
 DISC_ID = re.compile(r'[A-Z]{4}[0-9]{5}\Z')
@@ -30,7 +31,9 @@ ALLOWED_HOSTS = frozenset((
 MAX_ZIP_BYTES = 512*1024*1024
 MAX_UNPACKED_BYTES = 2*1024*1024*1024
 MAX_ENTRIES = 30000
-TEXTURE_TYPES = ('.png','.ktx2','.dds','.jpg','.jpeg','.bmp','.zim')
+TEXTURE_TYPES = ('.png','.ktx2','.dds','.jpg','.jpeg','.bmp','.zim','.zimg')
+SOURCE_INDEX = Path(__file__).with_name('texture_catalog_sources.json')
+SOURCE_BLOB_SHA = '69da82d63d40630e18bd4b5d01c482e19e74c3db'
 
 
 class TexturePackError(ValueError):
@@ -130,9 +133,19 @@ def inspect_zip(path:Path)->dict:
                         raise TexturePackError('textures.ini no reconocido.')
                 elif raw.lower().endswith(TEXTURE_TYPES):
                     textures+=1
-                elif raw.casefold() in ('license','license.txt','readme.txt','readme.md'):
+                elif (raw.casefold().endswith(('.txt','.md')) or
+                      raw.casefold()=='license'):
+                    # Community packs may ship safe text mapping/credits
+                    # nested beside images (e.g. Text/Key.txt); these
+                    # never execute and ZIP contents are never extracted.
                     if info.file_size>2*1024*1024:
                         raise TexturePackError('Documento del pack demasiado grande.')
+                elif raw=='Map/Map_Radar_Redraw.pdn' and info.file_size<=1024*1024:
+                    # The SHA256-pinned SonofUgly LCS archive includes this
+                    # inert Paint.NET source project. It is never extracted
+                    # or opened by PSP Dock; PPSSPP ignores nontextures.
+                    # Never generalize this exception to executables.
+                    pass
                 else:
                     # Refuse executables and scripts rather than ever
                     # unpacking or executing them on the customer's PC.
@@ -146,7 +159,8 @@ def inspect_zip(path:Path)->dict:
 
 
 def download_and_install(offer:TextureOffer, *, matching_disc_id:str,
-                         private_memstick:Path, opener=None)->dict:
+                         private_memstick:Path, opener=None,
+                         progress=None)->dict:
     """One explicit user-approved pack install; no auto install on discovery."""
     offer.validate()
     if offer.disc_id != matching_disc_id or not DISC_ID.fullmatch(matching_disc_id):
@@ -159,8 +173,8 @@ def download_and_install(offer:TextureOffer, *, matching_disc_id:str,
             not target.resolve().is_relative_to(memstick.resolve()) or
             any(getattr(p,'is_junction',lambda:False)() or p.is_symlink()
                 for p in (target,target.parent,target.parent.parent)) or
-            (target/'textures.zip').exists()):
-        raise TexturePackError('Ya existe un pack de texturas; no sobrescribir.')
+            target.exists() and any(target.iterdir())):
+        raise TexturePackError('Ya hay texturas instaladas para este juego; no se mezclarán ni sobrescribirán.')
     if shutil.disk_usage(memstick).free<offer.size_bytes+64*1024*1024:
         raise TexturePackError('No hay espacio en el disco del PC.')
     target.mkdir(parents=True,exist_ok=True)
@@ -168,6 +182,8 @@ def download_and_install(offer:TextureOffer, *, matching_disc_id:str,
     opener=opener or urllib.request.build_opener(SafeRedirects()).open
     sha=hashlib.sha256()
     count=0
+    if progress is not None:
+        progress(0,offer.size_bytes,'downloading')
     try:
         request=urllib.request.Request(
             offer.archive_url,headers={'User-Agent':'PSPDock/0.1',
@@ -183,10 +199,14 @@ def download_and_install(offer:TextureOffer, *, matching_disc_id:str,
                     raise TexturePackError('Descarga mayor de lo autorizado.')
                 dest.write(piece)
                 sha.update(piece)
+                if progress is not None:
+                    progress(count,offer.size_bytes,'downloading')
             dest.flush()
             os.fsync(dest.fileno())
         if count!=offer.size_bytes or sha.hexdigest()!=offer.sha256:
             raise TexturePackError('SHA-256 o tamaño no coinciden con la fuente verificada.')
+        if progress is not None:
+            progress(count,offer.size_bytes,'validating')
         stats=inspect_zip(temp)
         try:
             # Hard-link publishing cannot overwrite if another request
@@ -194,24 +214,110 @@ def download_and_install(offer:TextureOffer, *, matching_disc_id:str,
             os.link(temp,target/'textures.zip')
         except FileExistsError as exc:
             raise TexturePackError('El paquete ya está instalado; no sobrescribir.') from exc
+        if progress is not None:
+            progress(count,offer.size_bytes,'installed')
         return {'status':'installed','disc_id':matching_disc_id,
                 'size_bytes':count,**stats,'source':offer.source_url}
     finally:
         temp.unlink(missing_ok=True)
 
 
-# Offers are deliberately curated, not guessed from matching game titles.
-# Sources can be found on the official PPSSPP forum; packages are added
-# here only after a reviewer verifies author permission, exact DISC_ID,
-# fixed download URL, SHA256, size and ZIP contents. No approved archive
-# has been verified for ULJM05558 (Dariusburst) yet.
-CURATED_OFFERS:tuple[TextureOffer,...]=()
+@lru_cache(maxsize=1)
+def source_catalog()->tuple[dict,...]:
+    """Inspect a pinned snapshot of a third-party author-attributed catalog.
+
+    Only factual metadata (game IDs, source URLs, sizes, hashes and attribution)
+    is bundled, never the actual texture images or game assets. The snapshot
+    was derived from EmuCoreA-Textures' 2026-09-19 SHA-pinned catalog.
+    Changes require a reviewed code update, not a silent remote replacement.
+    """
+    try:
+        source=json.loads(SOURCE_INDEX.read_text(encoding='utf-8'))
+    except (OSError,UnicodeDecodeError,json.JSONDecodeError) as exc:
+        raise TexturePackError('No se puede cargar el catálogo de fuentes HD.') from exc
+    if (source.get('schema')!=1 or
+            source.get('source_repository')!='sashkinbro/EmuCoreA-Textures' or
+            source.get('source_blob_sha')!=SOURCE_BLOB_SHA or
+            not isinstance(source.get('entries'),list) or
+            not 1<=len(source['entries'])<=250):
+        raise TexturePackError('Fuente del catálogo HD no reconocida.')
+    result=[]
+    identifiers=set()
+    for entry in source['entries']:
+        if (not isinstance(entry,dict) or
+                not re.fullmatch('[a-z0-9-]{3,100}',entry.get('id','')) or
+                entry['id'] in identifiers or
+                not isinstance(entry.get('disc_ids'),list) or
+                not 1<=len(entry['disc_ids'])<=12 or
+                any(not isinstance(d,str) or not DISC_ID.fullmatch(d)
+                    for d in entry['disc_ids'])):
+            raise TexturePackError('Registro de catálogo HD inválido.')
+        identifiers.add(entry['id'])
+        validated_url(entry['source_url'])
+        if entry.get('download_url'):
+            validated_url(entry['download_url'])
+            if (not SHA256.fullmatch(entry.get('sha256','')) or
+                    type(entry.get('size_bytes')) is not int or
+                    entry['size_bytes']<1):
+                raise TexturePackError('Pack de texturas sin SHA-256 o tamaño.')
+        if (entry.get('download_ready') is True and
+                (not entry.get('download_url') or
+                 entry.get('size_bytes',0)>MAX_ZIP_BYTES or
+                 not entry.get('license_notice'))):
+            raise TexturePackError('Oferta de instalación sin origen verificable.')
+        result.append(entry)
+    return tuple(result)
+
+
+def sources_for_disc(disc_id:str)->list[dict]:
+    """Show source information even when direct auto-install is unavailable."""
+    if not isinstance(disc_id,str) or not DISC_ID.fullmatch(disc_id):
+        return []
+    out=[]
+    for item in source_catalog():
+        if disc_id not in item['disc_ids']:
+            continue
+        ready=item.get('download_ready') is True
+        out.append({
+            'id':item['id'],'title':item['title'],
+            'game_title':item['game_title'],'publisher':item['publisher'],
+            'source_url':item['source_url'],
+            'size_bytes':item.get('size_bytes'),
+            'downloadable':ready,
+            'distribution':item.get('distribution','link-only'),
+            'license_notice':item.get('license_notice',''),
+        })
+    return sorted(out,key=lambda x:(not x['downloadable'],x['title'].casefold()))
+
+
+def approved_offers()->tuple[TextureOffer,...]:
+    """Only reviewed, exact-revision ZIPs may reach the downloader."""
+    offers=[]
+    for item in source_catalog():
+        if item.get('download_ready') is not True:
+            continue
+        for serial in item['disc_ids']:
+            offer=TextureOffer(
+                id=item['id'],disc_id=serial,title=item['title'],
+                publisher=item['publisher'],source_url=item['source_url'],
+                archive_url=item['download_url'],
+                sha256=item['sha256'],size_bytes=item['size_bytes'],
+                permission=item['license_notice'],
+            )
+            offer.validate()
+            offers.append(offer)
+    return tuple(offers)
+
+
+CURATED_OFFERS=approved_offers()
 
 
 def offers_for_disc(disc_id:str)->list[dict]:
     if not isinstance(disc_id,str) or not DISC_ID.fullmatch(disc_id):
         return []
-    return [dict(id=o.id,title=o.title,publisher=o.publisher,
-                 source_url=o.source_url,permission=o.permission,
-                 size_bytes=o.size_bytes)
-            for o in CURATED_OFFERS if o.disc_id==disc_id]
+    return [
+        dict(id=o.id,title=o.title,publisher=o.publisher,
+             source_url=o.source_url,permission=o.permission,
+             size_bytes=o.size_bytes)
+        for o in CURATED_OFFERS if o.disc_id==disc_id
+    ]

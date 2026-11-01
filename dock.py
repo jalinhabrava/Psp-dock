@@ -470,6 +470,12 @@ class Dock:
         }
         self.copy_queue_path=self.data/'copy-queue.json'
         self.copy_queue=read_json(self.copy_queue_path,{})
+        self.texture_download_lock=threading.Lock()
+        self.texture_download_status={
+            'active':False,'phase':'idle',
+            'downloaded_bytes':0,'total_bytes':0,
+            'game_id':'','offer_id':'','error':'',
+        }
         # Optional, opt-in Windows logon helper uses this callback to open
         # a localhost browser tab only on a NEW storage attachment.
         self.on_connected = None
@@ -1067,8 +1073,9 @@ class Dock:
                         (texture_folder/'textures.ini').is_file() or
                         (texture_folder/'textures.zip').is_file()
                     )
-                    from psp_texture_packs import offers_for_disc
+                    from psp_texture_packs import offers_for_disc, sources_for_disc
                     result['hd_texture_pack_offers']=offers_for_disc(game_disc)
+                    result['hd_texture_pack_sources']=sources_for_disc(game_disc)
                     result['hd_pack_community_url']='https://forums.ppsspp.org/forumdisplay.php?fid=36'
                 else:
                     result['hd_texture_pack_installed']=False
@@ -1414,12 +1421,37 @@ class Dock:
                     if p.id==offer_id and p.disc_id==disc),None)
         if offer is None:
             raise ValueError('No hay pack de fuente verificada para esta edición.')
-        report=download_and_install(offer,matching_disc_id=disc,
-                                    private_memstick=Path(self.config['memstick']))
-        self.events.record('hd_texture_pack_installed',evidence='pc_observed',
-                           game_id=game_id,result='hash_verified',
-                           count=report['textures'])
-        return report
+        with self.texture_download_lock:
+            if self.texture_download_status['active']:
+                raise ValueError('Ya hay una descarga HD en curso.')
+            self.texture_download_status={
+                'active':True,'phase':'preparing','downloaded_bytes':0,
+                'total_bytes':offer.size_bytes,'game_id':game_id,
+                'offer_id':offer.id,'error':'',
+            }
+        def progress(current,total,phase):
+            with self.texture_download_lock:
+                self.texture_download_status={
+                    **self.texture_download_status,
+                    'phase':phase,'downloaded_bytes':current,
+                    'total_bytes':total,
+                }
+        try:
+            report=download_and_install(offer,matching_disc_id=disc,
+                                        private_memstick=Path(self.config['memstick']),
+                                        progress=progress)
+            self.events.record('hd_texture_pack_installed',evidence='pc_observed',
+                               game_id=game_id,result='hash_verified',
+                               count=report['textures'])
+            return report
+        except (OSError,ValueError) as exc:
+            with self.texture_download_lock:
+                self.texture_download_status['phase']='failed'
+                self.texture_download_status['error']=str(exc)[:240]
+            raise
+        finally:
+            with self.texture_download_lock:
+                self.texture_download_status['active']=False
 
     def controller_status(self, storage_mounted):
         """Observe manual PDK1 HID without authorizing a USB role handoff."""
@@ -1930,6 +1962,15 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     return self.reply(dock.xmb_media_progress)
                 if self.path == '/api/copy-queue':
                     return self.reply(dock.copy_queue)
+                if self.path == '/api/texture-status':
+                    with dock.texture_download_lock:
+                        return self.reply(dict(dock.texture_download_status))
+                if self.path.startswith('/api/texture-search/'):
+                    # Explicit XMB action; only public catalog metadata is
+                    # fetched. Remote JSON can NEVER install a new ZIP.
+                    from psp_texture_discovery import sources_online
+                    disc_id=self.path[len('/api/texture-search/'):]
+                    return self.reply(sources_online(disc_id))
                 if self.path.startswith('/api/media/'):
                     parts=self.path.split('/')
                     if len(parts)!=5 or parts[1:3]!=['api','media']:

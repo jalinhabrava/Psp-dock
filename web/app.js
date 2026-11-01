@@ -12,6 +12,7 @@ const ui = {
   nativePadConnected: false, nativePadLastAt: 0,
   nativePadHeld: {}, nativePadDirection: '', nativePadAt: 0,
   graphicsGame: null,
+  textureProgress: null,
 };
 const bytes = (value) => {
   const n = Number(value) || 0;
@@ -1524,26 +1525,88 @@ function xmbTexturePackAction(id, data) {
     toast('No se ha podido identificar la edición del juego.');
     return;
   }
-  const offers = data.hd_texture_pack_offers || [];
-  if (!offers.length) {
-    toast('Sin pack HD verificado para ' + disc +
-      '. Busca proyectos en forums.ppsspp.org, sección Texture Packs. No se instalarán archivos desconocidos.');
-    return;
-  }
-  xmbSide('Packs HD · ' + disc, offers.map((offer) => ({
-    t: offer.title, s: offer.publisher + ' · ' + bytes(offer.size_bytes),
-  })), (index) => {
-    const offer = offers[index];
-    xmbConfirm('¿Descargar e instalar "' + xmbEscape(offer.title) +
-      '" en PPSSPP?<small>Autor: ' + xmbEscape(offer.publisher) +
-      '. Instalación solo tras validar SHA-256 y edición.</small>', false,
-      async () => {
-        if (await mutate('/api/install-texture-pack',
-            { id, offer_id: offer.id }, 'Pack HD verificado e instalado en el PC.')) {
-          await xmbLoadGraphics(id, true);
+  const sources = data.hd_texture_pack_sources || (data.hd_texture_pack_offers || [])
+    .map(offer => ({ ...offer, downloadable:true }));
+  const draw = (rows, searched) => {
+    const items = rows.map((source) => ({
+      t: source.title,
+      s: source.publisher + ' · ' + (source.downloadable ?
+        ('Instalable con verificación · ' + bytes(source.size_bytes)) :
+        'Fuente encontrada · sin ZIP aprobado para instalación'),
+    }));
+    items.push({
+      t: searched ? 'Actualizar búsqueda de Internet' : 'Buscar más packs en Internet',
+      s: 'Consultar catálogo público de GitHub · solo información',
+    });
+    xmbSide('Packs HD · ' + disc, items, async (index) => {
+      if (index === rows.length) {
+        toast('Buscando proyectos de texturas HD en GitHub…');
+        try {
+          const result = await request('/api/texture-search/' + encodeURIComponent(disc));
+          draw(result.sources || [], true);
+          toast(result.unverified_new ?
+            'Se han encontrado ' + result.unverified_new + ' fuentes adicionales por revisar.' :
+            'Búsqueda terminada: no hay nuevos packs para esta edición.');
+        } catch (error) {
+          toast('La búsqueda de texturas no pudo completarse: ' + error.message);
         }
-      });
-  });
+        return;
+      }
+      const source = rows[index];
+      if (!source.downloadable) {
+        xmbConfirm('Proyecto encontrado: ' + xmbEscape(source.title) +
+          '<small>' + xmbEscape(source.publisher) +
+          '. Todavía no se ha aprobado un ZIP para instalación automática. ' +
+          'Fuente: ' + xmbEscape(source.source_url) +
+          '. ¿Copiar enlace al portapapeles del PC?</small>', false,
+          () => {
+            if (!navigator.clipboard?.writeText) {
+              toast('Fuente del proyecto: ' + source.source_url);
+              return;
+            }
+            void navigator.clipboard.writeText(source.source_url).then(
+              () => toast('Enlace del proyecto HD copiado al PC.'),
+              () => toast('No se pudo copiar el enlace: ' + source.source_url)
+            );
+          });
+        return;
+      }
+      xmbConfirm('¿Descargar e instalar "' + xmbEscape(source.title) +
+        '" en PPSSPP?<small>Autor: ' + xmbEscape(source.publisher) +
+        ' · ' + bytes(source.size_bytes) +
+        '. Se comprobará la edición exacta y SHA-256 antes de instalar.</small>',
+        false, async () => {
+          if (await xmbInstallTexturePack(id, source.id)) {
+            await xmbLoadGraphics(id, true);
+          }
+        });
+    });
+  };
+  draw(sources, false);
+}
+async function xmbInstallTexturePack(gameId, offerId) {
+  const poll = async () => {
+    try {
+      const status = await request('/api/texture-status');
+      if (status.offer_id === offerId) {
+        ui.textureProgress = status;
+        xmbRender();
+      }
+    } catch { /* A rejected download is reported by mutate itself. */ }
+  };
+  // A separate GET thread can show progress while a verified download
+  // temporarily holds Dock.lock for the private PPSSPP destination.
+  const timer = setInterval(poll, 550);
+  try {
+    const ok = await mutate('/api/install-texture-pack',
+      { id:gameId, offer_id:offerId },
+      'Pack de texturas HD descargado y verificado. Se activará en PPSSPP al jugar.');
+    return ok;
+  } finally {
+    clearInterval(timer);
+    ui.textureProgress = null;
+    xmbRender();
+  }
 }
 function xmbGraphicsRows(id) {
   const data = xmb.gfx[xmbGfxKey(id)];
@@ -1691,6 +1754,7 @@ function xmbCurrentItems() {
 }
 function xmbPress(button) {
   if (!xmb.sections.length) xmb.sections = xmbBuildSections();
+  if (ui.textureProgress?.active) return;
   if (!xmb.nav.confirm &&
       ['waiting_for_storage','copying'].includes(ui.state?.copy_queue?.status)) {
     if (button === 'back' && ui.state.copy_queue.status === 'waiting_for_storage') {
@@ -1881,8 +1945,19 @@ function xmbRender() {
   $('xmb-running').classList.toggle('open', !!state.session?.running);
   const queue=state.copy_queue || {};
   const copying=['waiting_for_storage','copying'].includes(queue.status);
-  $('xmb-copy-status').hidden=!copying;
-  if (copying) {
+  const pack=ui.textureProgress;
+  $('xmb-copy-status').hidden=!copying && !pack?.active;
+  if (pack?.active) {
+    $('xmb-copy-heading').textContent =
+      pack.phase === 'validating' ? 'Verificando paquete HD' :
+      'Descargando texturas HD';
+    const done = pack.downloaded_bytes || 0;
+    const total = pack.total_bytes || 0;
+    $('xmb-copy-description').textContent =
+      bytes(done) + ' / ' + bytes(total) +
+      (total ? ' · ' + Math.floor(done / total * 100) + ' %' : '') +
+      '. Los controles del XMB permanecen bloqueados durante la instalación.';
+  } else if (copying) {
     $('xmb-copy-heading').textContent=queue.status==='copying' ?
       'Copiando y verificando el juego' : 'Esperando almacenamiento Sony';
     $('xmb-copy-description').textContent=queue.status==='copying' ?
@@ -1900,7 +1975,7 @@ function xmbRenderHints(item) {
   else if (nav.level === 'sub') { add('▲▼', 'Ajuste'); add('✕', 'Cambiar'); add('○', 'Volver'); }
   else {
     add('◀▶', 'Sección'); add('▲▼', 'Elegir');
-    if (item?.game) { add('✕', item.game.availability === 'missing' ? 'Copiar' : 'Jugar'); add('△', 'Opciones'); }
+    if (item?.game) { add('✕', item.game.availability === 'missing' ? 'Menú' : 'Jugar'); add('△', 'Opciones'); }
     else if (item) add('✕', 'Entrar');
   }
   $('xmb-hints').replaceChildren(...hints.map(([glyph, label]) => {

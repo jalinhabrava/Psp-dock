@@ -1,0 +1,434 @@
+{
+  "schema": 1,
+  "generated_at": "2026-09-19T21:30:00Z",
+  "source_repository": "sashkinbro/EmuCoreA-Textures",
+  "source_blob_sha": "69da82d63d40630e18bd4b5d01c482e19e74c3db",
+  "entries": [
+    {
+      "id": "imassp-tl-idolmaster-sp-cn-20260919",
+      "title": "The Idolmaster SP Chinese High Resolution Texture Pack",
+      "game_title": "The Idolmaster SP",
+      "disc_ids": [
+        "ULJS00167",
+        "ULJS00168",
+        "ULJS00169"
+      ],
+      "publisher": "IMASSP-TL contributors",
+      "source_url": "https://github.com/IMASSP-TL/Imas-SP-Texture-Patch-CN",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/imas-sp-perfect-sun-wandering-star-missing-moon.zip",
+      "sha256": "c0d7e7d6956ac4f5655bf1c5ccdba88e5772ccc07c1e8a07ae43988d3ab97e15",
+      "size_bytes": 294486374,
+      "distribution": "mirrored",
+      "download_ready": true,
+      "license_notice": "GPL-3.0 for the source repository; see the included LICENSE and upstream project notice for game asset attribution",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "itzantonis2012-gta-liberty-city-stories-20260919",
+      "title": "GTA Liberty City Stories PSP Texture Pack",
+      "game_title": "Grand Theft Auto: Liberty City Stories",
+      "disc_ids": [
+        "ULUS10041"
+      ],
+      "publisher": "ItzAntonis2012",
+      "source_url": "https://github.com/ItzAntonis2012/modernizepspgames",
+      "download_url": "https://github.com/ItzAntonis2012/modernizepspgames/releases/download/v1/gtalcs_texturepack_psp.zip",
+      "sha256": "2101fde564f5825f1c4eea778bd9828895706a7132d42e75a5f83c7c065ab088",
+      "size_bytes": 6763143,
+      "distribution": "link-only",
+      "download_ready": true,
+      "license_notice": "No redistribution license stated; link to upstream only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "itzantonis2012-gta-vice-city-stories-20260919",
+      "title": "GTA Vice City Stories PSP Texture Pack",
+      "game_title": "Grand Theft Auto: Vice City Stories",
+      "disc_ids": [
+        "ULUS10160"
+      ],
+      "publisher": "ItzAntonis2012",
+      "source_url": "https://github.com/ItzAntonis2012/modernizepspgames",
+      "download_url": "https://github.com/ItzAntonis2012/modernizepspgames/releases/download/v1/gtavcs_texturepack_psp.zip",
+      "sha256": "b87686eb02a2e2db165d1aa91c09351ef92e41673313b3c47faa332fb012c2d4",
+      "size_bytes": 4087480,
+      "distribution": "link-only",
+      "download_ready": true,
+      "license_notice": "No redistribution license stated; link to upstream only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "santiago046-manhunt-2-20260919",
+      "title": "Manhunt 2 PSP Texture Pack",
+      "game_title": "Manhunt 2",
+      "disc_ids": [
+        "ULUS10280",
+        "ULES00756"
+      ],
+      "publisher": "santiago046",
+      "source_url": "https://github.com/santiago046/ppsspp-mh2-texture-pack",
+      "download_url": "https://github.com/santiago046/ppsspp-mh2-texture-pack/releases/download/v3.0.1/manhunt2-texture-pack-v3.0.1.zip",
+      "sha256": "f63496d494cd929874ed9a57b415084b86813213c7017a09e4c78d724e78153a",
+      "size_bytes": 123588781,
+      "distribution": "link-only",
+      "download_ready": true,
+      "license_notice": "Re-upload prohibited by upstream README; link to original release only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "althonos-lapucelle-ragnarok-ui-20260919",
+      "title": "La Pucelle: Ragnarok PPSSPP HD UI Texture Pack",
+      "game_title": "La Pucelle: Ragnarok",
+      "disc_ids": [
+        "ULJS00244"
+      ],
+      "publisher": "althonos",
+      "source_url": "https://github.com/althonos/lapucelle-textures",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/lapucelle-uljs00244-ui-v0.1.0.zip",
+      "sha256": "ee5c9e863f83d758858bcf3f4d4fa6d11017ab3b77250f2280859571633ae7e3",
+      "size_bytes": 1189408,
+      "distribution": "mirrored",
+      "download_ready": true,
+      "license_notice": "CC-NC 1.0 as identified by upstream README; non-commercial redistribution only: https://creativecommons.org/licenses/nc/1.0/",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "retokyo-wipeout-pure-hd-20260919",
+      "title": "WipEout Pure HD Texture Pack",
+      "game_title": "WipEout Pure",
+      "disc_ids": [
+        "UCES00001",
+        "UCUS98612",
+        "UCJS10007",
+        "ULES00229",
+        "ULUS10058"
+      ],
+      "publisher": "reTokyo",
+      "source_url": "https://github.com/reTokyo/WipEout-Pure-HD-Texture-Pack",
+      "download_url": "https://github.com/reTokyo/WipEout-Pure-HD-Texture-Pack/archive/refs/heads/master.zip",
+      "sha256": "e235f024182e6d31bfe0749dacd1d4a4a690121d8dd04a4a215d9b72458c417e",
+      "size_bytes": 7810547,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "No redistribution license stated; upstream copyright notice; link-only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "sinceohsix-peggle-portable-hd-20260919",
+      "title": "Peggle Portable HD Texture Pack (PlayStation layout)",
+      "game_title": "Peggle",
+      "disc_ids": [
+        "NPUG30040"
+      ],
+      "publisher": "sinceohsix",
+      "source_url": "https://github.com/sinceohsix/PeggleHD",
+      "download_url": "https://github.com/sinceohsix/PeggleHD/releases/latest/download/NPUG30040-PS.zip",
+      "sha256": "df49ca9cd73476494d9948c1d179b1d000155d52ec0e15bbfed6b6ec622574ae",
+      "size_bytes": 58283322,
+      "distribution": "link-only",
+      "download_ready": true,
+      "license_notice": "No redistribution license stated; Electronic Arts trademark notice; link-only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "ezehokadrim-fate-extra-20260919",
+      "title": "Fate/Extra PSP HD Texture Pack",
+      "game_title": "Fate/Extra",
+      "disc_ids": [
+        "ULUS10576"
+      ],
+      "publisher": "Ezehokadrim",
+      "source_url": "https://github.com/Ezehokadrim/fate-extra-texturepack",
+      "download_url": "https://github.com/Ezehokadrim/fate-extra-texturepack/archive/refs/heads/master.zip",
+      "sha256": "c2579a5426dbe7530f1dde31ea5a0268791cd15e48c0c48238e7962454bdda77",
+      "size_bytes": 26250278,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "No redistribution license stated; upstream README requests author credit and reserves original game rights; link-only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "pandaquq-p3p-hd-chinese-overlay-20260919",
+      "title": "Persona 3 Portable HD Chinese Texture Overlay",
+      "game_title": "Persona 3 Portable",
+      "disc_ids": [
+        "NPJH50040"
+      ],
+      "publisher": "PandaQuQ",
+      "source_url": "https://github.com/PandaQuQ/P3P_HD_CHINESE",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/p3p-hd-chinese-npjh50040-v0.11.zip",
+      "sha256": "820d940ffe4d803873f7050b726c0d58b052cff56f21429ef83dbce24942a4fd",
+      "size_bytes": 24483912,
+      "distribution": "mirrored",
+      "download_ready": false,
+      "license_notice": "MIT License for the upstream repository; LICENSE and attribution notice are included. Original game and separate DinJerr base-pack rights remain with their respective owners.",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "chenetulipe-p2is-french-hd-overlay-20260919",
+      "title": "Persona 2: Innocent Sin French HD Texture Patch",
+      "game_title": "Persona 2: Innocent Sin",
+      "disc_ids": [
+        "ULES01557"
+      ],
+      "publisher": "chenetulipe contributors",
+      "source_url": "https://github.com/chenetulipe/P2-FR-IS-PSP",
+      "download_url": "https://github.com/chenetulipe/P2-FR-IS-PSP/releases/download/Pack-de-textures-HD/P2IS-HD-FR-beta0.1.zip",
+      "sha256": "e16e0d87512e8d78f02dcf593dfa4cbb10df01cefd6469df869e30a3e174ba47",
+      "size_bytes": 2699450,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "CC BY-NC-SA 4.0 for the French patch and project-owned assets per upstream README; original base pack and game rights remain with their respective owners; link-only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "sieben5106-fate-extra-japanese-hd-font-20260919",
+      "title": "Fate/EXTRA Japanese HD Font Add-on",
+      "game_title": "Fate/EXTRA",
+      "disc_ids": [
+        "NPJH50247"
+      ],
+      "publisher": "SIEBEN5106",
+      "source_url": "https://github.com/SIEBEN5106/Fate-EXTRA-Japanese-HD-Font",
+      "download_url": "https://github.com/SIEBEN5106/Fate-EXTRA-Japanese-HD-Font/archive/refs/heads/main.zip",
+      "sha256": "1a42b83974c762845a7d44a0f385916d547507618a6c08169653dfd4ed50ff02",
+      "size_bytes": 13052308,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "No separate redistribution license stated for the pack; referenced fonts are under SIL Open Font License 1.1; link-only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "saramagrean-sao-infinity-moment-hd-20260919",
+      "title": "Sword Art Online: Infinity Moment HD Texture Pack",
+      "game_title": "Sword Art Online: Infinity Moment",
+      "disc_ids": [
+        "NPJH50701"
+      ],
+      "publisher": "Saramagrean (Benjamin Benda Gates)",
+      "source_url": "https://github.com/Saramagrean/SAO-IM-HD-Remake-Project",
+      "download_url": "https://github.com/Saramagrean/SAO-IM-HD-Remake-Project/archive/refs/heads/master.zip",
+      "sha256": "8542cd626dffd1e6f22ba65e241c0618c74e7ef59c38bc5188de2b95956910c9",
+      "size_bytes": 252883805,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "No redistribution license stated; link to upstream only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "three5media-mhfu-hd-retexture-20260919",
+      "title": "Monster Hunter Freedom Unite HD Retexture",
+      "game_title": "Monster Hunter Freedom Unite",
+      "disc_ids": [
+        "ULUS10391"
+      ],
+      "publisher": "three5media",
+      "source_url": "https://github.com/three5media/mfhu-hd-retexture",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/mhfu-ulus10391-hd-v2.zip",
+      "sha256": "110211286a1ae3f17669e87ef7d6b92267cb5d4b264a576ad87bad428b97e47c",
+      "size_bytes": 1229774225,
+      "distribution": "mirrored",
+      "download_ready": false,
+      "license_notice": "Explicit upstream README permission to use project materials anywhere; no formal SPDX license; third-party texture sources and their rights are preserved in the included upstream R",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "replydev-mhfu-hd-retexture-eu-20260919",
+      "title": "Monster Hunter Freedom Unite HD Retexture (EU)",
+      "game_title": "Monster Hunter Freedom Unite",
+      "disc_ids": [
+        "ULES01213"
+      ],
+      "publisher": "replydev",
+      "source_url": "https://github.com/replydev/mhfu-hd-retexture-eu",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/mhfu-ules01213-hd-v2.zip",
+      "sha256": "3dbdea3cfe9a187afe08a4c20b310076c723307eeda501181193e8b2b60e45b0",
+      "size_bytes": 1229774338,
+      "distribution": "mirrored",
+      "download_ready": false,
+      "license_notice": "Explicit upstream README permission to use project materials anywhere; no formal SPDX license; third-party texture sources and their rights are preserved in the included upstream R",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "akirajkr-metal-gear-solid-peace-walker-hd-20260919",
+      "title": "Metal Gear Solid: Peace Walker HD Texture Pack",
+      "game_title": "Metal Gear Solid: Peace Walker",
+      "disc_ids": [
+        "ULUS10509",
+        "ULES01372"
+      ],
+      "publisher": "AkiraJkr",
+      "source_url": "https://github.com/AkiraJkr/Metal-Gear-Solid-Peace-Walker-HD-Textures",
+      "download_url": "https://github.com/AkiraJkr/Metal-Gear-Solid-Peace-Walker-HD-Textures/archive/refs/heads/master.zip",
+      "sha256": "71bee53f39ec3fb1a4133286edf9da8b5ce971845a3f69138390c152fb0e3951",
+      "size_bytes": 6667393,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "No redistribution license stated; link to upstream only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "miyamurashiro-test-drive-unlimited-20260919",
+      "title": "Test Drive Unlimited PSP Basic Texture Pack",
+      "game_title": "Test Drive Unlimited",
+      "disc_ids": [
+        "ULUS10249"
+      ],
+      "publisher": "MiyamuraShiro",
+      "source_url": "https://github.com/MiyamuraShiro/Test-Drive-Unlimited-Texture-PSP",
+      "download_url": "https://github.com/MiyamuraShiro/Test-Drive-Unlimited-Texture-PSP/archive/refs/heads/main.zip",
+      "sha256": "a109d46f5100ba1d97924f6639698076fb2ec762f0ffc3799a48bd9b76fcb088",
+      "size_bytes": 13457632,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "No redistribution license stated; link to upstream only",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "sonofugly-lcs-texture-pack-20260919",
+      "title": "Liberty City Stories Texture Pack",
+      "game_title": "Grand Theft Auto: Liberty City Stories",
+      "disc_ids": [
+        "ULUS10041"
+      ],
+      "publisher": "SonofUgly",
+      "source_url": "https://github.com/SonofUgly/LCS-Texture-Pack",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/sonofugly-lcs-texture-pack-ulus10041.zip",
+      "sha256": "58f6743e998d5018f6951d8ebe319704e17b6e4d40eee959458dbee5984dff95",
+      "size_bytes": 6496670,
+      "distribution": "mirrored",
+      "download_ready": true,
+      "license_notice": "Explicit author permission: SonofUgly wrote “they're free to use any or all of this project” in https://forums.ppsspp.org/showthread.php?pid=142853&tid=22930; no formal SPDX licens",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "sonofugly-vcs-texture-pack-20260919",
+      "title": "Vice City Stories Texture Pack",
+      "game_title": "Grand Theft Auto: Vice City Stories",
+      "disc_ids": [
+        "ULUS10160"
+      ],
+      "publisher": "SonofUgly",
+      "source_url": "https://github.com/SonofUgly/VCS-Texture-Pack",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/sonofugly-vcs-texture-pack-ulus10160.zip",
+      "sha256": "c797dc5264a192a021a61d3897b1e67266da7fc16bd31c0705f3f3b948a551de",
+      "size_bytes": 3429122,
+      "distribution": "mirrored",
+      "download_ready": true,
+      "license_notice": "Explicit author permission: SonofUgly wrote “they're free to use any or all of this project” in https://forums.ppsspp.org/showthread.php?pid=142853&tid=22930; no formal SPDX licens",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "sonofugly-cw-texture-pack-20260919",
+      "title": "Chinatown Wars Texture Pack",
+      "game_title": "Grand Theft Auto: Chinatown Wars",
+      "disc_ids": [
+        "ULUS10490"
+      ],
+      "publisher": "SonofUgly",
+      "source_url": "https://github.com/SonofUgly/CW-Texture-Pack",
+      "download_url": "https://github.com/sashkinbro/EmuCoreA-Textures/releases/download/texture-catalog/sonofugly-cw-texture-pack-ulus10490.zip",
+      "sha256": "5df35ad0caf68106955996a8f75ee20b61b7214174b710edc8cf7fc93d38dbd7",
+      "size_bytes": 5751832,
+      "distribution": "mirrored",
+      "download_ready": true,
+      "license_notice": "Explicit author permission: SonofUgly wrote “they're free to use any or all of this project” in https://forums.ppsspp.org/showthread.php?pid=142853&tid=22930; no formal SPDX licens",
+      "catalog_origin": "sashkinbro/EmuCoreA-Textures",
+      "source_version": "2026-09-19T21:30:00Z"
+    },
+    {
+      "id": "shockturtle-patapon1-source",
+      "title": "Patapon Remastered graphics",
+      "game_title": "Patapon",
+      "disc_ids": [
+        "UCES00995",
+        "UCUS98711",
+        "UCJS10077",
+        "UCAS40193"
+      ],
+      "publisher": "shockturtle",
+      "source_url": "https://github.com/shockturtle/Patapon-Remastered-PPSSPP",
+      "download_url": null,
+      "sha256": null,
+      "size_bytes": null,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "Graphics from PS4 remaster; provenance and redistribution rights require review."
+    },
+    {
+      "id": "shockturtle-patapon2-source",
+      "title": "Patapon 2 HD textures",
+      "game_title": "Patapon 2",
+      "disc_ids": [
+        "UCES01177",
+        "UCUS98732",
+        "UCJS10089",
+        "UCAS40239"
+      ],
+      "publisher": "shockturtle",
+      "source_url": "https://github.com/shockturtle/Patapon2HD",
+      "download_url": null,
+      "sha256": null,
+      "size_bytes": null,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "Creator-authored and credited textures; archive digest not verified."
+    },
+    {
+      "id": "lin-patapon3-source",
+      "title": "Patapon 3 HD Textures",
+      "game_title": "Patapon 3",
+      "disc_ids": [
+        "UCES01421",
+        "UCUS98751",
+        "NPJG00122",
+        "UCAS40318",
+        "UCES01422",
+        "INFN00001"
+      ],
+      "publisher": "Lin-zl522 and community",
+      "source_url": "https://github.com/Lin-zl522/Patapon-3-HD-Texture-Pack",
+      "download_url": null,
+      "sha256": null,
+      "size_bytes": null,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "Community pack; archive too large and no reviewed installable ZIP."
+    },
+    {
+      "id": "davidvz-monsterhunterp3rd-source",
+      "title": "Monster Hunter Portable 3rd HD texture project",
+      "game_title": "Monster Hunter Portable 3rd",
+      "disc_ids": [
+        "ULJM05800",
+        "NPJB40001"
+      ],
+      "publisher": "David-vz",
+      "source_url": "https://github.com/David-vz/MonsterHunterPortable3rdHDRemake",
+      "download_url": null,
+      "sha256": null,
+      "size_bytes": null,
+      "distribution": "link-only",
+      "download_ready": false,
+      "license_notice": "Upstream texture project; archive not verified."
+    }
+  ]
+}
