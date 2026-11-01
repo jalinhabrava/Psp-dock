@@ -942,7 +942,10 @@ class Dock:
         plan=recommend(monitor, **choice,backend=self.config['backend'],
                        manual_scale=self.config['scale'])
         result={'game_id':game_id,'choice':choice,'plan':plan,
-                'automatic':choice['quality']!='manual'}
+                'automatic':choice['quality']!='manual',
+                # The XMB marks each value as the game's OWN or inherited.
+                'custom':game_id is not None and game_id in db['games'],
+                'default_choice':dict(db['default'])}
         if game_id is not None:
             # Only read PARAM.SFO from the VERIFIED LOCAL PC game. A
             # graphics preview must never trigger an unapproved large
@@ -982,7 +985,7 @@ class Dock:
 
     def set_graphics_view(self, changes):
         """Persist selected quality on the PC only. Never touch PSP FAT."""
-        from ppsspp_graphics import set_preference
+        from ppsspp_graphics import set_preference, clear_preference
         if self.demo:
             raise ValueError('La demo no modifica perfiles de juegos reales.')
         if self.running() or self.session.get('exit_requested'):
@@ -990,6 +993,13 @@ class Dock:
         game_id=changes.get('id')
         if game_id is not None and game_id not in {g['id'] for g in self.last_games}:
             raise ValueError('No se puede configurar un juego desconocido.')
+        if changes.get('reset') is True:
+            if game_id is None:
+                raise ValueError('El perfil predeterminado no se puede quitar.')
+            clear_preference(self.data/'graphics-profiles.json', game_id=game_id)
+            self.events.record('graphics_profile_reset', evidence='pc_action',
+                               game_id=game_id)
+            return self.graphics_view(game_id)
         set_preference(self.data/'graphics-profiles.json',
                        game_id=game_id, quality=changes['quality'],
                        aspect=changes['aspect'],

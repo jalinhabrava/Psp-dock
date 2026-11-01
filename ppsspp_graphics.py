@@ -204,6 +204,16 @@ def set_preference(path: Path, *, game_id: str | None,
     return obj
 
 
+def clear_preference(path: Path, *, game_id: str) -> dict:
+    """Remove one game's own profile so it follows the default again."""
+    if not isinstance(game_id,str) or not re.fullmatch('[0-9a-f]{24}',game_id):
+        raise GraphicsError('Identificador de juego inválido.')
+    obj = preferences(path)
+    if obj['games'].pop(game_id, None) is not None:
+        atomic_json(path,obj)
+    return obj
+
+
 def apply_private_ppsspp_ini(path: Path, *, plan: dict,
                              backup_dir: Path) -> dict:
     """Apply a known subset of 1.20.x settings to PC-only PPSSPP.

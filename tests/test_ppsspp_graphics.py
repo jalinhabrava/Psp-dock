@@ -53,6 +53,19 @@ class GraphicsTests(unittest.TestCase):
                 g.set_preference(path,game_id='../outside',quality='auto',aspect='fit')
             self.assertFalse((Path(temp)/'outside').exists())
 
+    def test_clearing_a_game_profile_returns_it_to_the_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'profiles.json'
+            game='0'*24
+            g.set_preference(path,game_id=game,quality='ultra',aspect='fit')
+            g.set_preference(path,game_id=None,quality='balanced',aspect='fit')
+            obj=g.clear_preference(path,game_id=game)
+            self.assertNotIn(game,obj['games'])
+            self.assertEqual(g.per_game_choice(g.preferences(path),game)['quality'],'balanced')
+            g.clear_preference(path,game_id=game)  # idempotent
+            with self.assertRaises(g.GraphicsError):
+                g.clear_preference(path,game_id='../outside')
+
     def test_texture_processing_modes_are_explicit_and_never_call_dlss(self):
         with tempfile.TemporaryDirectory() as temp:
             path=Path(temp)/'profiles.json'
