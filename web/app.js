@@ -1580,12 +1580,25 @@ function xmbHybridTextureAction(id, data) {
             'Captura HD desactivada para la próxima partida.')) await reload();
         }) });
   }
-  options.push({ t: 'Buscar imágenes dentro de ISO/CSO', s: 'Inventario offline: los candidatos aún no tienen hash PPSSPP',
-    run: () => xmbConfirm('¿Inspeccionar la copia ISO/CSO del PC?<small>Se buscan PNG, JPEG y formatos gráficos conocidos. No es posible garantizar que todas las texturas estén accesibles ni asignar hashes sin ejecutarlas.</small>',
+  const isDarius = hd.disc_id === 'ULJM05558';
+  options.push({ t: isDarius ? 'Investigar Dariusburst · ISO y DZIP' : 'Buscar imágenes dentro de ISO/CSO',
+    s: isDarius ? 'Analizar TX2, XXI y BXN sin modificar la ISO' : 'Inventario offline: sin hashes PPSSPP',
+    run: () => xmbConfirm('¿Inspeccionar la copia ISO/CSO del PC?<small>' +
+      (isDarius ? 'Se clasificarán contenedores DZIP y sus tamaños declarados, sin afirmar haberlos descomprimido. ' :
+        'Se buscarán PNG, JPEG y otros recursos reconocibles. ') +
+      'No se generarán hashes de PPSSPP sin evidencia.</small>',
       false, async () => {
         if (await mutate('/api/hd-iso-scan', { id },
           'Exploración offline iniciada. Puedes revisar sus resultados desde Gráficos.')) await reload();
       }) });
+  if (isDarius) {
+    options.push({ t: 'Comparar capturas de Dariusburst', s: 'Huellas reales de PPSSPP entre distintas sesiones',
+      run: () => xmbConfirm('¿Registrar y comparar las texturas capturadas de Dariusburst?<small>Debe haberse jugado con la captura activada. Solo se leen PNG locales, sin abrir el juego ni modificar las partidas.</small>',
+        false, async () => {
+          if (await mutate('/api/hd-capture-snapshot', { id },
+            'Comparación de capturas iniciada en el PC.')) await reload();
+        }) });
+  }
   options.push({ t: 'Actualizar progreso', s: 'Consulta capturas, HD generado y candidatos offline',
     run: reload });
   xmbSide('HD híbrido · ' + hd.disc_id, options.map(({ t, s }) => ({ t, s })),
@@ -1633,6 +1646,17 @@ function xmbGraphicsRows(id) {
         (hd.iso_scan?.active ? ' · explorando ISO' : '');
       rows.push({ key: 'hybrid-hd', t: 'Generador HD híbrido', icon: 'hd',
         s: desc, activate: () => xmbHybridTextureAction(id, data) });
+      if (disc === 'ULJM05558') {
+        const re = hd.darius_re || {};
+        const assets = re.archive || {};
+        const snaps = re.capture || {};
+        rows.push({ key: 'darius-re', t: 'Ingeniería inversa · Dariusburst', icon: 'info',
+          s: assets.dzip_files ? assets.dzip_files + ' recursos DZIP detectados, no descomprimidos' +
+            ' · ' + (snaps.captured || 0) + ' capturas PPSSPP' +
+            (snaps.compared ? ' · ' + snaps.repeated + ' PNG repetidos entre inventarios' : '') :
+            'Pendiente: analizar TX2/XXI/BXN · edición ULJM05558',
+          activate: () => xmbHybridTextureAction(id, data) });
+      }
     }
     const others = (ui.state?.games || []).filter((item) => item.id !== id);
     if (others.length) rows.push({ key: 'copy', t: 'Copiar ajustes de otro juego', s: 'Trae calidad, proporción y texturas', icon: 'copy',
