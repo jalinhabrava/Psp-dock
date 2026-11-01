@@ -29,7 +29,9 @@ RAW_PROFILES = {
     ('Snes9xTYL','snes'): ('.srm', 'snes'),
     ('Snes9x Euphoria','snes'): ('.srm', 'snes'),
 }
-SAVE_DIRS = frozenset({'save','saves','saveram','sram'})
+# UO gpSP Kai stores battery saves under GBA/SAV on a real PSP (not SAVES).
+# Keep singular SAV separate from savestates (.svs, SS directory).
+SAVE_DIRS = frozenset({'sav','save','saves','saveram','sram'})
 GBA_SIZES = frozenset({512, 8*1024, 32*1024, 64*1024, 128*1024})
 SNES_SIZES = frozenset(2**i for i in range(6,18))  # 64..131072 bytes
 
@@ -119,6 +121,11 @@ def _source(root: Path, emulator: dict, rom: dict, suffix: str,
         return None,'ambiguous'
     if len(matches)==1:
         return matches[0],'existing'
+    # Verified on the user's PSP: UO gpSP Kai uses GBA/ROM for cartridges
+    # and GBA/SAV for save RAM. Keep the default location accurate when
+    # no SRAM exists yet; it remains only a suggestion until user approval.
+    if emulator.get('name') == 'gpSP Kai' and (base/'GBA'/'SAV').is_dir():
+        return _safe(root,base/'GBA'/'SAV'/(rom_file.stem+suffix)),'suggested'
     return _safe(root,base/'SAVES'/(rom_file.stem+suffix)),'suggested'
 
 

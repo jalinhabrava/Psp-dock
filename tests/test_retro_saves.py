@@ -130,6 +130,35 @@ class SaveContinuityTests(unittest.TestCase):
         self.copy('pc',row)
         self.assertEqual(self.plan()['status'],'identical')
 
+    def test_real_uo_gpsp_gba_rom_and_gba_sav_layout(self):
+        # Reproduces the physical PSP directory structure observed without
+        # reading or altering the real save data.
+        romdir=self.folder/'GBA/ROM'
+        savdir=self.folder/'GBA/SAV'
+        romdir.mkdir(parents=True)
+        savdir.mkdir(parents=True)
+        (romdir/'Golden.gba').write_bytes(b'fake cartridge')
+        self.roms[0]['relative']='PSP/GAME/gpSP/GBA/ROM/Golden.gba'
+        target=savdir/'Golden.sav'
+        target.write_bytes(b'g'*32768)
+        row=self.plan()
+        self.assertEqual(row['status'],'psp_to_pc')
+        self.assertEqual(row['source_relative'],'PSP/GAME/gpSP/GBA/SAV/Golden.sav')
+        target.unlink()
+        self.assertTrue(self.plan()['suggested_path'])
+        self.assertEqual(self.plan()['source_relative'],'PSP/GAME/gpSP/GBA/SAV/Golden.sav')
+
+    def test_snes_names_must_match_exactly_no_fuzzy_overwrite(self):
+        self.emulators[0]['name']='Snes9xTYL'
+        self.roms[0]['system']='snes'
+        self.roms[0]['format']='SMC'
+        self.roms[0]['relative']='PSP/GAME/gpSP/ROMS/Golden (USA).smc'
+        (self.folder/'ROMS/Golden (USA).smc').write_bytes(b'fixture')
+        (self.folder/'SAVES/Golden.srm').write_bytes(b'x'*8192)
+        row=self.plan()
+        self.assertEqual(row['status'],'none')
+        self.assertTrue(row['suggested_path'])
+
     def test_interrupted_publish_preserves_psp_save_backup_and_journal(self):
         self.write_psp()
         pc=self.pc_save()

@@ -73,7 +73,11 @@ copia de seguridad antes de continuar. No se propagan borrados.
 
 Los archivos deben tener tamaños de SRAM plausibles para GBA/SNES. Se
 buscan por el nombre exacto de la ROM **dentro del mismo emulador**, en
-carpetas `SAVES`, `SAVE`, `SRAM`, `SAVERAM` o como archivo al lado de la ROM.
+carpetas `SAVES`, `SAVE`, `SAV`, `SRAM`, `SAVERAM` o como archivo al lado de la ROM.
+En UO gpSP Kai se confirmó la ubicación `GBA/ROM` + `GBA/SAV` mediante
+inspección **solo de nombres/tamaños** de la PSP real. Para SNES algunas
+ROMs de la PSP tienen sufijos de región distintos de sus SRAM; por seguridad
+no se fuerzan coincidencias aproximadas.
 Si hay varios candidatos o dos ROMs del mismo emulador comparten el nombre,
 no se elige ninguno automáticamente. Los `.zip` tienen guardados ambiguos y
 se excluyen por ahora. Si la PSP todavía no tiene SRAM, se puede crear una
