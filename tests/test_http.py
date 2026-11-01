@@ -68,6 +68,14 @@ class HTTPContract(unittest.TestCase):
         self.assertEqual(status,409)
         self.assertIn('sintéticos',body['error'])
 
+    def test_demo_cannot_touch_retro_sram_or_launch_retro(self):
+        status,body=self.request('/api/retro-save-sync',{
+            'id':'a'*24,'choice':'pc','revision':'b'*64})
+        self.assertEqual(status,409)
+        status,_=self.request('/api/retro-launch',{'id':'a'*24})
+        self.assertEqual(status,409)
+        self.assertFalse((Path(self.temp.name)/'retro-save-baselines.json').exists())
+
     def test_demo_cannot_request_fake_usb_return(self):
         status,body=self.request('/api/exit-dock',{})
         self.assertEqual(status,409)

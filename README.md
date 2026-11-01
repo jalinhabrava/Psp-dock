@@ -1,5 +1,15 @@
 # PSP Dock · prototipo para Windows
 
+## Controles PSP HID y continuidad de partidas retro (PR siguiente a #4)
+
+Perfil RetroArch DirectInput PDK1 privado y reversible, selección de
+distribución de ✕/○, menú SELECT+△ y rutas por juego para SRAM y estados.
+Las SRAM raw de gpSP/TempGBA y Snes9xTYL/Euphoria cuentan con importación
+y devolución individual previa comparación SHA-256, con backups, journals y
+resolución explícita de conflictos; no se convierten estados de emulación.
+La salida del Dock espera la revisión de guardados retro antes de devolver
+las partidas PSP. Ver [RETRO-CONTROLS-SAVES.md](RETRO-CONTROLS-SAVES.md).
+
 ## Emuladores retro de PSP → Windows (nueva sección XMB)
 
 La categoría **Retro** reconoce homebrew de emulación en `PSP/GAME`,

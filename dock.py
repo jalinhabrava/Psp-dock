@@ -20,6 +20,10 @@ from dock_events import EventJournal
 from dock_preflight import assess_storage
 from psp_artwork import read_icon, valid_png
 from psp_retro import SYSTEMS, emulator_inventory, emulator_profile, retroarch_core
+from retro_runtime import (LAYOUTS, prepare_joypad_profile,
+                           private_save_paths, retroarch_arguments)
+from retro_saves import (plan_retro_saves, copy_sram_verified, _baseline_key,
+                         _sha as retro_sha, RAW_PROFILES)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -415,12 +419,14 @@ class Dock:
         self.lock = threading.RLock()
         self.config_path = self.data / 'settings.json'
         bundled = ROOT / 'tools/PPSSPP/PPSSPPWindows64.exe'
-        defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'retroarch': '', 'library': str(self.data / 'library'),
+        defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'retroarch': '',
+                    'retro_button_layout':'nintendo', 'library': str(self.data / 'library'),
                     'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3,
                     'backend': 'directx11','storage_root':str(self.data)}
         self.config = read_json(self.config_path, defaults)
         self.config.setdefault('storage_root',str(self.data))
         self.config.setdefault('retroarch', '')
+        self.config.setdefault('retro_button_layout','nintendo')
         self.process = None
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
         # A previous process may still have the dedicated memstick open.
@@ -475,6 +481,19 @@ class Dock:
                         type(rom.get('modified_ns')) is int and rom['modified_ns'] >= 0):
                     self.last_roms.append(rom)
         self.cached_retro_results = None
+        self.retro_save_baselines_path = self.data/'retro-save-baselines.json'
+        self.retro_save_cache_path = self.data/'retro-save-catalog.json'
+        save_cache = read_json(self.retro_save_cache_path,{})
+        self.retro_save_volume = save_cache.get('volume_serial','') if isinstance(save_cache,dict) else ''
+        self.last_retro_save_rows = []
+        if isinstance(save_cache,dict) and isinstance(save_cache.get('rows'),list):
+            for row in save_cache['rows'][:2048]:
+                if (isinstance(row,dict) and
+                    isinstance(row.get('rom_id'),str) and
+                    re.fullmatch('[0-9a-f]{24}',row['rom_id']) and
+                    row.get('status') in ('none','identical','pc_to_psp','psp_to_pc','conflict','unsupported','blocked') and
+                    (row.get('source_relative') is None or isinstance(row.get('source_relative'),str))):
+                    self.last_retro_save_rows.append(row)
         self.error = None
         self.cache = {}
         # Materialized catalog for artwork requests. Re-enumerating dozens of
@@ -533,6 +552,7 @@ class Dock:
                          'retro': {'emulators': list(self.last_emulators),
                                    'roms': [{**{k:v for k,v in rom.items() if k!='signature'},
                                              'availability':'checking'} for rom in self.last_roms]},
+                         'retro_saves': {'rows': [], 'pending':0,'conflicts':0,'offline':True},
                          'saves':{'actions':[],'conflicts':[],'unchanged':0},
                          'session':dict(self.session),'emulator':{'path':self.config['emulator'],'available':bool(self.config['emulator'])},
                          'error':None,'recovery_required':self.recovery_required,'scanning':True,
@@ -713,6 +733,125 @@ class Dock:
                                            for system in SYSTEMS)}
         return self.cached_retro_results
 
+    def retro_save_plan(self):
+        """Read-only SRAM plan; USB source is accessed only when mounted.
+
+        Offline/HID rows are merely last-observed metadata, never permission
+        to write to the PSP. Each mutation recomputes its fresh revision.
+        """
+        root = self.root()
+        if (root is not None and not self.running() and
+                volume_identity(root) == self.retro_volume):
+            baselines = read_json(self.retro_save_baselines_path,{})
+            if not isinstance(baselines,dict):
+                baselines={}
+            rows = plan_retro_saves(
+                root=root,storage_root=Path(self.config['storage_root']),
+                volume=self.retro_volume,roms=self.last_roms,
+                emulators=self.last_emulators,baselines=baselines)
+            # Like the existing PSP/SAVEDATA three-way sync: two already
+            # identical SRAMs establish a safe common ancestor by changing
+            # PC METADATA only. This never copies/overwrites any save.
+            established=False
+            for row in rows:
+                if (row['status']=='identical' and row.get('psp_signature') and
+                        row['psp_signature']==row.get('pc_signature')):
+                    key=_baseline_key(self.retro_volume,row['rom_id'])
+                    if baselines.get(key)!=row['psp_signature']:
+                        baselines[key]=row['psp_signature']
+                        established=True
+            if established:
+                atomic_json(self.retro_save_baselines_path,baselines)
+            if self.retro_save_volume != self.retro_volume or rows != self.last_retro_save_rows:
+                atomic_json(self.retro_save_cache_path,{
+                    'volume_serial':self.retro_volume,'rows':rows})
+            self.last_retro_save_rows=rows
+            self.retro_save_volume=self.retro_volume
+        else:
+            rows=(self.last_retro_save_rows if self.retro_save_volume == self.retro_volume else [])
+        offline = root is None or self.storage_polling_paused
+        skipped = set(self.session.get('retro_save_skipped_ids') or []) if self.session.get('exit_requested') else set()
+        pending = ('psp_to_pc','pc_to_psp','conflict')
+        view=[{k:v for k,v in row.items() if k not in ('pc_signature','psp_signature')}
+              | {'skipped':row['rom_id'] in skipped} for row in rows]
+        return {'rows':view,'offline':offline,
+                'pending':sum(row['status'] in pending and row['rom_id'] not in skipped for row in rows),
+                'conflicts':sum(row['status']=='conflict' and row['rom_id'] not in skipped for row in rows),
+                'unmanaged':sum(row['status'] in ('blocked','unsupported') for row in rows)}
+
+    def sync_retro_save(self, rom_id, choice, revision):
+        """Explicit one-slot copy with SHA preconditions and recoverable backup.
+
+        `skip` only means leave both existing versions unchanged for this
+        current return. It never establishes a baseline or deletes a save.
+        """
+        if self.demo or self.running() or self.recovery_required or self.storage_polling_paused:
+            raise ValueError('Cierra los emuladores y revisa cualquier recuperación antes de sincronizar SRAM.')
+        root=self.root()
+        if root is None:
+            raise ValueError('Vuelve a almacenamiento USB Sony para sincronizar guardados retro.')
+        require_psp_identity_before_writing(root)
+        self.validate_layout(root)
+        volume=volume_identity(root)
+        if volume!=self.retro_volume or self.session.get('prepared_volume') not in (None,volume):
+            raise ValueError('Memory Stick distinta: nunca se mezclan SRAM entre dispositivos.')
+        storage=Path(self.config['storage_root']).absolute()
+        if storage.is_relative_to(root.absolute()) or root.absolute().is_relative_to(storage):
+            raise ValueError('Los guardados retro deben almacenarse fuera de la PSP.')
+        report=self.retro_save_plan()
+        row=next((item for item in report['rows'] if item['rom_id']==rom_id),None)
+        if row is None or row['revision'] is None or row['revision']!=revision:
+            raise ValueError('La comparación de guardados ha cambiado; revísala de nuevo.')
+        if row['status'] not in ('psp_to_pc','pc_to_psp','conflict'):
+            raise ValueError('No existe una copia SRAM pendiente y compatible.')
+        if choice == 'skip':
+            if not self.session.get('exit_requested'):
+                raise ValueError('La omisión solo está disponible al devolver el Dock.')
+            skips=self.session.get('retro_save_skipped_ids') or []
+            if rom_id not in skips:
+                self.session['retro_save_skipped_ids']=[*skips,rom_id][:2048]
+                atomic_json(self.data/'session.json',self.session)
+            self.events.record('retro_sram_return_skipped',evidence='pc_action',
+                               game_id=rom_id,volume_serial=volume)
+            return self.retro_save_plan()
+        if choice not in ('psp','pc'):
+            raise ValueError('Debes elegir guardar la SRAM de PSP o la del PC.')
+        if choice == 'psp' and row['status']=='pc_to_psp' or choice == 'pc' and row['status']=='psp_to_pc':
+            raise ValueError('Esa versión de SRAM no existe o está obsoleta.')
+        original=next((rom for rom in self.last_roms if rom['id']==rom_id),None)
+        emulator=next((emu for emu in self.last_emulators if original and emu['id']==original['emulator_id']),None)
+        if not original or not emulator or (emulator['name'],original['system']) not in RAW_PROFILES:
+            raise ValueError('El guardado del emulador no es compatible con la copia directa.')
+        source_relative=row['source_relative']
+        if not isinstance(source_relative,str):
+            raise ValueError('Ruta de SRAM PSP no verificada.')
+        psp=inside(root,source_relative)
+        pc,_=private_save_paths(storage,volume,rom_id)
+        psp_sha,pc_sha=retro_sha(psp),retro_sha(pc)
+        if choice=='psp':
+            source,target,source_root,target_root=psp,pc,root,storage
+            source_sha,target_sha=psp_sha,pc_sha
+        else:
+            source,target,source_root,target_root=pc,psp,storage,root
+            source_sha,target_sha=pc_sha,psp_sha
+        if not source_sha or len(source_sha)!=64:
+            raise ValueError('No existe SRAM válida en el origen elegido.')
+        key=_baseline_key(volume,rom_id)
+        before=read_json(self.retro_save_baselines_path,{})
+        if not isinstance(before,dict): before={}
+        saved=copy_sram_verified(
+            source=source,target=target,source_root=source_root,target_root=target_root,
+            storage_root=storage,backup_dir=storage/'retro-save-backups'/key[:24],
+            journal_dir=storage/'retro-save-journals',
+            expected_source=source_sha,expected_target=target_sha,
+            system=original['system'])
+        before[key]=saved
+        atomic_json(self.retro_save_baselines_path,before)
+        self.events.record('retro_sram_synced',evidence='pc_action',
+                           game_id=rom_id,direction='psp_to_pc' if choice=='psp' else 'pc_to_psp',
+                           result='sha256_verified',volume_serial=volume)
+        return self.retro_save_plan()
+
     def running(self):
         if self.process is not None and self.process.poll() is not None:
             self.process = None
@@ -788,6 +927,8 @@ class Dock:
     def sync(self, resolution=None):
         if self.running():
             raise ValueError('Sincronización bloqueada: PPSSPP está abierto o una sesión anterior necesita revisión.')
+        if self.session.get('exit_requested') and self.retro_save_plan()['pending']:
+            raise ValueError('Revisa primero las partidas Retro pendientes de devolución o elige omitirlas.')
         a, b = self.roots()
         require_psp_identity_before_writing(self.root())
         identity = volume_identity(self.root())
@@ -1432,6 +1573,12 @@ class Dock:
         rom = next((r for r in self.retro_catalog()['roms'] if r['id']==rom_id),None)
         if rom is None or rom['availability'] != 'ready':
             raise ValueError('La ROM debe estar copiada y verificada por SHA-256.')
+        save_row=next((item for item in self.retro_save_plan()['rows'] if item['rom_id']==rom_id),None)
+        emulator=next((emu for emu in self.last_emulators if emu['id']==rom['emulator_id']),None)
+        if emulator and (emulator['name'],rom['system']) in RAW_PROFILES and save_row is None:
+            raise ValueError('Vuelve al almacenamiento USB y comprueba primero la SRAM de este juego.')
+        if save_row and save_row['status'] in ('psp_to_pc','conflict','blocked') and not save_row['skipped']:
+            raise ValueError('Revisa la partida retro en PSP antes de abrir otra versión en Windows.')
         selected = retroarch_core(self.config['retroarch'],rom['system'])
         if selected is None:
             raise ValueError('Configura RetroArch con el núcleo ' + SYSTEMS[rom['system']][1] + ' instalado en Windows.')
@@ -1447,6 +1594,13 @@ class Dock:
                 not re.fullmatch('[0-9a-f]{64}',mirror.get('signature') or '') or
                 digest(local) != mirror['signature']):
             raise ValueError('La ROM local ya no coincide con el catálogo.')
+        storage=Path(self.config['storage_root'])
+        profile=prepare_joypad_profile(storage,layout=self.config['retro_button_layout'])
+        save,state=private_save_paths(storage,self.retro_volume,rom_id)
+        save.parent.mkdir(parents=True,exist_ok=True)
+        # A savestate belongs to its core; never recycle it after a core swap.
+        state=state.with_name(state.stem+'-'+hashlib.sha256(core.name.encode()).hexdigest()[:12]+state.suffix)
+        state.parent.mkdir(parents=True,exist_ok=True)
         after = validate_hid_only()
         if before != after:
             raise ValueError('El mando HID cambió antes de iniciar RetroArch.')
@@ -1456,7 +1610,8 @@ class Dock:
                             launcher='retroarch',last_game_id=rom_id)
         atomic_json(self.data/'session.json',self.session)
         try:
-            self.process = subprocess.Popen([str(exe),'-L',str(core),'-f',str(local)],cwd=exe.parent)
+            self.process = subprocess.Popen(
+                retroarch_arguments(exe,core,local,profile,save,state),cwd=exe.parent)
             self.events.record('retro_launched',evidence='pc_observed',
                                game_id=rom_id,result='process_started')
             focus_async(self.process)
@@ -1487,6 +1642,7 @@ class Dock:
         self.session['exit_requested'] = True
         self.session['return_sync_authorized'] = True
         self.session['return_sync_attempted'] = False
+        self.session['retro_save_skipped_ids'] = []
         # The user approved closing the Windows app AFTER the return
         # is complete and verified, never merely on pressing Exit.
         self.session['close_after_verified_return'] = True
@@ -1519,6 +1675,17 @@ class Dock:
         if (not report.get('supported') or report.get('errors')
                 or report.get('devices')):
             raise ValueError('El modo HID no ha desaparecido de Windows; no sincronizar todavía.')
+        # Battery saves are not PSP/SAVEDATA slots: they can have a different
+        # format and must be reviewed separately before closing the XMB.
+        # No automatic SRAM writes to the PSP, even after Exit was pressed.
+        retro_plan=self.retro_save_plan()
+        if retro_plan['pending']:
+            if self.session.get('return_result')!='retro_review':
+                self.session['return_result']='retro_review'
+                atomic_json(self.data/'session.json',self.session)
+                self.events.record('retro_sram_review_required',evidence='pc_observed',
+                                   count=retro_plan['pending'],result='needs_explicit_choice')
+            return None
         plan=self.save_plan()
         if plan['conflicts']:
             self.session['return_sync_authorized']=False
@@ -1555,6 +1722,8 @@ class Dock:
                 new['storage_root'] != self.config['storage_root']):
             raise ValueError('Para mover los datos usa la migración verificada.')
         config = {**self.config, **{k:v for k,v in new.items() if k in self.config}}
+        if config.get('retro_button_layout') not in LAYOUTS:
+            raise ValueError('Distribución del mando retro desconocida.')
         if (not isinstance(config.get('retroarch'),str) or
                 config['retroarch'] and
                 (not Path(config['retroarch']).is_absolute() or
@@ -1582,6 +1751,8 @@ class Dock:
             self.last_roms = []
             self.retro_volume = ''
             self.cached_retro_results = None
+            self.retro_save_volume=''
+            self.last_retro_save_rows=[]
         self.cache.clear()
         atomic_json(self.config_path, config)
 
@@ -1598,7 +1769,8 @@ class Dock:
         report=migrate_pc_data(target=Path(target),
                                library=Path(self.config['library']),
                                memstick=Path(self.config['memstick']),
-                               old_data=self.data)
+                               old_data=self.data,
+                               old_storage=Path(self.config['storage_root']))
         updated={**self.config,'storage_root':report['path'],
                  'library':report['library'],'memstick':report['memstick']}
         self.validate_layout(self.root(),updated)
@@ -1607,6 +1779,8 @@ class Dock:
         self.session.pop('prepared_volume',None)
         atomic_json(self.data/'session.json',self.session)
         self.cached_game_results=None
+        self.retro_save_volume=''
+        self.last_retro_save_rows=[]
         self.last_storage_scan_at=0
         self.xmb_media_catalog_key=None
         self.events.record('pc_storage_relocated',evidence='pc_action',
@@ -1685,6 +1859,8 @@ class Dock:
         device = self.root()
         games = self.games()
         retro = self.retro_catalog()
+        retro_saves=self.retro_save_plan() if not running else {
+            'rows':[], 'pending':0,'conflicts':0,'unmanaged':0,'offline':True}
         saves = (self.save_plan() if not running
                  else {'actions': [], 'conflicts': [], 'unchanged': 0})
         remembered_serial = volume_identity(device) if device is not None else (self.catalog_volume or self.retro_volume)
@@ -1712,7 +1888,9 @@ class Dock:
             any(rom['availability']=='ready' and rom['core_available'] for rom in retro['roms'])
         )
         return {'demo': self.demo, 'devices': self.devices(), 'selected_device': str(device) if device else None,
-                'games': games, 'retro':retro, 'saves': saves,
+                'games': games, 'retro':retro, 'retro_saves':retro_saves,
+                'retro_button_layout':self.config['retro_button_layout'],
+                'saves': saves,
                 'copy_queue':dict(self.copy_queue),
                 'copy_policy': self.copy_policy(),
                 'preflight': preflight.snapshot(),
@@ -2264,6 +2442,9 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                         dock.launch(body['id'])
                     elif self.path == '/api/retro-launch':
                         dock.launch_retro(body['id'])
+                    elif self.path == '/api/retro-save-sync':
+                        dock.sync_retro_save(body.get('id'),body.get('choice'),
+                                             body.get('revision'))
                     elif self.path == '/api/exit-dock':
                         dock.request_exit()
                     elif self.path == '/api/graphics':
