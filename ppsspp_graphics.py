@@ -27,7 +27,7 @@ PSP_WIDTH, PSP_HEIGHT = 480, 272
 QUALITY_MODES = ('auto', 'balanced', 'quality', 'ultra', 'manual')
 ASPECT_MODES = ('fit', 'stretch')
 BACKENDS = ('directx11', 'vulkan', 'gles')
-TEXTURE_MODES = ('off', 'xbrz2', 'xbrz3', 'xbrz4', 'bicubic2')
+TEXTURE_MODES = ('off', 'xbrz2', 'xbrz3', 'xbrz4', 'bicubic2', 'gpu2', 'gpu4')
 
 
 class GraphicsError(ValueError):
@@ -98,6 +98,7 @@ def recommend(monitor: Monitor, *, quality: str = 'auto',
               aspect: str = 'fit', backend: str = 'directx11',
               manual_scale: int = 3, texture: str = 'off') -> dict:
     validate_choice(quality, aspect, backend, texture)
+    gpu_texture_active = texture.startswith('gpu') and backend == 'vulkan'
     if type(manual_scale) is not int or not 1 <= manual_scale <= 10:
         raise GraphicsError('Escala manual fuera de rango.')
     # Choose according to SCREEN HEIGHT, not ultrawide width. For a 3440x1440
@@ -125,13 +126,17 @@ def recommend(monitor: Monitor, *, quality: str = 'auto',
         )
     else:
         warning = 'Relación de aspecto PSP conservada sin deformaciones.'
+    if texture.startswith('gpu') and not gpu_texture_active:
+        warning += ' El shader GPU seleccionado está inactivo: activa Vulkan en Ajustes.'
     return {
         'quality': quality, 'aspect': aspect, 'backend': backend,
         'texture': texture,
         'texture_upscale_algorithm': (
+            'PPSSPP GPU xBRZ' if gpu_texture_active else
             'xBRZ' if texture.startswith('xbrz') else
             'Bicubic' if texture == 'bicubic2' else 'off'),
-        'texture_upscale_on_cpu': texture != 'off',
+        'texture_upscale_on_cpu': texture in ('xbrz2', 'xbrz3', 'xbrz4', 'bicubic2'),
+        'texture_gpu_active': gpu_texture_active,
         'monitor': monitor.snapshot(),
         'internal_resolution': scale,
         'internal_width': PSP_WIDTH * scale,
@@ -253,17 +258,28 @@ def apply_private_ppsspp_ini(path: Path, *, plan: dict,
         ('Graphics','AutoFrameSkip','False'),
         ('Graphics','AnisotropyLevel','4'),
         ('Graphics','TexScalingLevel',
-         {'off':'1','xbrz2':'2','xbrz3':'3','xbrz4':'4','bicubic2':'2'}[texture]),
+         {'off':'1','xbrz2':'2','xbrz3':'3','xbrz4':'4','bicubic2':'2',
+          'gpu2':'1','gpu4':'1'}[texture]),
         ('Graphics','TexScalingType',
          '2' if texture == 'bicubic2' else '0'),
+        # Built-in Vulkan compute texture shaders: names are from PPSSPP's
+        # shipped assets/shaders/defaultshaders.ini. Avoid double CPU scaling.
+        ('Graphics','TextureShader',
+         {'gpu2':'Tex2xBRZ','gpu4':'Tex4xBRZ'}.get(texture,'Off')
+         if plan.get('backend') == 'vulkan' else 'Off'),
         ('DisplayLayout.Landscape','DisplayStretch',
          'True' if plan['aspect']=='stretch' else 'False'),
     )
     # Enable PPSSPP's real HD texture replacement ONLY for a verified
     # installed pack. The texture-upscaling selector is a separate feature.
-    # Never activate texture dumping or change the user's global PPSSPP.
-    if plan.get('replace_textures') is True:
-        desired += (('Graphics','ReplaceTextures','True'),)
+    # SaveNewTextures is opt-in for one *verified* local game's generator.
+    # Reset on the next game's launch; no writes to the physical PSP.
+    if 'replace_textures' in plan:
+        desired += (('Graphics','ReplaceTextures',
+                     'True' if plan['replace_textures'] is True else 'False'),)
+    if 'capture_textures' in plan:
+        desired += (('Graphics','SaveNewTextures',
+                     'True' if plan['capture_textures'] is True else 'False'),)
     changed = False
     for section,key,value in desired:
         if parser.get(section,key,fallback=None) != value:

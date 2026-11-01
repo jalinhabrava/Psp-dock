@@ -23,7 +23,7 @@ class StorageLocationError(ValueError):
     pass
 
 
-CONTENT_DIRS = ('artwork','xmb-assets','profile-backups','backups')
+CONTENT_DIRS = ('artwork','xmb-assets','profile-backups','backups','hd-iso-candidates')
 
 
 def choose_pc_storage_parent(*, run=subprocess.run)->str | None:

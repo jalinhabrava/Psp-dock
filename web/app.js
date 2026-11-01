@@ -1297,7 +1297,8 @@ const XMB_GFX = {
   quality: [['auto', 'Automático · según el monitor'], ['balanced', 'Equilibrado · menos carga'], ['quality', 'Calidad · más resolución'],
     ['ultra', 'Ultra · sobremuestreo'], ['manual', 'Manual · escala de Ajustes']],
   aspect: [['fit', 'Original · sin deformar'], ['stretch', 'Estirar a toda la pantalla']],
-  texture: [['off', 'Originales'], ['xbrz2', 'xBRZ 2× (CPU)'], ['xbrz3', 'xBRZ 3× (CPU)'], ['xbrz4', 'xBRZ 4× (CPU)'], ['bicubic2', 'Bicubic 2× (CPU)']],
+  texture: [['off', 'Originales'], ['gpu2', 'PPSSPP 2xBRZ GPU · Vulkan'], ['gpu4', 'PPSSPP 4xBRZ GPU · Vulkan'],
+    ['xbrz2', 'xBRZ 2× (CPU)'], ['xbrz3', 'xBRZ 3× (CPU)'], ['xbrz4', 'xBRZ 4× (CPU)'], ['bicubic2', 'Bicubic 2× (CPU)']],
 };
 const XMB_GFX_NAMES = { quality: 'Calidad de renderizado', aspect: 'Proporción de pantalla', texture: 'Mejorar texturas' };
 const xmb = {
@@ -1545,6 +1546,51 @@ function xmbTexturePackAction(id, data) {
       });
   });
 }
+function xmbHybridTextureAction(id, data) {
+  const hd = data.hd_generator;
+  if (!hd?.disc_id) return toast('Necesitamos el DISC_ID de una copia local verificada.');
+  const options = [];
+  const reload = async () => xmbLoadGraphics(id, true);
+  const configure = (engine, scale) => xmbConfirm(
+    '¿Activar el generador HD ' + scale +
+    '×?<small>Solo usa el PC. PPSSPP capturará texturas al jugar y el Dock las mejorará en segundo plano. No modifica la ISO ni la PSP. Los reemplazos se aplican con seguridad al reiniciar el juego.</small>',
+    false, async () => {
+      if (await mutate('/api/hd-textures', { id, action: 'enable', engine, scale },
+        'Generador HD activado. La captura comenzará en la siguiente partida.')) await reload();
+    });
+  if (hd.kind === 'none' || hd.kind === 'generated') {
+    options.push({ t: 'Generar HD 2× · Lanczos', s: 'Procesamiento local ligero, sin IA ni descargas',
+      run: () => configure('lanczos', 2) });
+    options.push({ t: 'Generar HD 4× · Lanczos', s: 'Más detalle interpolado, usa más memoria',
+      run: () => configure('lanczos', 4) });
+    if (hd.realesrgan_available) options.push({
+      t: 'Generar HD 4× · Real-ESRGAN', s: 'IA local Vulkan; puede consumir recursos de la GPU',
+      run: () => configure('realesrgan', 4) });
+  }
+  if (hd.enabled) {
+    options.push({ t: 'Procesar capturas pendientes', s: 'Continúa en segundo plano; sin recargar juegos',
+      run: async () => {
+        if (await mutate('/api/hd-textures', { id, action: 'process' },
+          'Procesando texturas pendientes en el PC.')) await reload();
+      } });
+    options.push({ t: 'Pausar nuevas capturas', s: 'Conserva el pack ya generado',
+      run: () => xmbConfirm('¿Desactivar la captura HD de este juego? Los archivos ya generados no se borrarán.',
+        false, async () => {
+          if (await mutate('/api/hd-textures', { id, action: 'disable' },
+            'Captura HD desactivada para la próxima partida.')) await reload();
+        }) });
+  }
+  options.push({ t: 'Buscar imágenes dentro de ISO/CSO', s: 'Inventario offline: los candidatos aún no tienen hash PPSSPP',
+    run: () => xmbConfirm('¿Inspeccionar la copia ISO/CSO del PC?<small>Se buscan PNG, JPEG y formatos gráficos conocidos. No es posible garantizar que todas las texturas estén accesibles ni asignar hashes sin ejecutarlas.</small>',
+      false, async () => {
+        if (await mutate('/api/hd-iso-scan', { id },
+          'Exploración offline iniciada. Puedes revisar sus resultados desde Gráficos.')) await reload();
+      }) });
+  options.push({ t: 'Actualizar progreso', s: 'Consulta capturas, HD generado y candidatos offline',
+    run: reload });
+  xmbSide('HD híbrido · ' + hd.disc_id, options.map(({ t, s }) => ({ t, s })),
+    (index) => options[index].run());
+}
 function xmbGraphicsRows(id) {
   const data = xmb.gfx[xmbGfxKey(id)];
   const game = (ui.state?.games || []).find((item) => item.id === id);
@@ -1576,6 +1622,18 @@ function xmbGraphicsRows(id) {
     rows.push({ key: 'pack', t: 'Pack de texturas HD', icon: 'folder',
       s: disc ? `${disc} · ${data.hd_texture_pack_installed ? 'detectado en PPSSPP' : 'no instalado'}` : 'Edición sin identificar',
       activate: () => xmbTexturePackAction(id, data) });
+    if (disc) {
+      const hd = data.hd_generator || {};
+      const desc = hd.kind === 'community' || hd.kind === 'external' ?
+        'Pack externo detectado · generador no mezclará texturas' :
+        (hd.enabled ? 'Activo' : 'Desactivado') + ' · ' +
+        (hd.generated || 0) + ' texturas HD / ' + (hd.dumped || 0) + ' capturadas' +
+        ' · ' + (hd.iso_candidates || 0) + ' candidatos ISO sin mapear' +
+        (hd.worker?.active ? ' · procesando' : '') +
+        (hd.iso_scan?.active ? ' · explorando ISO' : '');
+      rows.push({ key: 'hybrid-hd', t: 'Generador HD híbrido', icon: 'hd',
+        s: desc, activate: () => xmbHybridTextureAction(id, data) });
+    }
     const others = (ui.state?.games || []).filter((item) => item.id !== id);
     if (others.length) rows.push({ key: 'copy', t: 'Copiar ajustes de otro juego', s: 'Trae calidad, proporción y texturas', icon: 'copy',
       activate: () => xmbSide('Copiar ajustes de…', others.map((other) => ({ t: other.title, s: xmbGfxSummary(xmb.gfx[other.id]?.choice) })), async (index) => {

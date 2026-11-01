@@ -415,6 +415,17 @@ class Dock:
                     'backend': 'directx11','storage_root':str(self.data)}
         self.config = read_json(self.config_path, defaults)
         self.config.setdefault('storage_root',str(self.data))
+        # Opt-in, per-DISC_ID PC texture capture/generation. The worker never
+        # accesses PSP USB, game saves or an existing community texture pack.
+        from psp_hd_textures import TextureWorker
+        self.hd_jobs_path=self.data/'hd-generator.json'
+        self.hd_jobs=read_json(self.hd_jobs_path,{'schema':1,'games':{}})
+        if (not isinstance(self.hd_jobs,dict) or self.hd_jobs.get('schema')!=1
+                or not isinstance(self.hd_jobs.get('games'),dict)):
+            self.hd_jobs={'schema':1,'games':{}}
+        self.hd_worker=TextureWorker(Path(self.config['memstick']))
+        self.hd_scan_lock=threading.Lock()
+        self.hd_scan_state={'active':False,'status':'idle','disc_id':None,'error':''}
         self.process = None
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
         # A previous process may still have the dedicated memstick open.
@@ -623,6 +634,7 @@ class Dock:
 
     def running(self):
         if self.process is not None and self.process.poll() is not None:
+            self.hd_worker.stop()
             self.process = None
             self.session['running'] = False
             atomic_json(self.data / 'session.json', self.session)
@@ -1070,6 +1082,7 @@ class Dock:
                     from psp_texture_packs import offers_for_disc
                     result['hd_texture_pack_offers']=offers_for_disc(game_disc)
                     result['hd_pack_community_url']='https://forums.ppsspp.org/forumdisplay.php?fid=36'
+                    result['hd_generator']=self.hd_generator_status(game_disc)
                 else:
                     result['hd_texture_pack_installed']=False
         if include_gpu:
@@ -1106,8 +1119,12 @@ class Dock:
         """Apply PC-only PPSSPP ini profile before the selected game starts."""
         from ppsspp_graphics import apply_private_ppsspp_ini
         preview=self.graphics_view(game_id)
+        generator=preview.get('hd_generator',{})
+        capture=(generator.get('enabled') is True and
+                 generator.get('kind')=='generated')
         plan={**preview['plan'],
-              'replace_textures':preview.get('hd_texture_pack_installed') is True}
+              'replace_textures':preview.get('hd_texture_pack_installed') is True,
+              'capture_textures':capture}
         private=inside(Path(self.config['memstick']), 'PSP/SYSTEM/ppsspp.ini')
         return apply_private_ppsspp_ini(
             private,plan=plan,
@@ -1249,6 +1266,21 @@ class Dock:
             self.process = subprocess.Popen(args, cwd=exe.parent)
             self.events.record('game_launched', evidence='pc_observed',
                                game_id=game_id, result='process_started')
+            generator=self.graphics_view(game_id).get('hd_generator',{})
+            if generator.get('enabled') and generator.get('kind')=='generated':
+                try:
+                    from psp_hd_textures import TextureSettings
+                    self.hd_worker.memstick=Path(self.config['memstick'])
+                    self.hd_worker.start(
+                        generator['disc_id'],
+                        TextureSettings(scale=generator['scale'],
+                                        engine=generator['engine'],
+                                        realesrgan_exe=generator.get('realesrgan_exe','')))
+                except (OSError,ValueError) as hd_error:
+                    # The game is already running; HD generation failure must
+                    # not be misreported as an unsuccessful game launch.
+                    self.events.record('hd_generator_failed',evidence='pc_observed',
+                                       game_id=game_id,result=str(hd_error)[:120])
             # PPSSPP creates its window asynchronously. Select the actual
             # PID-owned window and foreground it without blocking HTTP.
             focus_async(self.process)
@@ -1343,6 +1375,8 @@ class Dock:
     def settings(self, new):
         if self.running() or self.session.get('pending_return'):
             raise ValueError('Cierra y devuelve la sesión a la PSP antes de cambiar las carpetas.')
+        if self.hd_worker.status()['active'] and 'memstick' in new:
+            raise ValueError('Termina primero el procesamiento de texturas HD.')
         if ('storage_root' in new and
                 new['storage_root'] != self.config['storage_root']):
             raise ValueError('Para mover los datos usa la migración verificada.')
@@ -1366,6 +1400,7 @@ class Dock:
             self.last_games = []
             self.cached_game_results = None
         self.cache.clear()
+        self.hd_worker.memstick=Path(config['memstick'])
         atomic_json(self.config_path, config)
 
     def relocate_storage(self, target):
@@ -1376,6 +1411,10 @@ class Dock:
         if (self.session.get('exit_requested') or self.transfer_status['active']
                 or self.xmb_media_progress.get('active')):
             raise ValueError('Termina todas las copias antes de mover los datos.')
+        with self.hd_scan_lock:
+            scan_active=self.hd_scan_state['active']
+        if self.hd_worker.status()['active'] or scan_active:
+            raise ValueError('Termina el procesado HD o la exploración ISO antes de mover los datos.')
         if not isinstance(target,str) or not target.strip():
             raise ValueError('Selecciona una carpeta absoluta del PC.')
         report=migrate_pc_data(target=Path(target),
@@ -1387,6 +1426,7 @@ class Dock:
         self.validate_layout(self.root(),updated)
         atomic_json(self.config_path,updated)
         self.config=updated
+        self.hd_worker.memstick=Path(updated['memstick'])
         self.session.pop('prepared_volume',None)
         atomic_json(self.data/'session.json',self.session)
         self.cached_game_results=None
@@ -1420,6 +1460,133 @@ class Dock:
                            game_id=game_id,result='hash_verified',
                            count=report['textures'])
         return report
+
+    def verified_local_texture_game(self, game_id):
+        """Resolve an actual PC game, never a filename guess or PSP USB read."""
+        if not isinstance(game_id,str) or not re.fullmatch('[0-9a-f]{24}',game_id):
+            raise ValueError('Juego no reconocido en el Dock.')
+        entry=next((g for g in self.cached_game_results or []
+                    if g['id']==game_id and g['availability']=='ready'),None)
+        if entry is None:
+            raise ValueError('Primero transfiere y verifica el juego en el PC.')
+        from psp_game_metadata import read_metadata
+        from psp_hd_textures import verified_disc_id
+        path=inside(Path(self.config['library']),entry['local_relative'])
+        if not path.is_file():
+            raise ValueError('La copia local del juego ya no está disponible.')
+        return path, verified_disc_id(read_metadata(path).get('DISC_ID'))
+
+    def hd_generator_status(self, disc_id):
+        from psp_hd_textures import installed_status
+        state=installed_status(Path(self.config['memstick']),disc_id)
+        config=self.hd_jobs['games'].get(disc_id,{})
+        if not isinstance(config,dict):
+            config={}
+        worker=self.hd_worker.status()
+        scan_path=(Path(self.config['storage_root']) /
+                   'hd-iso-candidates' / disc_id / 'index.json')
+        inventory={}
+        if scan_path.is_file():
+            try:
+                inventory=read_json(scan_path,{})
+                if not isinstance(inventory,dict):
+                    inventory={}
+            except (OSError,ValueError):
+                inventory={}
+        with self.hd_scan_lock:
+            scan_state=dict(self.hd_scan_state)
+        return {
+            **state,'disc_id':disc_id,'enabled':config.get('enabled') is True,
+            'scale':config.get('scale',2),'engine':config.get('engine','lanczos'),
+            'realesrgan_exe':config.get('realesrgan_exe',''),
+            'realesrgan_available':(
+                ROOT.joinpath('tools','realesrgan-ncnn-vulkan','realesrgan-ncnn-vulkan.exe').is_file() and
+                ROOT.joinpath('tools','realesrgan-ncnn-vulkan','models',
+                              'realesrgan-x4plus.param').is_file() and
+                ROOT.joinpath('tools','realesrgan-ncnn-vulkan','models',
+                              'realesrgan-x4plus.bin').is_file()),
+            'worker':worker if worker['disc_id']==disc_id else {'active':False},
+            'iso_scan':scan_state if scan_state['disc_id']==disc_id else {'active':False},
+            'iso_candidates':len(inventory.get('candidates',[])),
+            'iso_unmapped':True,
+            'iso_limited':bool(inventory.get('limited')),
+        }
+
+    def configure_hd_generator(self, game_id, *, action, scale=2, engine='lanczos'):
+        """A deliberate PC-only action; no automatic community pack overwrite."""
+        from psp_hd_textures import (TextureSettings, prepare_pack,
+                                     installed_status, TextureGenerationError)
+        if self.demo or self.running() or self.session.get('exit_requested'):
+            raise ValueError('Configura el generador antes de iniciar PPSSPP.')
+        path,disc_id=self.verified_local_texture_game(game_id)
+        _=path
+        if action=='disable':
+            current=self.hd_jobs['games'].get(disc_id,{})
+            self.hd_jobs['games'][disc_id]={**current,'enabled':False}
+            atomic_json(self.hd_jobs_path,self.hd_jobs)
+            self.hd_worker.stop()
+        elif action in ('enable','process'):
+            if action=='enable':
+                tool=ROOT/'tools'/'realesrgan-ncnn-vulkan'/'realesrgan-ncnn-vulkan.exe'
+                settings=TextureSettings(scale=scale,engine=engine,
+                    realesrgan_exe=str(tool) if engine=='realesrgan' else '')
+                # The private PC memstick may not have been materialized yet:
+                # preparing runtime is not a prerequisite for opting into HD.
+                private=inside(Path(self.config['memstick']),'')
+                private.mkdir(parents=True,exist_ok=True)
+                prepare_pack(private,disc_id)
+                self.hd_jobs['games'][disc_id]={
+                    'enabled':True,'scale':settings.scale,
+                    'engine':settings.engine,'realesrgan_exe':settings.realesrgan_exe}
+                atomic_json(self.hd_jobs_path,self.hd_jobs)
+            else:
+                current=self.hd_jobs['games'].get(disc_id,{})
+                if current.get('enabled') is not True:
+                    raise TextureGenerationError('Activa primero el generador HD.')
+                settings=TextureSettings(
+                    scale=current.get('scale'),engine=current.get('engine'),
+                    realesrgan_exe=current.get('realesrgan_exe',''))
+                if installed_status(Path(self.config['memstick']),disc_id)['kind']!='generated':
+                    raise TextureGenerationError('El pack generado ya no está disponible.')
+                self.hd_worker.memstick=Path(self.config['memstick'])
+                self.hd_worker.start(disc_id,settings,until_idle=True)
+        else:
+            raise ValueError('Acción del generador HD desconocida.')
+        self.events.record('hd_generator_'+action,evidence='pc_action',
+                           game_id=game_id,disc_id=disc_id)
+        return self.hd_generator_status(disc_id)
+
+    def start_hd_iso_scan(self, game_id):
+        """Scan a VERIFIED PC ISO/CSO asynchronously; no USB/PSP/game writes."""
+        from psp_hd_textures import discover_iso_assets
+        if self.demo or self.running():
+            raise ValueError('La búsqueda offline se ejecuta con PPSSPP cerrado.')
+        path,disc_id=self.verified_local_texture_game(game_id)
+        if path.suffix.lower() not in ('.iso','.cso'):
+            raise ValueError('La búsqueda de imágenes offline requiere ISO/CSO.')
+        cache=Path(self.config['storage_root'])/'hd-iso-candidates'
+        with self.hd_scan_lock:
+            if self.hd_scan_state['active']:
+                raise ValueError('Ya hay otra búsqueda offline en curso.')
+            self.hd_scan_state={'active':True,'status':'scanning',
+                                'disc_id':disc_id,'error':''}
+
+        def work():
+            try:
+                report=discover_iso_assets(path,cache,disc_id=disc_id)
+                self.events.record('hd_iso_inventory',evidence='pc_observed',
+                                   game_id=game_id,count=len(report['candidates']),
+                                   result='unmapped_candidates')
+                state='finished'
+                error=''
+            except (OSError,ValueError) as exc:
+                state='failed'
+                error=str(exc)[:240]
+            with self.hd_scan_lock:
+                self.hd_scan_state.update(active=False,status=state,error=error)
+        threading.Thread(target=work,daemon=True,
+                         name='PSPDockHDISOInventory').start()
+        return {'active':True,'disc_id':disc_id,'status':'scanning'}
 
     def controller_status(self, storage_mounted):
         """Observe manual PDK1 HID without authorizing a USB role handoff."""
@@ -1957,6 +2124,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     requested = (self.path[len('/api/graphics/'):]
                                  if self.path.startswith('/api/graphics/') else None)
                     return self.reply(dock.graphics_view(requested,include_gpu=True))
+                if self.path.startswith('/api/hd-textures/'):
+                    requested=self.path[len('/api/hd-textures/'):]
+                    _,disc_id=dock.verified_local_texture_game(requested)
+                    return self.reply(dock.hd_generator_status(disc_id))
                 if self.path.startswith('/api/icon/'):
                     game_id = self.path[len('/api/icon/'):]
                     with dock.lock:
@@ -2048,6 +2219,13 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     elif self.path == '/api/install-texture-pack':
                         dock.install_curated_texture_pack(body.get('id'),
                                                           body.get('offer_id'))
+                    elif self.path == '/api/hd-textures':
+                        dock.configure_hd_generator(
+                            body.get('id'),action=body.get('action'),
+                            scale=body.get('scale',2),
+                            engine=body.get('engine','lanczos'))
+                    elif self.path == '/api/hd-iso-scan':
+                        dock.start_hd_iso_scan(body.get('id'))
                     elif self.path == '/api/select-device':
                         if body['root'] not in [d['root'] for d in dock.devices()]:
                             raise ValueError('Unidad no disponible.')

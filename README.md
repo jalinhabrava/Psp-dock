@@ -1,5 +1,16 @@
 # PSP Dock · prototipo para Windows
 
+## Generador HD híbrido de texturas (opt-in, PC)
+
+En el XMB > Gráficos > un juego verificado > Generador HD híbrido puedes
+habilitar captura incremental de texturas mediante PPSSPP y mejora local
+2×/4× en segundo plano. Incluye inventario separado de imágenes dentro de
+ISO/CSO (sin atribuir hashes falsos), shaders GPU PPSSPP con Vulkan, protección
+de packs comunitarios, comprobación de rutas y límites de procesamiento.
+**No extrae automáticamente todas las texturas internas de cualquier juego**
+ni es un remaster visual garantizado. Ver
+[documentación y límites](docs/HD-TEXTURAS-HIBRIDAS.md).
+
 ## New feature branch: media, storage location and graceful shutdown
 
 See MVP-HANDOFF-USB-MEDIA.md for the changes based on Claude's
