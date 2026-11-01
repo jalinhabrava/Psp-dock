@@ -979,6 +979,37 @@ $('resolve-confirm').addEventListener('click', async () => {
   }
 });
 document.querySelectorAll('[data-close]').forEach((button) => button.addEventListener('click', () => $(button.dataset.close).close()));
+$('storage-location-confirm').addEventListener('click', async () => {
+  const path=$('storage-location-path').value.trim();
+  if (!path) {
+    $('storage-location-error').textContent='Introduce una ruta de carpeta nueva en un disco fijo.';
+    $('storage-location-error').hidden=false;
+    return;
+  }
+  $('storage-location-confirm').disabled=true;
+  try {
+    const ok=await mutate('/api/storage-root',{path},
+      'Biblioteca, partidas, texturas y recursos XMB copiados y verificados en la nueva ubicación.');
+    if (ok) {
+      $('storage-location-dialog').close();
+      await xmbLoadSettings();
+    }
+  } finally {
+    $('storage-location-confirm').disabled=false;
+  }
+});
+$('storage-location-browse').addEventListener('click', async () => {
+  $('storage-location-browse').disabled=true;
+  try {
+    const selected=await request('/api/choose-storage-root',{});
+    if (!selected.cancelled && selected.path) $('storage-location-path').value=selected.path;
+  } catch(error) {
+    $('storage-location-error').textContent=error.message;
+    $('storage-location-error').hidden=false;
+  } finally {
+    $('storage-location-browse').disabled=false;
+  }
+});
 document.addEventListener('keydown', (event) => {
   if (ui.busy || document.querySelector('dialog[open]') || event.altKey || event.ctrlKey || event.metaKey || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
   const button = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'accept', ' ': 'accept',
@@ -1273,9 +1304,43 @@ const xmb = {
   nav: { cat: 2, idx: {}, level: 'list', subIdx: 0, side: null, confirm: null },
   sections: [], sub: null, side: null, confirm: null,
   gfx: {}, gfxLoading: new Set(), settings: null, els: new Map(), icons: new Map(),
-  theme: 'month',
+  theme: 'month', mediaGame: null, mediaTimer: null, mediaSound: true,
 };
 try { xmb.theme = localStorage.getItem('psp-dock-theme') || 'month'; } catch { /* sin almacenamiento */ }
+try { xmb.mediaSound = localStorage.getItem('psp-dock-xmb-sound') !== 'off'; } catch { /* sin almacenamiento */ }
+
+function xmbPreviewGame(gameId) {
+  if (xmb.mediaGame === gameId) return;
+  xmb.mediaGame = gameId;
+  clearTimeout(xmb.mediaTimer);
+  const bg = $('xmb-game-background'), overlay = $('xmb-game-overlay');
+  const sound = $('xmb-game-audio');
+  sound.pause();
+  sound.removeAttribute('src');
+  sound.load();
+  bg.hidden = true; bg.removeAttribute('src');
+  overlay.hidden = true; overlay.removeAttribute('src');
+  if (!gameId || ui.serviceOffline) return;
+  // Debounce fast D-pad movement. Never request all 35 games at once.
+  xmb.mediaTimer = setTimeout(() => {
+    if (xmb.mediaGame !== gameId || document.hidden || ui.state?.session?.running) return;
+    const uri = '/api/media/' + encodeURIComponent(gameId) + '/';
+    for (const [kind,element] of [['background',bg],['overlay',overlay]]) {
+      element.onload = () => { if (xmb.mediaGame === gameId) element.hidden = false; };
+      element.onerror = () => { element.hidden = true; };
+      element.src = uri + kind;
+    }
+    if (xmb.mediaSound) {
+      sound.volume = .22;
+      sound.loop = true;
+      sound.src = uri + 'sound';
+      void sound.play().catch(() => {
+        // Chrome may require a click before browser audio is unlocked.
+        // Never simulate keyboard input or weaken global browser policy.
+      });
+    }
+  }, 350);
+}
 
 function xmbText(id) { return ($(id)?.textContent || '').trim(); }
 function xmbUsable(id) { const node = $(id); return !!node && !node.hidden && !node.disabled; }
@@ -1313,6 +1378,16 @@ function xmbSettingsLocked() {
   const state = ui.state || {};
   return state.recovery_required ? 'Recupera la sesión interrumpida antes de cambiar los ajustes.' :
     state.session?.running || state.session?.pending_return ? 'Cierra y devuelve la sesión a la PSP antes de cambiar los ajustes.' : '';
+}
+async function xmbStorageLocation() {
+  const locked=xmbSettingsLocked();
+  if (locked) { toast(locked); return; }
+  if (!xmb.settings) await xmbLoadSettings();
+  if (!xmb.settings) return;
+  $('storage-location-current').textContent = 'Actualmente: ' + (xmb.settings.storage_root || xmb.settings.library);
+  $('storage-location-path').value = '';
+  $('storage-location-error').hidden = true;
+  $('storage-location-dialog').showModal();
 }
 async function xmbSaveSetting(key, value, label) {
   const locked = xmbSettingsLocked();
@@ -1352,7 +1427,20 @@ function xmbBuildSections() {
         try { localStorage.setItem('psp-dock-theme', value); } catch { /* sin almacenamiento */ }
         xmbApplyTheme();
       }) },
+    { key: 'sound', t: 'Música de selección de juegos', icon: 'info',
+      s: () => xmb.mediaSound ? 'Activada · audio original PSP' : 'Silenciada',
+      activate: () => xmbValues('Música del XMB', [['on','Activada'],['off','Silenciada']],
+        xmb.mediaSound ? 'on' : 'off', (value) => {
+          xmb.mediaSound = value === 'on';
+          try { localStorage.setItem('psp-dock-xmb-sound',value); } catch {}
+          const previous = xmb.mediaGame;
+          xmbPreviewGame(null);
+          xmbPreviewGame(previous);
+        }) },
     { key: 'pad', t: 'Mando', s: () => xmbText('gamepad-status') || 'Sin detectar', icon: 'pad', activate: () => toast(xmbText('gamepad-status')) },
+    { key: 'storage', t: 'Carpeta principal de datos',
+      s: () => settingsValue('storage_root',settingsValue('library','')),
+      icon: 'folder', activate: () => xmbStorageLocation() },
     ...[['emulator', 'Emulador PPSSPP'], ['library', 'Biblioteca del PC'], ['memstick', 'Memory Stick de PPSSPP'], ['psp_root', 'Raíz de la PSP']].map(([key, t]) => ({
       key: 'path-' + key, t, s: () => settingsValue(key, '') || (key === 'psp_root' ? 'Detección automática' : 'Sin configurar'), icon: 'folder',
       activate: () => { openSettings(); toast('Las carpetas se escriben con el teclado. ○ cierra sin guardar.'); },
@@ -1362,6 +1450,15 @@ function xmbBuildSections() {
   const dock = [];
   if (ui.serviceOffline || state.error || state.recovery_required)
     out.dockWarning = true, dock.push({ key: 'warning', t: 'Aviso', s: xmbText('error'), icon: 'warn', activate: () => toast(xmbText('error')) });
+  if (state.copy_queue?.status === 'copied')
+    dock.push({ key: 'copy-completed', t: 'Juego copiado y verificado',
+      s: 'Vuelve a iniciar el mando HID desde PSP Dock para jugarlo.',
+      icon: 'copy',activate: () => toast('La ISO ya está en el PC. El retorno USB → HID automático sigue pendiente del puente firmware seguro.') });
+  if (state.copy_queue?.status === 'interrupted_review')
+    out.dockWarning = true, dock.push({ key: 'copy-interrupted',
+      t: 'Copia interrumpida · necesita revisión',
+      s: 'No se repetirá automáticamente ni se sobrescribirá el juego.',
+      icon: 'warn',activate: () => toast('La copia requiere revisión manual antes de intentarla otra vez.') });
   if (!$('dock-preflight').hidden) dock.push({ key: 'status', t: xmbText('preflight-title') || 'Estado del Dock', s: xmbText('preflight-description'), icon: 'info',
     activate: () => toast([xmbText('preflight-summary'), xmbText('runtime-readiness-label'), xmbText('preflight-caveat')].filter(Boolean).join(' · ')) });
   if (xmbUsable('preflight-copy')) dock.push({ key: 'copy', t: xmbText('preflight-copy'), s: 'Copia al PC los juegos que solo están en la PSP', icon: 'copy', activate: () => $('preflight-copy').click() });
@@ -1421,6 +1518,33 @@ function xmbBuildSections() {
     id === 'dock' && out.dockWarning ? '!' : null }));
 }
 
+function xmbTexturePackAction(id, data) {
+  const disc = data.game_metadata?.disc_id;
+  if (!disc) {
+    toast('No se ha podido identificar la edición del juego.');
+    return;
+  }
+  const offers = data.hd_texture_pack_offers || [];
+  if (!offers.length) {
+    toast('Sin pack HD verificado para ' + disc +
+      '. Busca proyectos en forums.ppsspp.org, sección Texture Packs. No se instalarán archivos desconocidos.');
+    return;
+  }
+  xmbSide('Packs HD · ' + disc, offers.map((offer) => ({
+    t: offer.title, s: offer.publisher + ' · ' + bytes(offer.size_bytes),
+  })), (index) => {
+    const offer = offers[index];
+    xmbConfirm('¿Descargar e instalar "' + xmbEscape(offer.title) +
+      '" en PPSSPP?<small>Autor: ' + xmbEscape(offer.publisher) +
+      '. Instalación solo tras validar SHA-256 y edición.</small>', false,
+      async () => {
+        if (await mutate('/api/install-texture-pack',
+            { id, offer_id: offer.id }, 'Pack HD verificado e instalado en el PC.')) {
+          await xmbLoadGraphics(id, true);
+        }
+      });
+  });
+}
 function xmbGraphicsRows(id) {
   const data = xmb.gfx[xmbGfxKey(id)];
   const game = (ui.state?.games || []).find((item) => item.id === id);
@@ -1451,8 +1575,7 @@ function xmbGraphicsRows(id) {
     const disc = data.game_metadata?.disc_id;
     rows.push({ key: 'pack', t: 'Pack de texturas HD', icon: 'folder',
       s: disc ? `${disc} · ${data.hd_texture_pack_installed ? 'detectado en PPSSPP' : 'no instalado'}` : 'Edición sin identificar',
-      activate: () => toast(disc ? `Se busca en PSP/TEXTURES/${disc} de la Memory Stick de PPSSPP. No se descarga nada.` :
-        'Sin el ID de edición no se puede asociar un pack HD de forma segura.') });
+      activate: () => xmbTexturePackAction(id, data) });
     const others = (ui.state?.games || []).filter((item) => item.id !== id);
     if (others.length) rows.push({ key: 'copy', t: 'Copiar ajustes de otro juego', s: 'Trae calidad, proporción y texturas', icon: 'copy',
       activate: () => xmbSide('Copiar ajustes de…', others.map((other) => ({ t: other.title, s: xmbGfxSummary(xmb.gfx[other.id]?.choice) })), async (index) => {
@@ -1513,6 +1636,12 @@ function xmbResolve(slot) {
 function xmbLaunch(game) {
   ui.selected = game.id;
   renderSelected(false);
+  if (game.availability === 'missing' && ui.state?.controller_status?.connected) {
+    // CROSS on a missing title opens the same contextual right-hand menu.
+    // Neither CROSS nor TRIANGLE may queue a copy directly.
+    xmbGameMenu(game);
+    return;
+  }
   const toastBefore = ui.toastTimer;
   const navBefore = xmb.nav.cat;
   launch();
@@ -1520,16 +1649,31 @@ function xmbLaunch(game) {
   if (ui.toastTimer === toastBefore && !ui.busy && navBefore === xmb.nav.cat &&
       !document.querySelector('dialog[open]') && $('launch-button').disabled) toast(xmbText('launch-note'));
 }
+function xmbQueueMissingGame(game) {
+  xmbConfirm('¿Copiar ' + xmbEscape(game.title) +
+    ' al PC?<small>Se pausará el control mientras se copia. ' +
+    'Hasta completar el puente USB, hay que salir de HID con START+SELECT ' +
+    'y volver a USB Sony manualmente.</small>', false,
+    async () => {
+      await mutate('/api/queue-game-copy',{id:game.id},
+        'Copia solicitada. Vuelve a USB Sony para transferir el juego.');
+    });
+}
 function xmbGameMenu(game) {
   const opts = [
-    { t: game.availability === 'missing' ? 'Copiar al PC' : 'Jugar', s: game.title },
+    { t: game.availability === 'missing' ? 'Sincronizar con Dock' : 'Jugar', s: game.title },
     { t: 'Ajustes gráficos de este juego', s: xmbGfxSummary(xmb.gfx[game.id]?.choice) },
     { t: 'Partidas', s: 'Abre la sección Partidas' },
     { t: 'Información', s: `${game.format || 'JUEGO'} · ${bytes(game.size)}` },
   ];
   xmbLoadGraphics(game.id);
   xmbSide(game.title, opts, (index) => {
-    if (index === 0) xmbLaunch(game);
+    if (index === 0) {
+      // Only an explicitly selected menu action can begin the
+      // confirmation dialog; TRIANGLE itself has no side effects.
+      if (game.availability === 'missing') xmbQueueMissingGame(game);
+      else xmbLaunch(game);
+    }
     else if (index === 1) xmbOpenGraphics(game.id);
     else if (index === 2) xmbGoto('partidas');
     else { ui.selected = game.id; renderSelected(false); toast(`${game.relative || game.title} · ${xmbText('launch-note')}`); }
@@ -1547,6 +1691,14 @@ function xmbCurrentItems() {
 }
 function xmbPress(button) {
   if (!xmb.sections.length) xmb.sections = xmbBuildSections();
+  if (!xmb.nav.confirm &&
+      ['waiting_for_storage','copying'].includes(ui.state?.copy_queue?.status)) {
+    if (button === 'back' && ui.state.copy_queue.status === 'waiting_for_storage') {
+      xmbConfirm('¿Cancelar la solicitud de copia de juego?', false,
+        async () => mutate('/api/cancel-game-copy',{},'Solicitud de copia cancelada.'));
+    }
+    return;
+  }
   if (ui.state?.session?.running && button !== 'back') return;
   const view = {
     sections: xmb.sections.map((section) => ({ id: section.id, count: section.items.length })),
@@ -1648,6 +1800,7 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
 }
 function xmbRender() {
   if (!ui.state && !ui.serviceOffline) return;
+  const state = ui.state || {};
   xmb.sections = xmbBuildSections();
   const nav = xmb.nav;
   nav.cat = Math.max(0, Math.min(xmb.sections.length - 1, nav.cat));
@@ -1658,6 +1811,14 @@ function xmbRender() {
   const rows = inSub ? xmbGraphicsRows(xmb.sub?.id || null) : [];
   if (inSub) nav.subIdx = Math.max(0, Math.min(rows.length - 1, nav.subIdx));
   if (!inSub) section.items[focus]?.focus?.();
+  // The PSP's original XMB presentation travels with the game in the
+  // PC cache: PIC1 background, optional PIC0 overlay and SND0 sound.
+  // Switching category or launching PPSSPP stops preview sound at once.
+  xmbPreviewGame(
+    state?.session?.running ? null :
+    inSub ? xmb.sub?.id || null :
+    section.id === 'juegos' ? section.items[focus]?.game?.id || null : null
+  );
 
   const cats = $('xmb-cats');
   if (cats.childElementCount !== xmb.sections.length) {
@@ -1688,7 +1849,6 @@ function xmbRender() {
   if (inSub) xmbPlaceColumn('sub:', rows, nav.subIdx, 26, false, used);
   for (const [key, node] of xmb.els) if (!used.has(key)) { node.remove(); xmb.els.delete(key); }
 
-  const state = ui.state || {};
   $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
   const hid = state.controller_status?.connected === true;
   $('xmb-hid').classList.toggle('on', hid);
@@ -1719,6 +1879,16 @@ function xmbRender() {
     $('xmb-no').classList.toggle('on', !nav.confirm.yes);
   }
   $('xmb-running').classList.toggle('open', !!state.session?.running);
+  const queue=state.copy_queue || {};
+  const copying=['waiting_for_storage','copying'].includes(queue.status);
+  $('xmb-copy-status').hidden=!copying;
+  if (copying) {
+    $('xmb-copy-heading').textContent=queue.status==='copying' ?
+      'Copiando y verificando el juego' : 'Esperando almacenamiento Sony';
+    $('xmb-copy-description').textContent=queue.status==='copying' ?
+      'La PSP no debe desconectarse mientras la copia esté en curso.' :
+      'Mantén START+SELECT en PSP Dock para detener HID, desconecta el cable y vuelve manualmente al modo USB de Sony. La copia se iniciará al reconocer la misma Memory Stick.';
+  }
   xmbRenderHints(inSub ? rows[nav.subIdx] : section.items[focus]);
 }
 function xmbRenderHints(item) {

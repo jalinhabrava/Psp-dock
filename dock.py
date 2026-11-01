@@ -411,8 +411,10 @@ class Dock:
         self.config_path = self.data / 'settings.json'
         bundled = ROOT / 'tools/PPSSPP/PPSSPPWindows64.exe'
         defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'library': str(self.data / 'library'),
-                    'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3, 'backend': 'directx11'}
+                    'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3,
+                    'backend': 'directx11','storage_root':str(self.data)}
         self.config = read_json(self.config_path, defaults)
+        self.config.setdefault('storage_root',str(self.data))
         self.process = None
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
         # A previous process may still have the dedicated memstick open.
@@ -452,6 +454,10 @@ class Dock:
         # No host background process exists before Windows user logon;
         # setup_startup.py installs the opt-in lightweight watcher.
         self.last_hid_present = False
+        # User-owned game preview assets live on the PC while PSP is HID.
+        self.xmb_media_progress = {'active':False,'done':0,'total':0,'errors':0}
+        self.xmb_media_worker = None
+        self.xmb_media_catalog_key = None
         # Transfer progress must have its OWN lock because Dock.lock is held
         # for the verified copy, while the UI polls /api/transfer-status and
         # can request a one-shot cancellation from another HTTP thread.
@@ -462,9 +468,12 @@ class Dock:
             'copied_bytes': 0, 'game_index': 0, 'games_total': 0,
             'title': '', 'error': '',
         }
+        self.copy_queue_path=self.data/'copy-queue.json'
+        self.copy_queue=read_json(self.copy_queue_path,{})
         # Optional, opt-in Windows logon helper uses this callback to open
         # a localhost browser tab only on a NEW storage attachment.
         self.on_connected = None
+        self.on_verified_exit = None
         # Future kernel role bridge: disable ALL GetLogicalDrives / PSP FAT
         # discovery while a host volume lock is being acquired/held. This
         # flag itself does NOT acquire a Windows lock or prove exclusivity.
@@ -726,7 +735,8 @@ class Dock:
             slot = action['slot']
             src_root, dst_root = (a, b) if action['direction'] == 'to_pc' else (b, a)
             src, dst = inside(src_root, slot), inside(dst_root, slot)
-            copy_slot(src, dst, self.data / 'backups', action['source_hash'], action['target_hash'])
+            copy_slot(src, dst, Path(self.config['storage_root']) / 'backups',
+                      action['source_hash'], action['target_hash'])
             baseline[slot] = action['source_hash']
             atomic_json(baseline_file, baseline)
         # Identical initial saves also establish a common ancestor.
@@ -885,6 +895,86 @@ class Dock:
             return {'cancel_requested': True,
                     'message': 'La copia parcial actual se descartará; los juegos ya completados se conservarán.'}
 
+    def request_game_copy_from_hid(self, game_id):
+        """Queue explicit XMB choice, NOT an unverified USB role command."""
+        if self.demo or self.running() or self.session.get('exit_requested'):
+            raise ValueError('No se pueden solicitar copias en esta fase.')
+        if not (self.snapshot.get('controller_status',{}).get('connected')
+                and self.snapshot.get('selected_device') is None):
+            raise ValueError('Esta solicitud requiere la PSP como mando HID.')
+        if not isinstance(game_id,str) or not re.fullmatch('[0-9a-f]{24}',game_id):
+            raise ValueError('Juego inválido.')
+        if (self.copy_queue.get('status') in
+                ('waiting_for_storage','copying','interrupted_review')):
+            raise ValueError('Existe una copia pendiente que requiere resolución.')
+        selected=next((g for g in self.cached_game_results or []
+                       if g['id']==game_id),None)
+        if selected is None or selected.get('availability')!='missing':
+            raise ValueError('El juego ya existe en el PC o no está verificado.')
+        if self.session.get('prepared_volume')!=self.catalog_volume:
+            raise ValueError('La PSP no coincide con la sesión preparada.')
+        self.copy_queue={
+            'status':'waiting_for_storage',
+            'game_id':game_id,
+            'volume_serial':self.catalog_volume,
+            'game_relative':selected['relative'],
+            'requested_from':'verified_psp_hid',
+        }
+        atomic_json(self.copy_queue_path,self.copy_queue)
+        self.events.record('xmb_game_copy_queued',evidence='pc_action',
+                           game_id=game_id,volume_serial=self.catalog_volume)
+        return dict(self.copy_queue)
+
+    def cancel_game_copy_queue(self):
+        if self.copy_queue.get('status')!='waiting_for_storage':
+            raise ValueError('No hay copia pendiente cancelable.')
+        self.copy_queue={'status':'cancelled'}
+        atomic_json(self.copy_queue_path,self.copy_queue)
+        return dict(self.copy_queue)
+
+    def complete_queued_game_copy(self):
+        """Copy only when original Sony storage returns and HID is absent.
+
+        A durable COPYING marker is written before any game transfer,
+        preventing blind retries after power loss or a partial copy.
+        """
+        queue=self.copy_queue
+        if queue.get('status')!='waiting_for_storage':
+            return False
+        if self.running() or self.storage_polling_paused or self.session.get('exit_requested'):
+            return False
+        root=self.root()
+        if root is None or volume_identity(root)!=queue.get('volume_serial'):
+            return False
+        from bridge_hid import probe
+        report=probe()
+        if not report.get('supported') or report.get('errors') or report.get('devices'):
+            return False
+        game=next((g for g in self.games() if g['id']==queue['game_id']),None)
+        if (not game or game['availability']!='missing' or
+                game['relative']!=queue['game_relative']):
+            self.copy_queue={'status':'interrupted_review',
+                             'reason':'El catálogo del juego cambió.'}
+            atomic_json(self.copy_queue_path,self.copy_queue)
+            return False
+        self.copy_queue={**queue,'status':'copying'}
+        atomic_json(self.copy_queue_path,self.copy_queue)
+        try:
+            self.transfer([queue['game_id']])
+            if not any(g['id']==queue['game_id'] and g['availability']=='ready'
+                       for g in self.games()):
+                raise ValueError('La copia terminó sin validación del juego.')
+            self.copy_queue={**queue,'status':'copied',
+                             'resumption':'manual_hid_until_bridge_verified'}
+            atomic_json(self.copy_queue_path,self.copy_queue)
+            self.events.record('xmb_game_copy_verified',evidence='pc_observed',
+                               game_id=queue['game_id'],result='copied')
+            return True
+        except (OSError,ValueError):
+            self.copy_queue={**queue,'status':'interrupted_review'}
+            atomic_json(self.copy_queue_path,self.copy_queue)
+            return False
+
     def emulator_spec(self):
         """Cheap PC-only fingerprint for an explicitly selected emulator."""
         path = Path(self.config['emulator'])
@@ -977,6 +1067,9 @@ class Dock:
                         (texture_folder/'textures.ini').is_file() or
                         (texture_folder/'textures.zip').is_file()
                     )
+                    from psp_texture_packs import offers_for_disc
+                    result['hd_texture_pack_offers']=offers_for_disc(game_disc)
+                    result['hd_pack_community_url']='https://forums.ppsspp.org/forumdisplay.php?fid=36'
                 else:
                     result['hd_texture_pack_installed']=False
         if include_gpu:
@@ -1012,10 +1105,13 @@ class Dock:
     def apply_game_graphics(self, game_id):
         """Apply PC-only PPSSPP ini profile before the selected game starts."""
         from ppsspp_graphics import apply_private_ppsspp_ini
-        plan=self.graphics_view(game_id)['plan']
+        preview=self.graphics_view(game_id)
+        plan={**preview['plan'],
+              'replace_textures':preview.get('hd_texture_pack_installed') is True}
         private=inside(Path(self.config['memstick']), 'PSP/SYSTEM/ppsspp.ini')
         return apply_private_ppsspp_ini(
-            private,plan=plan,backup_dir=self.data/'profile-backups')
+            private,plan=plan,
+            backup_dir=Path(self.config['storage_root'])/'profile-backups')
 
     def prepare_runtime(self):
         """Prewarm PPSSPP on the PC while USBSTOR is still available.
@@ -1061,14 +1157,15 @@ class Dock:
                              (version or 'desconocida'))
         private = prepare_emulator(exe, self.data, Path(spec['memstick']),
                                    spec['scale'], spec['backend'])
-        prepare_psp_controls(Path(spec['memstick']), self.data/'profile-backups')
+        prepare_psp_controls(Path(spec['memstick']),
+                             Path(self.config['storage_root'])/'profile-backups')
         # Map the PSP's own HOME (DirectInput button 9) to the PPSSPP
         # Pause menu, which supports leaving the game with controller
         # actions. No Windows-wide ESC injection is needed.
         from ppsspp_windows_flow import add_home_pause_mapping
         add_home_pause_mapping(
             inside(Path(spec['memstick']), 'PSP/SYSTEM/controls.ini'),
-            self.data / 'profile-backups',
+            Path(self.config['storage_root']) / 'profile-backups',
         )
         # Auto-match the primary Windows monitor while USBSTOR is active.
         # This writes the private PC PPSSPP ini only, not PSP or GPU drivers.
@@ -1076,7 +1173,7 @@ class Dock:
         apply_private_ppsspp_ini(
             inside(Path(spec['memstick']),'PSP/SYSTEM/ppsspp.ini'),
             plan=self.graphics_view()['plan'],
-            backup_dir=self.data/'profile-backups',
+            backup_dir=Path(self.config['storage_root'])/'profile-backups',
         )
         atomic_json(self.data/'runtime-prepared.json',
                     {'spec': spec, 'exe': str(private.resolve()),
@@ -1130,7 +1227,7 @@ class Dock:
         from ppsspp_windows_flow import add_home_pause_mapping, focus_async
         add_home_pause_mapping(
             inside(Path(self.config['memstick']), 'PSP/SYSTEM/controls.ini'),
-            self.data / 'profile-backups',
+            Path(self.config['storage_root']) / 'profile-backups',
         )
         # A different title may have a custom graphics profile; quick
         # explicit per-game update on the PC, never game/save/PSP media.
@@ -1172,6 +1269,9 @@ class Dock:
         """
         if self.running():
             raise ValueError('Cierra PPSSPP normalmente antes de salir del Dock.')
+        if (self.transfer_status.get('active') or
+                self.copy_queue.get('status') in ('waiting_for_storage','copying')):
+            raise ValueError('Cancela o termina primero la copia solicitada desde el XMB.')
         if self.demo or not self.session.get('prepared_volume'):
             raise ValueError('No hay una sesión PSP Dock preparada para devolver.')
         if self.storage_polling_paused:
@@ -1179,6 +1279,9 @@ class Dock:
         self.session['exit_requested'] = True
         self.session['return_sync_authorized'] = True
         self.session['return_sync_attempted'] = False
+        # The user approved closing the Windows app AFTER the return
+        # is complete and verified, never merely on pressing Exit.
+        self.session['close_after_verified_return'] = True
         atomic_json(self.data / 'session.json', self.session)
         self.events.record('dock_exit_requested', evidence='pc_action',
                            manual=True,
@@ -1240,6 +1343,9 @@ class Dock:
     def settings(self, new):
         if self.running() or self.session.get('pending_return'):
             raise ValueError('Cierra y devuelve la sesión a la PSP antes de cambiar las carpetas.')
+        if ('storage_root' in new and
+                new['storage_root'] != self.config['storage_root']):
+            raise ValueError('Para mover los datos usa la migración verificada.')
         config = {**self.config, **{k:v for k,v in new.items() if k in self.config}}
         if type(config['scale']) is not int or not 1 <= config['scale'] <= 6 or config['backend'] not in ('directx11','vulkan','gles'):
             raise ValueError('Perfil gráfico inválido.')
@@ -1261,6 +1367,59 @@ class Dock:
             self.cached_game_results = None
         self.cache.clear()
         atomic_json(self.config_path, config)
+
+    def relocate_storage(self, target):
+        """Copy PC games, saves, textures and media into an empty folder."""
+        from storage_layout import migrate_pc_data
+        if self.demo or self.running() or self.session.get('pending_return'):
+            raise ValueError('Termina la sesión y devuelve partidas antes de cambiar la carpeta.')
+        if (self.session.get('exit_requested') or self.transfer_status['active']
+                or self.xmb_media_progress.get('active')):
+            raise ValueError('Termina todas las copias antes de mover los datos.')
+        if not isinstance(target,str) or not target.strip():
+            raise ValueError('Selecciona una carpeta absoluta del PC.')
+        report=migrate_pc_data(target=Path(target),
+                               library=Path(self.config['library']),
+                               memstick=Path(self.config['memstick']),
+                               old_data=self.data)
+        updated={**self.config,'storage_root':report['path'],
+                 'library':report['library'],'memstick':report['memstick']}
+        self.validate_layout(self.root(),updated)
+        atomic_json(self.config_path,updated)
+        self.config=updated
+        self.session.pop('prepared_volume',None)
+        atomic_json(self.data/'session.json',self.session)
+        self.cached_game_results=None
+        self.last_storage_scan_at=0
+        self.xmb_media_catalog_key=None
+        self.events.record('pc_storage_relocated',evidence='pc_action',
+                           count=report['files'],result='verified')
+        return report
+
+    def install_curated_texture_pack(self, game_id, offer_id):
+        """Explicit user download for the exact local verified game revision."""
+        from psp_texture_packs import CURATED_OFFERS, download_and_install
+        from psp_game_metadata import read_metadata
+        if self.demo or self.running() or self.session.get('pending_return'):
+            raise ValueError('No se instalan packs mientras juegas o devuelves partidas.')
+        if self.transfer_status['active'] or self.session.get('exit_requested'):
+            raise ValueError('Termina la transferencia de juegos antes del pack HD.')
+        game=next((g for g in self.cached_game_results or []
+                   if g['id']==game_id and g['availability']=='ready'),None)
+        if not game:
+            raise ValueError('El juego debe existir y estar verificado en el PC.')
+        source=inside(Path(self.config['library']),game['local_relative'])
+        disc=read_metadata(source).get('DISC_ID')
+        offer=next((p for p in CURATED_OFFERS
+                    if p.id==offer_id and p.disc_id==disc),None)
+        if offer is None:
+            raise ValueError('No hay pack de fuente verificada para esta edición.')
+        report=download_and_install(offer,matching_disc_id=disc,
+                                    private_memstick=Path(self.config['memstick']))
+        self.events.record('hd_texture_pack_installed',evidence='pc_observed',
+                           game_id=game_id,result='hash_verified',
+                           count=report['textures'])
+        return report
 
     def controller_status(self, storage_mounted):
         """Observe manual PDK1 HID without authorizing a USB role handoff."""
@@ -1330,6 +1489,7 @@ class Dock:
         )
         return {'demo': self.demo, 'devices': self.devices(), 'selected_device': str(device) if device else None,
                 'games': games, 'saves': saves,
+                'copy_queue':dict(self.copy_queue),
                 'copy_policy': self.copy_policy(),
                 'preflight': preflight.snapshot(),
                 'controller_status': controller,
@@ -1381,7 +1541,7 @@ class Dock:
         game = next((g for g in games if g['id'] == game_id), None)
         if game is None:
             return None
-        art_dir = inside(self.data, 'artwork')
+        art_dir = inside(Path(self.config.get('storage_root') or self.data), 'artwork')
         # The URL's game ID is based on the relative path; two different PSPs
         # can contain DIFFERENT games at that same path. Scope PC artwork by
         # the last verified volume identity plus a stable media fingerprint.
@@ -1426,9 +1586,81 @@ class Dock:
             temporary.unlink(missing_ok=True)
         return artwork
 
+    def xmb_media(self, game_id, kind):
+        """Read PIC0/PIC1 or browser-safe SND0 from audited game, PC cached.
+
+        No PSP FAT reads once storage disappears. The cache key includes
+        both Sony volume serial and game's verified catalog signature.
+        """
+        from psp_xmb_media import XMBAssetCache, media_key, RESOURCE_NAMES
+        if kind not in RESOURCE_NAMES:
+            raise ValueError('Recurso XMB desconocido.')
+        if not isinstance(game_id,str) or not re.fullmatch('[0-9a-f]{24}',game_id):
+            raise ValueError('Juego del XMB desconocido.')
+        game=next((g for g in self.last_games if g.get('id')==game_id),None)
+        if game is None or not self.catalog_volume:
+            return None
+        cache=XMBAssetCache(
+            Path(self.config.get('storage_root') or self.data)/'xmb-assets')
+        key=media_key(volume=self.catalog_volume,game=game)
+        existing=cache.cached(key,kind)
+        if existing is not None:
+            return existing
+        if self.demo or self.storage_polling_paused or self.running():
+            return None
+        if self.transfer_status.get('active'):
+            return None
+        source=None
+        catalog=self.cached_game_results or []
+        selected=next((g for g in catalog if g['id']==game_id),None)
+        if selected and selected.get('availability')=='ready':
+            source=inside(Path(self.config['library']),selected['local_relative'])
+        else:
+            attached=self.snapshot.get('selected_device')
+            if attached:
+                root=Path(attached)
+                if root.is_dir() and volume_identity(root)==self.catalog_volume:
+                    source=inside(root,game['relative'])
+        return cache.ensure(key,kind,source)
+
+    def start_xmb_media_prefetch(self):
+        """Best-effort copy of XMB preview media only, not ROM or save files."""
+        if self.demo or self.xmb_media_worker and self.xmb_media_worker.is_alive():
+            return
+        root=self.snapshot.get('selected_device')
+        if (not root or not self.last_games or self.snapshot.get('scanning')
+                or self.session.get('pending_return') or self.running()):
+            return
+        identity=self.catalog_volume
+        token=(identity,tuple((g['id'],g.get('modified_ns')) for g in self.last_games))
+        if self.xmb_media_catalog_key==token:
+            return
+        self.xmb_media_catalog_key=token
+        self.xmb_media_progress={'active':True,'done':0,
+                                 'total':len(self.last_games),'errors':0}
+        def job():
+            for game in list(self.last_games):
+                try:
+                    with self.lock:
+                        if (self.stop.is_set() or self.storage_polling_paused or
+                                self.transfer_status.get('active') or
+                                self.snapshot.get('selected_device')!=root or
+                                self.catalog_volume!=identity or self.running()):
+                            break
+                        for kind in ('icon','background','overlay','sound'):
+                            self.xmb_media(game['id'],kind)
+                except (OSError,ValueError):
+                    self.xmb_media_progress['errors']+=1
+                self.xmb_media_progress['done']+=1
+            self.xmb_media_progress['active']=False
+        self.xmb_media_worker=threading.Thread(
+            target=job,daemon=True,name='PSPDockXMBMediaCache')
+        self.xmb_media_worker.start()
+
     def watch(self):
         while not self.stop.is_set():
             open_on_attach = False
+            close_on_verified = False
             with self.lock:
                 try:
                     running = self.running()
@@ -1437,11 +1669,24 @@ class Dock:
                         identity = volume_identity(root)
                         if self.session.get('pending_return') and self.session.get('prepared_volume') != identity:
                             raise ValueError('La sesión pertenece a otra Memory Stick. No se sincroniza con esta unidad.')
+                        if (self.copy_queue.get('status')=='waiting_for_storage'
+                                and not self.session.get('exit_requested')):
+                            self.complete_queued_game_copy()
                         # Explicit Exit from XMB is the consent to return saves.
                         # Only automatic on manual restoration of the SAME
                         # USBSTOR, with no HID simultaneously and one-shot
                         # durable attempt tracking. Never auto sync on attach.
-                        self.complete_authorized_return()
+                        previous_exit = bool(
+                            self.session.get('close_after_verified_return') and
+                            self.session.get('exit_requested'))
+                        result = self.complete_authorized_return()
+                        if (previous_exit and result is not None and
+                                not result['actions'] and not result['conflicts'] and
+                                self.session.get('return_result') == 'verified' and
+                                not self.session.get('pending_return')):
+                            close_on_verified=True
+                            self.session['close_after_verified_return']=False
+                            atomic_json(self.data/'session.json',self.session)
                         if not self.session.get('pending_return'):
                             saves = self.save_plan()
                             if (self.session.get('prepared_volume') and
@@ -1466,6 +1711,7 @@ class Dock:
                             self.on_connected and self.last_device != identity
                             and not self.session.get('pending_return')
                             and not self.session.get('exit_requested')
+                            and not close_on_verified
                         )
                         if self.last_device != identity:
                             self.events.record('sony_storage_seen', evidence='pc_observed',
@@ -1493,6 +1739,8 @@ class Dock:
                         self.snapshot = {**self.state(),'scanning':False}
                         self.last_storage_scan_identity = identity if root else ''
                         self.last_storage_scan_at = time.monotonic()
+                    if root and not running:
+                        self.start_xmb_media_prefetch()
                     # A PSP-first session enumerates PDK1 HID, not the
                     # original Sony USBSTOR. Open the selector once on the
                     # rising edge of that verified controller, never a game.
@@ -1516,6 +1764,12 @@ class Dock:
                 try:
                     self.on_connected()
                 except (OSError, ValueError):
+                    pass
+            if close_on_verified and self.on_verified_exit:
+                try:
+                    self.on_verified_exit()
+                except (OSError,ValueError):
+                    # User can still close XMB manually. No save retries.
                     pass
             self.stop.wait(3)
 
@@ -1672,6 +1926,27 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     # Safe read-only WinMM frame; no USB commands and no
                     # expensive Dock.lock while rendering the XMB.
                     return self.reply(dock.psp_launcher_input())
+                if self.path == '/api/media-status':
+                    return self.reply(dock.xmb_media_progress)
+                if self.path == '/api/copy-queue':
+                    return self.reply(dock.copy_queue)
+                if self.path.startswith('/api/media/'):
+                    parts=self.path.split('/')
+                    if len(parts)!=5 or parts[1:3]!=['api','media']:
+                        return self.reply({'error':'Recurso desconocido'},404)
+                    game_id,kind=parts[3],parts[4]
+                    data=dock.xmb_media(game_id,kind)
+                    if data is None:
+                        return self.reply({'error':'Recurso XMB no disponible'},404)
+                    self.send_response(200)
+                    self.send_header('Content-Type',
+                                     'audio/mpeg' if kind=='sound' else 'image/png')
+                    self.send_header('Content-Length',str(len(data)))
+                    self.send_header('Cache-Control','private, max-age=120')
+                    self.send_header('X-Content-Type-Options','nosniff')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if self.path == '/api/transfer-status':
                     # Independent progress lock: the copying POST holds
                     # Dock.lock for the entire verified USB→PC transfer.
@@ -1728,6 +2003,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.
                     return self.reply(dock.cancel_transfer())
+                if self.path == '/api/choose-storage-root':
+                    from storage_layout import choose_pc_storage_parent
+                    chosen=choose_pc_storage_parent()
+                    return self.reply({'path':chosen,'cancelled':chosen is None})
                 if self.path == '/api/copy-policy':
                     # A click to SKIP missing games only changes one PC JSON
                     # preference. Never block the browser for a new USB game
@@ -1742,6 +2021,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     save_result = None
                     if self.path == '/api/transfer':
                         dock.transfer(body['ids'])
+                    elif self.path == '/api/queue-game-copy':
+                        dock.request_game_copy_from_hid(body.get('id'))
+                    elif self.path == '/api/cancel-game-copy':
+                        dock.cancel_game_copy_queue()
                     elif self.path == '/api/sync':
                         save_result = dock.sync()
                     elif self.path == '/api/resolve':
@@ -1760,6 +2043,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                             raise
                     elif self.path == '/api/settings':
                         dock.settings(body)
+                    elif self.path == '/api/storage-root':
+                        dock.relocate_storage(body.get('path'))
+                    elif self.path == '/api/install-texture-pack':
+                        dock.install_curated_texture_pack(body.get('id'),
+                                                          body.get('offer_id'))
                     elif self.path == '/api/select-device':
                         if body['root'] not in [d['root'] for d in dock.devices()]:
                             raise ValueError('Unidad no disponible.')
@@ -1818,6 +2106,19 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                                                          'running': dock.running()}}
                 self.reply({'error':str(e)},409)
     server = ThreadingHTTPServer(('127.0.0.1',port),Handler)
+    def close_when_saved():
+        # Called only after a verified ORIGINAL Sony volume and successful
+        # return. UI gets a moment to display "Sincronización completa".
+        def finish():
+            time.sleep(2.0)
+            try:
+                from xmb_window import close_existing_xmb
+                close_existing_xmb()
+            finally:
+                server.shutdown()
+        threading.Thread(target=finish,daemon=True,
+                         name='PSPDockVerifiedExit').start()
+    dock.on_verified_exit=close_when_saved
     url = f'http://127.0.0.1:{server.server_port}'
     metadata = {'product':'psp-dock', 'port':server.server_port,
                 'pid':os.getpid(), 'demo':dock.demo,

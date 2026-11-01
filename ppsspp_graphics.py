@@ -259,6 +259,11 @@ def apply_private_ppsspp_ini(path: Path, *, plan: dict,
         ('DisplayLayout.Landscape','DisplayStretch',
          'True' if plan['aspect']=='stretch' else 'False'),
     )
+    # Enable PPSSPP's real HD texture replacement ONLY for a verified
+    # installed pack. The texture-upscaling selector is a separate feature.
+    # Never activate texture dumping or change the user's global PPSSPP.
+    if plan.get('replace_textures') is True:
+        desired += (('Graphics','ReplaceTextures','True'),)
     changed = False
     for section,key,value in desired:
         if parser.get(section,key,fallback=None) != value:

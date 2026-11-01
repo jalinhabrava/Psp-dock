@@ -134,6 +134,34 @@ class ExplicitDockReturnTests(unittest.TestCase):
         self.assertEqual(self.save.read_bytes(),b'GAME_CHANGED_ON_PC')
         self.assertEqual(self.dock.snapshot['session']['return_result'],'verified')
 
+    def test_verified_return_requests_windows_shutdown_once(self):
+        self.change_pc_after_game()
+        self.authorize_exit_from_hid()
+        callbacks=[]
+        self.dock.on_verified_exit=lambda:callbacks.append('close')
+        def one_cycle(_delay):
+            self.dock.stop.set()
+        with patch.object(self.dock.stop,'wait',side_effect=one_cycle), \
+             patch('bridge_hid.probe',return_value=HID_ABSENT):
+            self.dock.watch()
+        self.assertEqual(callbacks,['close'])
+        self.assertEqual(self.dock.session['return_result'],'verified')
+        self.assertFalse(self.dock.session['close_after_verified_return'])
+
+    def test_conflicted_return_does_not_close_windows(self):
+        self.change_pc_after_game()
+        self.authorize_exit_from_hid()
+        self.save.write_bytes(b'PSP_CHANGED_TOO')
+        callbacks=[]
+        self.dock.on_verified_exit=lambda:callbacks.append('UNSAFE_CLOSE')
+        def one_cycle(_delay):
+            self.dock.stop.set()
+        with patch.object(self.dock.stop,'wait',side_effect=one_cycle), \
+             patch('bridge_hid.probe',return_value=HID_ABSENT):
+            self.dock.watch()
+        self.assertEqual(callbacks,[])
+        self.assertEqual(self.dock.session['return_result'],'conflicts')
+
 
 if __name__ == '__main__':
     unittest.main()

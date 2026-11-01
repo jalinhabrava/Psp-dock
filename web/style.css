@@ -199,6 +199,10 @@
    =================================================================== */
 body{background:#03141c;overflow:hidden}
 .xmb{--xmb-top:#0b5672;--xmb-bottom:#052433;position:fixed;inset:0;overflow:hidden;container-type:size;background:radial-gradient(120% 90% at 30% 10%,var(--xmb-top),var(--xmb-bottom));transition:background 1.2s;font-family:"Segoe UI","Segoe UI Variable",system-ui,sans-serif;color:#fff;user-select:none;outline:none}
+.xmb-game-background{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.36;pointer-events:none;filter:brightness(.83);transition:opacity .25s}
+.xmb-game-background[hidden],.xmb-game-overlay[hidden]{display:none!important}
+.xmb-game-overlay{position:absolute;right:4%;bottom:8%;width:min(36vw,65vh);max-height:65vh;object-fit:contain;opacity:.72;pointer-events:none;filter:drop-shadow(0 1vh 2vh #0008)}
+.xmb:has(.xmb-game-background:not([hidden])) .xmb-waves{opacity:.35}
 .xmb-waves{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .xmb-safe{position:absolute;left:50%;top:50%;width:min(100cqw,177.78cqh);aspect-ratio:16/9;transform:translate(-50%,-50%);container-type:inline-size}
 .xmb-crumb{position:absolute;left:3cqw;top:2.2cqw;font-size:1.05cqw;letter-spacing:.06em;opacity:.8;white-space:pre}
@@ -260,6 +264,12 @@ body{background:#03141c;overflow:hidden}
 .xmb-running.open{display:grid}
 .xmb-running b{font-weight:400;font-size:4cqh}
 .xmb-running p{font-size:2cqh;opacity:.75}
+.xmb-copy-status{position:absolute;inset:0;display:grid;place-items:center;text-align:center;background:#031723ed;z-index:50}
+.xmb-copy-status[hidden]{display:none}
+.xmb-copy-status>div{max-width:62vw;padding:3vw 6vw;border-block:1px solid #ffffff6b}
+.xmb-copy-status b{font-weight:400;font-size:3.2cqh}
+.xmb-copy-status p{font-size:2.2cqh;opacity:.8;line-height:1.6}
+.xmb-confirm{z-index:70}
 /* Diálogos que se mantienen (copia con progreso y rutas): aspecto XMB. */
 dialog{background:#000000d0;border:0;border-block:1px solid #ffffff8c;border-radius:0;box-shadow:none;width:min(720px,calc(100vw - 32px))}
 dialog::backdrop{background:#0008;backdrop-filter:none}

@@ -105,6 +105,10 @@ class GraphicsTests(unittest.TestCase):
             plan=g.recommend(g.Monitor(3440,1440),texture='bicubic2')
             g.apply_private_ppsspp_ini(ini,plan=plan,backup_dir=root/'backups')
             self.assertIn('TexScalingType = 2',ini.read_text())
+            plan['replace_textures']=True
+            g.apply_private_ppsspp_ini(ini,plan=plan,backup_dir=root/'backups')
+            self.assertIn('ReplaceTextures = True',ini.read_text())
+            self.assertNotIn('SaveNewTextures = True',ini.read_text())
 
     def test_private_ini_has_verified_backup_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temp:

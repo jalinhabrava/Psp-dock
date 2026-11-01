@@ -10,6 +10,9 @@
 </head>
 <body>
   <div class="xmb" id="xmb" tabindex="-1">
+    <img class="xmb-game-background" id="xmb-game-background" alt="" aria-hidden="true" hidden>
+    <img class="xmb-game-overlay" id="xmb-game-overlay" alt="" aria-hidden="true" hidden>
+    <audio id="xmb-game-audio" preload="none" aria-hidden="true"></audio>
     <canvas class="xmb-waves" id="xmb-waves" aria-hidden="true"></canvas>
     <div class="xmb-safe" id="xmb-safe">
       <div class="xmb-crumb" id="xmb-crumb" aria-live="polite"></div>
@@ -21,6 +24,10 @@
     <aside class="xmb-side" id="xmb-side" aria-live="polite"><h4 id="xmb-side-title"></h4><ul id="xmb-side-list"></ul></aside>
     <div class="xmb-confirm" id="xmb-confirm" role="alertdialog" aria-labelledby="xmb-confirm-text"><div class="xmb-confirm-box"><p id="xmb-confirm-text"></p><div class="xmb-yn"><span id="xmb-yes">Sí</span><span id="xmb-no">No</span></div></div></div>
     <div class="xmb-running" id="xmb-running" role="status"><div><b id="xmb-running-title">PPSSPP en ejecución</b><p id="xmb-running-note">Cierra el juego en PPSSPP para volver aquí.</p></div></div>
+    <div class="xmb-copy-status" id="xmb-copy-status" role="status" hidden>
+      <div><b id="xmb-copy-heading">Preparando copia del juego</b>
+      <p id="xmb-copy-description"></p></div>
+    </div>
   </div>
 
   <!-- Modelo interno del Dock: la lógica de estado y seguridad de app.js sigue
@@ -172,5 +179,19 @@
   </dialog>
 
   <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title"><form class="dialog-content" id="settings-form"><div class="dialog-header"><p class="eyebrow">CONFIGURACIÓN</p><button type="button" class="icon-button close" data-close="settings-dialog" aria-label="Cerrar">×</button></div><h2 id="settings-title">Prepara tu Dock.</h2><p class="quiet">Configura estas rutas una vez. Después, conecta tu PSP y continúa jugando.</p><label>Emulador PPSSPP<input name="emulator" placeholder="Ruta al ejecutable de PPSSPP" autocomplete="off"></label><label>Biblioteca del PC<input name="library" placeholder="Carpeta donde guardar los juegos" autocomplete="off"></label><label>Memory Stick de PPSSPP<input name="memstick" placeholder="Carpeta de datos de PPSSPP" autocomplete="off"></label><label>Raíz de la PSP <span class="optional">opcional</span><input name="psp_root" placeholder="Detección automática" autocomplete="off"></label><div class="settings-pair"><label>Escala manual de respaldo<select name="scale"><option value="1">1× · Original</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option value="5">5×</option><option value="6">6×</option></select></label><label>Motor gráfico<select name="backend"><option value="directx11">Direct3D 11</option><option value="vulkan">Vulkan</option><option value="gles">OpenGL</option></select></label></div><p id="settings-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" data-close="settings-dialog">Cancelar</button><button class="button primary" type="submit" id="settings-save">Guardar ajustes</button></div></form></dialog>
+  <dialog class="settings-dialog" id="storage-location-dialog" aria-labelledby="storage-location-title">
+    <div class="dialog-content">
+      <div class="dialog-header"><p class="eyebrow">ALMACENAMIENTO DEL PC</p><button type="button" class="icon-button close" data-close="storage-location-dialog" aria-label="Cerrar">×</button></div>
+      <h2 id="storage-location-title">Dónde guardar la biblioteca</h2>
+      <p id="storage-location-current" class="quiet"></p>
+      <label>Nueva carpeta principal
+        <input id="storage-location-path" type="text" autocomplete="off" placeholder="D:\Juegos\PSP Dock">
+      </label>
+      <button type="button" class="button secondary" id="storage-location-browse">Seleccionar carpeta del PC…</button>
+      <p class="quiet">Debe ser una carpeta nueva y vacía de un disco fijo del PC. Se copiarán y verificarán juegos, partidas, texturas HD, carátulas y música. No se borrará la ubicación anterior y no se modificará la PSP.</p>
+      <p id="storage-location-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="button secondary" data-close="storage-location-dialog">Cancelar</button><button type="button" class="button primary" id="storage-location-confirm">Copiar y cambiar carpeta</button></div>
+    </div>
+  </dialog>
 </body>
 </html>
