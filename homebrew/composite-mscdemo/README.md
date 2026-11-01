@@ -1,7 +1,6 @@
 # PSP Dock: USBSTOR + HID, prueba 0207
 
-**Estado: 0207 instalada; siete lecturas verificadas con HID concurrente;
-aceptación completa pendiente.**
+**Estado: aceptación física 0207 completada para disco sintético + HID.**
 Nombre XMB: **PSP Dock - USB Storage + HID 0207**. La carpeta sigue siendo
 `PSP/GAME/PSPDockStorageTest`, separada del PSP Dock estable.
 
@@ -19,11 +18,26 @@ El producto diagnóstico `054C:01CC`, revisión `0207`, es distinto al
 
 **El disco es ficticio, de 512 KiB y de solo lectura.** El controlador
 genera sus sectores FAT12 en memoria; no abre dispositivos, juegos ni
-partidas de la Memory Stick. La fase actual debe completar las ocho rondas y sus verificaciones finales;
-el primer intento 0207 ya observó montaje y siete lecturas con movimiento HID. Dar acceso a la Memory Stick real,
+partidas de la Memory Stick. Las ocho rondas y las verificaciones finales
+de HID/PnP/sesión ya están completadas. Dar acceso a la Memory Stick real,
 devolver partidas y completar el ciclo del Dock siguen pendientes.
 
-## Resultado físico de la primera pasada 0207
+## Aceptación física 0207 completada
+
+El 1 de noviembre de 2026 a las **22:24:14.610 UTC**, la segunda pasada
+terminó con `result=verified` y todos los indicadores de transferencia
+física, USBSTOR nativo, sesión común y movimiento concurrente verdaderos.
+Windows montó G:/PSPDOCKTEST/FAT; se completaron **8 × 150.003 bytes**
+sin caché, con SHA-256 correcto y **725 muestras / 15 estados HID**
+durante la ventana de 15 segundos. Identidad y sesión finales correctas.
+Los ocho archivos del PC se rehasharon de forma independiente: PASS.
+
+Los mismos binarios 0207 quedan como base validada. El
+[resultado estructurado](validation/0207-physical-acceptance.json)
+conserva hashes de archivos y evidencia. Registros completos:
+`data/msc-0207-evidence/physical-20261101-221909-retry/`.
+
+## Historial de la primera pasada 0207
 
 Windows montó G: como FAT/PSPDOCKTEST, serial 50444334, y completó siete
 copias verificadas de 150.003 bytes: 1.050.021 bytes, 717 muestras HID y
@@ -34,8 +48,8 @@ El probe comenzó a 22:14:54.488 UTC y se interrumpió a 22:15:09.369 UTC
 con pérdida del HID durante la octava ronda. La foto muestra parada manual
 START+SELECT, una configuración, cero desconfiguraciones y cierre limpio.
 No hubo error de hash/nonce registrado. El mínimo de 15 segundos y la
-validación final no pudieron completarse. Se repite la misma 0207, con las
-mismas condiciones, manteniéndola abierta hasta el resultado del PC.
+validación final no pudieron completarse. La segunda pasada mantuvo la
+misma 0207 y condiciones, y completó la aceptación al permanecer abierta.
 
 ## Qué aportó la prueba física 0206 y qué cambia en 0207
 

@@ -1,6 +1,6 @@
 # Controlador compuesto PSP Dock: evidencia y siguiente ensayo
 
-## Estado actual: 0207 lee archivos con HID; aceptación completa pendiente
+## Estado actual: aceptación física 0207 completada para disco sintético + HID
 
 **PSP Dock - USB Storage + HID 0207** está compilada, auditada e instalada
 con relectura SHA-256 de sus cuatro archivos: **368.243 bytes** en
@@ -8,7 +8,48 @@ con relectura SHA-256 de sus cuatro archivos: **368.243 bytes** en
 El disco de esta prueba sigue siendo FAT12 ficticio de 512 KiB, solo
 lectura y generado en memoria. No ofrece la Memory Stick real.
 
-### Prueba física 0207: siete copias verificadas y movimiento concurrente
+### Aceptación física completada: 1 de noviembre de 2026
+
+La segunda pasada de **0207**, con los mismos binarios y las mismas
+condiciones de ocho rondas y mínimo 15 segundos, terminó con
+**`result=verified`**. El comprobador registró el inicio a
+**22:23:48.135 UTC** y el resultado final a **22:24:14.610 UTC**.
+
+| Criterio físico | Resultado |
+|---|---|
+| Montaje y controladores Windows | G: / PSPDOCKTEST / FAT; `usbccgp`, `HidUsb` y `USBSTOR` operativos |
+| Copias completas sin caché | **8 × 150.003 = 1.200.024 bytes** |
+| SHA-256 de las ocho copias | Todos coinciden con el patrón independiente esperado |
+| Ventana de lectura y muestreo | **15 segundos**, `win32-unbuffered` |
+| Mando durante las transferencias | **725 muestras y 15 estados distintos** |
+| Identidad inicial/final | Mismo padre USB 054C:01CC, revisión 0207, HID, disco y unidad |
+| Sesión inicial/final | Nonce PDK1 y SESSION.BIN coincidentes |
+| Resultado de aceptación | `physical_usb_transfer_verified=true`, `simultaneous_hid_storage_verified=true` |
+
+También quedan verdaderos `native_usbstor_binding_verified`,
+`gamepad_motion_observed` y `same_hid_storage_session`. No hay error en
+el registro. Las asociaciones CIM iniciales/finales son completas y no
+se utilizó ningún candidato global sin correlacionar.
+
+Los ocho archivos guardados se releyeron en el PC después de la prueba:
+150.003 bytes cada uno, con SHA-256
+`e2d2ed8fba5bff4fc1e3e2cf9fd4508a6e3fd8f2d8429d44196c6b7ec8ba001e`.
+El resultado estructurado se conserva en
+[0207-physical-acceptance.json](homebrew/composite-mscdemo/validation/0207-physical-acceptance.json),
+con hashes de los registros originales y de la instalación. Evidencia
+completa del PC: `data/msc-0207-evidence/physical-20261101-221909-retry/`.
+
+**0207 queda como base físicamente validada para el disco sintético y HID.**
+El firmware corresponde al commit
+`0e681c68be516a2d9ce64859f2bbdbf15270ccbe`; esta confirmación no modificó
+sus binarios ni redujo los criterios de aceptación. El monitor terminó
+y se avisó al usuario de que podía cerrar con START+SELECT.
+
+El alcance sigue siendo un FAT12 generado de 512 KiB y solo lectura.
+El acceso a juegos, partidas y archivos reales de la Memory Stick y el
+ciclo completo del Dock quedan para la siguiente integración.
+
+### Historial: primera pasada 0207 interrumpida tras siete copias
 
 El intento del 1 de noviembre de 2026 ya monta **G: / PSPDOCKTEST / FAT**,
 serial `50444334`, disco CIM 6 de 524.288 bytes. Las cadenas operativas
@@ -48,13 +89,13 @@ la parada manual mostrada en la foto; la hora exacta de la pulsación no
 está registrada. No se registró un fallo de hash o de nonce.
 
 **Hay evidencia física de almacenamiento y mando funcionando a la vez.**
-La aceptación completa sigue pendiente: faltan completar/publicar la octava
-copia y las comprobaciones finales de HID, PnP y sesión. Los booleanos de
+En ese primer intento quedaron pendientes la octava copia y las
+comprobaciones finales de HID, PnP y sesión; la segunda pasada las completó. Los booleanos de
 éxito del registro permanecen falsos porque se asignan al terminar todos
 los pasos; `gamepad_motion_observed=false` no contradice los 14 estados
 capturados durante este intento incompleto.
 
-Se conserva exactamente la misma 0207 y se prepara una nueva captura con
+Se conservó exactamente la misma 0207 y se preparó la segunda captura con
 **8 rondas y mínimo 15 segundos**, sin reducir las condiciones. La PSP debe
 permanecer activa hasta el resultado del PC. La indicación anterior de
 esperar un minuto desde la conexión dejaba poco margen ante el tiempo de
@@ -154,10 +195,10 @@ en esa misma carpeta. La 0206 anterior queda archivada y verificada en
 El título SFO es **PSP Dock - USB Storage + HID 0207**; ICON0, PIC0 y PIC1
 coinciden byte a byte con las fuentes revisadas de 0206.
 
-**Pendiente:** completar las ocho rondas y las comprobaciones finales de
-HID/PnP/sesión sin cerrar la aplicación antes de tiempo. El próximo intento debe seguir el
-[procedimiento 0207](homebrew/composite-mscdemo/README.md#prueba-física-agrupada).
-La compilación y la instalación verificadas no acreditan esa aceptación.
+**Aceptación física completada:** ocho rondas y comprobaciones finales de
+HID/PnP/sesión superadas, según el resultado al inicio de este documento.
+El [procedimiento 0207](homebrew/composite-mscdemo/README.md#prueba-física-agrupada)
+queda disponible para futuras comprobaciones.
 
 ## Historial: instalación y cambios de 0206
 
@@ -310,10 +351,9 @@ dockmsc.prx  cf1ef97f32ef87862c424435bdfb931da7daa448441b1bef45ce9315fbfcc689
 
 ### Alcance que queda por demostrar
 
-La aceptación debe confirmar que Windows monta el disco, lee los bytes
-esperados y recibe cambios del mando durante esas lecturas. El monitor
-exige mismo padre USB, revisión `0207`, nonce común y lecturas sin caché.
-Un hash correcto sin movimiento no pasa la aceptación combinada.
+La aceptación 0207 ya confirmó montaje, bytes esperados, movimiento HID
+concurrente, mismo padre USB y nonce, con lecturas sin caché. El criterio
+permanece: un hash correcto sin movimiento no pasa la aceptación combinada.
 
 El disco sigue generado en memoria y protegido contra escritura. Dar
 acceso a juegos o partidas reales y devolver saves requiere otra fase.
