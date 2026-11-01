@@ -1,12 +1,64 @@
 # Controlador compuesto PSP Dock: evidencia y siguiente ensayo
 
-## Estado actual: 0207 instalada; aceptación física pendiente
+## Estado actual: 0207 lee archivos con HID; aceptación completa pendiente
 
 **PSP Dock - USB Storage + HID 0207** está compilada, auditada e instalada
 con relectura SHA-256 de sus cuatro archivos: **368.243 bytes** en
 `PSP/GAME/PSPDockStorageTest`. El PSP Dock estable conserva su carpeta.
 El disco de esta prueba sigue siendo FAT12 ficticio de 512 KiB, solo
 lectura y generado en memoria. No ofrece la Memory Stick real.
+
+### Prueba física 0207: siete copias verificadas y movimiento concurrente
+
+El intento del 1 de noviembre de 2026 ya monta **G: / PSPDOCKTEST / FAT**,
+serial `50444334`, disco CIM 6 de 524.288 bytes. Las cadenas operativas
+`usbccgp`, `HidUsb` y `USBSTOR` comparten padre y revisión 0207.
+El comprobador original, sin cambios en sus condiciones, llegó a:
+
+| Evidencia del PC | Resultado observado |
+|---|---|
+| Copias completas de PROBE.DAT | 7 de las 8 previstas |
+| Bytes verificados por SHA-256 | 1.050.021 = 7 × 150.003 |
+| Muestreos del mando durante las transferencias | 717 |
+| Estados distintos del mando durante las transferencias | 14 |
+| Sesión PDK1 frente a SESSION.BIN | Correlación inicial y comprobaciones tras las siete rondas completadas superadas |
+| Resultado final del comprobador | `interrupted`: JoyProbeError, el HID dejó de responder |
+
+Los siete `probe-N.dat` guardados en el PC se releyeron de forma
+independiente: todos miden 150.003 bytes y tienen SHA-256
+`e2d2ed8fba5bff4fc1e3e2cf9fd4508a6e3fd8f2d8429d44196c6b7ec8ba001e`.
+La evidencia está en `data/msc-0207-evidence/physical-20261101-221043/`:
+`probe/evidence.json`, `completed-copies-verification.json`, las siete
+copias y `user-photo-0207.jpg`. SHA-256 de la fotografía original:
+`97a647dd7896a3711690ce479d8fb56eefac8678e7017c66abe5441da2ed7d4f`.
+
+La foto registra HID 529, SCSI 218, **1.420.462 bytes relevantes**, una
+configuración, **cero desconfiguraciones**, error 0 y parada USER por
+START+SELECT. `BOT 0 / CDB 00 / Datos 0/0` es espera del siguiente comando
+tras TEST UNIT READY, sin datos. La pantalla final aparece después de
+StopModule y UnloadModule satisfactorios: el cierre fue limpio.
+
+El volumen asociado se observó entre 22:14:22.218 y 22:14:33.196 UTC;
+el probe registró su inicio a **22:14:54.488 UTC**. El error quedó registrado
+a **22:15:09.369 UTC**, 14,881 segundos después. El mínimo configurado era
+15 segundos de lecturas/muestreo, que comienza después de la comprobación
+inicial de SESSION.BIN. La excepción HID ocurrió durante la octava ronda;
+la validación posterior completa no llegó a ejecutarse. Esto encaja con
+la parada manual mostrada en la foto; la hora exacta de la pulsación no
+está registrada. No se registró un fallo de hash o de nonce.
+
+**Hay evidencia física de almacenamiento y mando funcionando a la vez.**
+La aceptación completa sigue pendiente: faltan completar/publicar la octava
+copia y las comprobaciones finales de HID, PnP y sesión. Los booleanos de
+éxito del registro permanecen falsos porque se asignan al terminar todos
+los pasos; `gamepad_motion_observed=false` no contradice los 14 estados
+capturados durante este intento incompleto.
+
+Se conserva exactamente la misma 0207 y se prepara una nueva captura con
+**8 rondas y mínimo 15 segundos**, sin reducir las condiciones. La PSP debe
+permanecer activa hasta el resultado del PC. La indicación anterior de
+esperar un minuto desde la conexión dejaba poco margen ante el tiempo de
+descubrimiento; ya no se usa como señal para cerrar.
 
 ### Resultado físico de 0206: estabilidad y punto pendiente
 
@@ -102,8 +154,8 @@ en esa misma carpeta. La 0206 anterior queda archivada y verificada en
 El título SFO es **PSP Dock - USB Storage + HID 0207**; ICON0, PIC0 y PIC1
 coinciden byte a byte con las fuentes revisadas de 0206.
 
-**Pendiente:** montaje FAT, lecturas sin caché con SHA-256/nonce correctos
-y cambios HID durante esas lecturas. El próximo intento debe seguir el
+**Pendiente:** completar las ocho rondas y las comprobaciones finales de
+HID/PnP/sesión sin cerrar la aplicación antes de tiempo. El próximo intento debe seguir el
 [procedimiento 0207](homebrew/composite-mscdemo/README.md#prueba-física-agrupada).
 La compilación y la instalación verificadas no acreditan esa aceptación.
 

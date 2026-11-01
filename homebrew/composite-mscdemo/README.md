@@ -1,6 +1,7 @@
 # PSP Dock: USBSTOR + HID, prueba 0207
 
-**Estado: 0207 instalada y releída por SHA-256; aceptación física pendiente.**
+**Estado: 0207 instalada; siete lecturas verificadas con HID concurrente;
+aceptación completa pendiente.**
 Nombre XMB: **PSP Dock - USB Storage + HID 0207**. La carpeta sigue siendo
 `PSP/GAME/PSPDockStorageTest`, separada del PSP Dock estable.
 
@@ -18,9 +19,23 @@ El producto diagnóstico `054C:01CC`, revisión `0207`, es distinto al
 
 **El disco es ficticio, de 512 KiB y de solo lectura.** El controlador
 genera sus sectores FAT12 en memoria; no abre dispositivos, juegos ni
-partidas de la Memory Stick. La fase actual debe confirmar montaje y
-lecturas simultáneas con el mando. Dar acceso a la Memory Stick real,
+partidas de la Memory Stick. La fase actual debe completar las ocho rondas y sus verificaciones finales;
+el primer intento 0207 ya observó montaje y siete lecturas con movimiento HID. Dar acceso a la Memory Stick real,
 devolver partidas y completar el ciclo del Dock siguen pendientes.
+
+## Resultado físico de la primera pasada 0207
+
+Windows montó G: como FAT/PSPDOCKTEST, serial 50444334, y completó siete
+copias verificadas de 150.003 bytes: 1.050.021 bytes, 717 muestras HID y
+14 estados distintos durante las lecturas. Los siete archivos copiados
+se rehasharon en el PC con el resultado esperado.
+
+El probe comenzó a 22:14:54.488 UTC y se interrumpió a 22:15:09.369 UTC
+con pérdida del HID durante la octava ronda. La foto muestra parada manual
+START+SELECT, una configuración, cero desconfiguraciones y cierre limpio.
+No hubo error de hash/nonce registrado. El mínimo de 15 segundos y la
+validación final no pudieron completarse. Se repite la misma 0207, con las
+mismas condiciones, manteniéndola abierta hasta el resultado del PC.
 
 ## Qué aportó la prueba física 0206 y qué cambia en 0207
 
@@ -226,10 +241,13 @@ python psp_msc_acceptance.py --run --output C:\ruta\evidencia-msc-0207-nueva --r
 2. En Juego → Memory Stick, seleccionar **PSP Dock - USB Storage + HID 0207**.
    Comprobar thumbnail y fondo; abrir y pulsar X cuando lo solicite.
 3. Esperar **LISTO: conecta el cable USB** y conectar una vez.
-4. Mover la cruceta y pulsar botones durante un minuto mientras
-   Windows monta el disco y el monitor lee `PROBE.DAT`. Si la pantalla
-   indica reconfiguración, dejar que termine y conservar su diagnóstico.
-5. Mantener START+SELECT un segundo para solicitar el cierre. Esperar a
+4. Mover la cruceta y pulsar botones mientras Windows monta el disco y el
+   monitor lee `PROBE.DAT`. Mantener la aplicación abierta hasta que el PC
+   comunique el resultado final: el tiempo de descubrimiento es variable
+   y los 15 segundos de lectura empiezan después. Si se coordina por chat,
+   avisar «conectada» al conectar y esperar el aviso de finalización.
+5. Después del resultado del PC, mantener START+SELECT un segundo para
+   solicitar el cierre. Esperar a
    que el controlador complete sus callbacks y descargue el módulo.
 6. Fotografiar o anotar la pantalla final. Liberar y pulsar **O** para
    volver al XMB.

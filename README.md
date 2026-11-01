@@ -1,12 +1,26 @@
 # PSP Dock · prototipo para Windows
 
-## USBSTOR + HID 0207 instalada; aceptación física pendiente
+## USBSTOR + HID 0207: lecturas y mando observados; aceptación completa pendiente
 
 **PSP Dock - USB Storage + HID 0207** está instalada en
 `PSP/GAME/PSPDockStorageTest`: cuatro archivos, **368.243 bytes**, releídos
 por SHA-256. La 0206 anterior quedó archivada en el PC. Mantiene el nombre
 PSP DOCK, thumbnail, placa de presentación y fondo grafito dentro del EBOOT;
 la pantalla de diagnóstico ahora separa sus líneas mediante posiciones en píxeles.
+
+**La prueba física 0207 ya montó PSPDOCKTEST como FAT y completó siete
+copias de PROBE.DAT con SHA-256 correcto:** 1.050.021 bytes verificados,
+717 muestras y 14 estados distintos del mando durante las lecturas.
+Los siete archivos del PC se rehasharon de forma independiente. La PSP
+registró una configuración, cero desconfiguraciones y un cierre manual limpio.
+
+La octava ronda se interrumpió al desaparecer HID, 14,881 segundos después
+del inicio del probe, antes del mínimo de 15 segundos y de las comprobaciones
+finales. La foto muestra parada por START+SELECT; no se registró fallo de
+hash o nonce. Se mantiene la misma 0207 y las mismas 8 rondas/15 segundos;
+la repetición debe permanecer abierta hasta que termine el comprobador.
+La aceptación completa sigue pendiente, aunque ya existe evidencia física
+de lecturas y movimiento HID concurrentes.
 
 La prueba física de **0206** conservó el resultado hasta la salida explícita
 por START+SELECT. La foto registra 1.187 informes HID, 26 CSW completados y
@@ -25,8 +39,8 @@ no se presenta como causa física definitivamente demostrada.
 Pasan el build PSPDEV/WSL, auditorías ELF/USER/PBP/FAT12, 13 casos BOT,
 50.000 entradas malformadas y 14 escenarios asíncronos con ASan/UBSan,
 además de **66 tests focales en Windows**. Estos resultados no sustituyen
-el próximo intento físico de montaje, SHA-256/nonce y movimiento HID durante
-lecturas sin caché. El disco sigue siendo **ficticio, de 512 KiB y solo lectura**;
+el cierre completo de la aceptación física, incluidas las comprobaciones
+finales de HID/PnP/sesión. El disco sigue siendo **ficticio, de 512 KiB y solo lectura**;
 aún no ofrece juegos, partidas ni los archivos reales de la Memory Stick.
 
 Procedimiento: [USBSTOR + HID 0207](homebrew/composite-mscdemo/README.md).
