@@ -14,6 +14,7 @@ static struct UsbdDeviceReq *pending[4];
 static unsigned submissions[4];
 static int halted[4],queue_error;
 static PdcSharedStatus state;
+static void (*cancel_hook)(unsigned);
 
 int sceUsbbdReqSend(struct UsbdDeviceReq *r){
     unsigned ep=(unsigned)r->endp->endpnum;
@@ -29,14 +30,21 @@ static void complete(unsigned ep,int code,int size){
 }
 int sceUsbbdReqCancelAll(struct UsbEndpoint *ep){
     if(pending[ep->endpnum])complete((unsigned)ep->endpnum,-99,0);
+    if(cancel_hook)cancel_hook((unsigned)ep->endpnum);
     return 0;
 }
 static void fixture(void){
     uint8_t nonce[16]={7};
     memset(pending,0,sizeof(pending));memset(submissions,0,sizeof(submissions));
     memset(halted,0,sizeof(halted));memset(&state,0,sizeof(state));
-    active=1;connected=1;hid_busy=ctl_busy=rx_busy=tx_busy=rx_ready=tx_ready=0;
+    active=1;connected=1;ever_connected=1;link_attached=1;
+    hid_busy=ctl_busy=rx_busy=tx_busy=rx_ready=tx_ready=0;
     ctl_submitting=bulk_submitting=bot_reset_pending=reset_clear_mask=0;
+    link_reset_pending=ctl_quiescing=0;need_initial_pad=1;
+    link_generation=ctl_generation=bot_reset_generation=bot_reset_sequence=0;
+    rx_generation=tx_generation=0;
+    cable_absent_since=last_usb_poll=0;cable_absence_pending=usb_poll_started=0;
+    cancel_hook=NULL;
     bulk_fault=queue_error=stop_requested=0;commands=0;ui=&state;
     data_pending=0;data_stalls_applied=0;bot_phase=BOT_CBW;msc_init(&bot,nonce);
 }
@@ -95,10 +103,78 @@ static void test_queue_error_and_short_completion(void){
     complete(2,0,511);assert(advance_bot()==-1311 && bot.completed==0);
     assert(!pending[2] && !pending[3]);
 }
+static void test_configuration_unset_is_not_cable_removal(void){
+    fixture();advance_bot();cbw_read(512,1);complete(3,0,31);advance_bot();
+    assert(tx_busy && pending[2]);
+    assert(state.last_scsi_opcode==0x28 && state.bot_phase==BOT_DATA);
+    assert(state.scsi_host_length==512 && state.scsi_completed==0);
+    assert(detach(3,4,5)==0 && !connected && link_reset_pending && !stop_requested);
+    assert(state.detach_count==1 && state.detach_arg1==3 && state.detach_arg2==4 && state.detach_arg3==5);
+    assert(observe_cable(1000000,0x122)==0 && !stop_requested);
+    assert(attach(2,NULL,NULL)==0 && !connected && state.attach_count==1);
+    assert(quiesce_link()==0 && connected && !link_reset_pending && !stop_requested);
+    assert(!pending[2] && !rx_ready && !tx_ready && !data_pending && !bot.command_active);
+    assert(need_initial_pad && state.stop_reason==PDC_STOP_NONE);
+    assert(state.last_scsi_opcode==0x28 && state.bot_phase==BOT_DATA);
+    assert(state.scsi_host_length==512 && state.scsi_completed==0 && state.last_tx_code==0);
+    assert(advance_bot()==0 && pending[3]);
+}
+static void reconfigure_during_cancel(unsigned endpoint){
+    if(endpoint==2){cancel_hook=NULL;detach(8,9,10);attach(1,NULL,NULL);}
+}
+static void test_new_unconfigure_during_drain_is_not_lost(void){
+    fixture();advance_bot();detach(1,2,3);attach(2,NULL,NULL);
+    cancel_hook=reconfigure_during_cancel;
+    assert(quiesce_link()==0 && link_generation==2 && link_reset_pending && !connected);
+    assert(quiesce_link()==0 && connected && !link_reset_pending && !stop_requested);
+}
+static void reset_during_cancel(unsigned endpoint){
+    struct DeviceRequest reset={0x21,0xff,0,1,0};
+    if(endpoint==2){cancel_hook=NULL;assert(receive_control(0,0,&reset)==0);}
+}
+static void test_current_generation_reset_survives_old_drain(void){
+    fixture();advance_bot();detach(0,0,0);attach(2,NULL,NULL);
+    cancel_hook=reset_during_cancel;
+    assert(quiesce_link()==0 && bot_reset_pending && bot_reset_generation==link_generation);
+    assert(recover_bot()==0 && !bot_reset_pending && pending[0]);
+}
+static void test_old_ep0_cancel_but_current_ep0_preserved(void){
+    uint8_t answer=0;
+    fixture();assert(control_submit(&answer,1,0)==0 && pending[0]);
+    detach(0,0,0);attach(2,NULL,NULL);
+    assert(quiesce_link()==0 && !pending[0] && !ctl_busy && !ctl_quiescing);
+    fixture();detach(0,0,0);attach(2,NULL,NULL);
+    assert(control_submit(&answer,1,0)==0 && ctl_generation==link_generation);
+    assert(quiesce_link()==0 && pending[0] && ctl_busy && !ctl_quiescing);
+    complete(0,0,1);
+}
+static void test_cable_absence_requires_continuous_confirmation(void){
+    fixture();assert(observe_cable(1000000,0x102)==0 && !stop_requested);
+    assert(observe_cable(1499999,0x102)==0 && !stop_requested);
+    assert(observe_cable(1500000,0x122)==0 && !stop_requested);
+    assert(observe_cable(1800000,0x102)==0 && !stop_requested);
+    assert(observe_cable(2300000,0x102)==0 && stop_requested && state.stop_reason==PDC_STOP_CABLE);
+    fixture();assert(observe_cable(1000,-33)==-33 && !cable_absence_pending && !stop_requested);
+}
+static void test_submissions_paused_and_stale_reset_discarded(void){
+    struct DeviceRequest reset={0x21,0xff,0,1,0};
+    fixture();assert(receive_control(0,0,&reset)==0);detach(0,0,0);
+    assert(bulk_submit(1,512)==1 && submissions[3]==0);
+    bot.plan.stall_in=bot.plan.stall_out=1;
+    assert(apply_data_stalls()==1 && !halted[2] && !halted[3]);
+    assert(recover_bot()==1 && !pending[0]);
+    attach(2,NULL,NULL);assert(quiesce_link()==0 && !bot_reset_pending && connected);
+}
 int main(void){
     test_read_crosses_dma_buffers();test_completions_cannot_be_overwritten();
     test_bad_cbw_reset_preserves_halts();test_reset_cancels_old_data_before_ack();
     test_queue_error_and_short_completion();
+    test_configuration_unset_is_not_cable_removal();
+    test_new_unconfigure_during_drain_is_not_lost();
+    test_current_generation_reset_survives_old_drain();
+    test_old_ep0_cancel_but_current_ep0_preserved();
+    test_cable_absence_requires_continuous_confirmation();
+    test_submissions_paused_and_stale_reset_discarded();
     fixture();assert(attach(3,NULL,NULL)==-1 && stop_requested && bulk_fault==-10);
-    puts("MSC actual transport: 5 asynchronous ownership/reset scenarios passed");return 0;
+    puts("MSC actual transport: 11 asynchronous ownership/reset/reconfigure scenarios passed");return 0;
 }

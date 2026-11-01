@@ -21,8 +21,8 @@ from psp_composite_client import _new_local_destination
 BASE = Path(__file__).resolve().parent
 FIRMWARE = BASE / 'homebrew/composite-mscdemo'
 REMOTE_FOLDER = 'PSP/GAME/PSPDockStorageTest'
-TITLE = 'PSP Dock USB Storage + HID TEST'
-USB_IDENTITY = {'vid': '054C', 'pid': '01CC', 'revision': '0205'}
+TITLE = 'PSP Dock - USB Storage + HID 0206'
+USB_IDENTITY = {'vid': '054C', 'pid': '01CC', 'revision': '0206'}
 FILES = ('EBOOT.PBP', 'dockmsc.prx', 'LICENSE-FuSa-GPL-3.0.txt', 'LICENSE-DejaVu.txt')
 ARTWORK = ((1, 'ICON0.PNG', (144, 80)), (3, 'PIC0.PNG', (310, 180)),
            (4, 'PIC1.PNG', (480, 272)))
@@ -122,7 +122,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
     manifest = {
         'schema': 'pspdock-msc-test-package-v1',
         'built_utc': datetime.now(timezone.utc).isoformat(),
-        'revision': '0205', 'folder': REMOTE_FOLDER,
+        'revision': '0206', 'folder': REMOTE_FOLDER,
         'expected_usb_identity': dict(USB_IDENTITY),
         'synthetic_storage': True, 'real_memory_stick_access': False,
         'storage_read_only': True, 'installed_on_psp': False,
@@ -131,7 +131,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
     }
     (stage / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     (stage / 'LEER-ANTES-DE-PROBAR.txt').write_text(
-        'PSP Dock USB Storage + HID TEST / revision 0205\n\n'
+        TITLE + '\n\n'
         'Incluye ICON0 (thumbnail), PIC0 (previsualizacion) y PIC1 (fondo) en EBOOT.PBP.\n'
         'La unidad USB de 512 KiB es FICTICIA y solo admite lecturas.\n'
         'Contiene PROBE.DAT y SESSION.BIN generados en memoria.\n'
@@ -146,7 +146,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
         raise FileExistsError('El destino aparecio durante el empaquetado.')
     stage.rename(target)
     verify_package(target)
-    return {'package': str(target), 'revision': '0205', 'files': len(FILES),
+    return {'package': str(target), 'revision': '0206', 'files': len(FILES),
             'xmb': visual, 'installed_on_psp': False, 'hardware_execution_verified': False}
 
 
@@ -154,7 +154,7 @@ def verify_package(path: Path) -> dict:
     root = Path(path)
     manifest = json.loads((root / 'manifest.json').read_text(encoding='utf-8'))
     if (manifest.get('schema') != 'pspdock-msc-test-package-v1' or
-            manifest.get('revision') != '0205' or manifest.get('folder') != REMOTE_FOLDER or
+            manifest.get('revision') != '0206' or manifest.get('folder') != REMOTE_FOLDER or
             manifest.get('expected_usb_identity') != USB_IDENTITY or
             manifest.get('synthetic_storage') is not True or
             manifest.get('real_memory_stick_access') is not False or

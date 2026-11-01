@@ -24,13 +24,13 @@ def hid_report(session=NONCE):
 PARENT = r'USB\VID_054C&PID_01CC\PSPMSC'
 STORAGE = r'USB\VID_054C&PID_01CC&MI_01\STORAGE'
 JOYSTICK = r'USB\VID_054C&PID_01CC&MI_00\JOYSTICK'
-DISK = r'USBSTOR\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST&REV_0205\PSPMSC&0'
+DISK = r'USBSTOR\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST&REV_0206\PSPMSC&0'
 HID_NODE = '\\'.join(HID_PATH[4:].split('#')[:3])
 
 
 def node(instance, parent, service):
     return {'instance': instance, 'parent': parent, 'status': 'OK',
-            'service': service, 'hardware_ids': [r'USB\VID_054C&PID_01CC&REV_0205']}
+            'service': service, 'hardware_ids': [r'USB\VID_054C&PID_01CC&REV_0206']}
 
 
 def snapshot():
@@ -203,7 +203,7 @@ class MSCAcceptanceTests(unittest.TestCase):
                         diagnostics=diagnostics, acceptance=acceptance)
         acceptance.assert_not_called()
         self.assertEqual({path.name for path in output.iterdir()},
-                         {'before.json', 'latest.json', 'after.json', 'monitor.json'})
+                         {'before.json', 'latest.json', 'after.json', 'monitor.json', 'transitions.jsonl'})
         report = json.loads((output / 'monitor.json').read_text())
         self.assertEqual(report['result'], 'timed_out')
         self.assertEqual(report['probe_attempts'], 0)
@@ -325,6 +325,64 @@ class MSCAcceptanceTests(unittest.TestCase):
             msc.monitor(output, discover=discovery)
         discovery.assert_not_called()
         self.assertEqual((output / 'monitor.json').read_text(), 'ORIGINAL')
+
+    def test_parent_and_storage_interface_history_survives_disappearance_before_mount(self):
+        parent = node(PARENT, 'USBROOT', 'usbccgp')
+        interface = node(STORAGE, PARENT, 'USBSTOR')
+        first = {'volumes': [], 'hid_nodes': [], 'usb_nodes': [parent, interface]}
+        reordered = dict(first, usb_nodes=[interface, parent])
+        failing = copy.deepcopy(first)
+        failing['usb_nodes'][1].update(status='Error', problem=10)
+        gone = {'volumes': [], 'hid_nodes': [], 'usb_nodes': []}
+        discovery = Mock(side_effect=[first, reordered, failing, gone])
+        clock = [0.0]
+        def advance(seconds):
+            clock[0] += seconds
+        output = self.root / 'transition-history'
+        with patch.object(msc.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(msc.time, 'sleep', side_effect=advance):
+            with self.assertRaises(WinUSBError):
+                msc.monitor(output, wait_seconds=3, discover=discovery,
+                            diagnostics=lambda: {'devices': []})
+        events = [json.loads(line) for line in (output / 'transitions.jsonl').read_text().splitlines()]
+        changes = [event for event in events if event['kind'] == 'observation']
+        self.assertEqual(len(changes), 3)
+        self.assertEqual([event['elapsed_seconds'] for event in changes], [0, 2, 3])
+        self.assertTrue(all(event['utc'].endswith('+00:00') for event in events))
+        self.assertEqual({row['instance'] for row in changes[0]['state']['usb_nodes']}, {PARENT, STORAGE})
+        self.assertTrue(any(row.get('problem') == 10 for row in changes[1]['state']['usb_nodes']))
+        self.assertEqual(changes[2]['state']['usb_nodes'], [])
+        self.assertEqual(json.loads((output / 'latest.json').read_text())['observation']['storage']['usb_nodes'], [])
+
+    def test_discovery_error_is_kept_after_later_empty_successful_observation(self):
+        discovery = Mock(side_effect=[OSError('Transient PnP error'), {'volumes': [], 'hid_nodes': [], 'usb_nodes': []}])
+        clock = [0.0]
+        def advance(seconds):
+            clock[0] += seconds
+        output = self.root / 'error-history'
+        with patch.object(msc.time, 'monotonic', side_effect=lambda: clock[0]), \
+             patch.object(msc.time, 'sleep', side_effect=advance):
+            with self.assertRaises(WinUSBError):
+                msc.monitor(output, wait_seconds=1, discover=discovery,
+                            diagnostics=lambda: {'devices': []})
+        events = [json.loads(line) for line in (output / 'transitions.jsonl').read_text().splitlines()]
+        self.assertTrue(any('Transient PnP error' in event['state'].get('discovery_error', '') for event in events))
+        self.assertNotIn('discovery_error', json.loads((output / 'latest.json').read_text())['observation'])
+
+    def test_history_limit_stops_before_probe_without_discarding_previous_entries(self):
+        output = self.root / 'bounded-history'
+        acceptance = Mock()
+        with patch.object(msc.TransitionHistory, 'MAX_BYTES', 500):
+            with self.assertRaises(WinUSBError):
+                msc.monitor(output, discover=snapshot, diagnostics=lambda: {'devices': []}, acceptance=acceptance)
+        acceptance.assert_not_called()
+        self.assertLessEqual((output / 'transitions.jsonl').stat().st_size, 500)
+        self.assertTrue(json.loads((output / 'monitor.json').read_text())['transition_history_limit_reached'])
+
+    def test_previous_0205_firmware_stays_unready_for_0206_host(self):
+        old = snapshot()
+        old['volumes'][0]['chain'][2]['hardware_ids'] = [r'USB\VID_054C&PID_01CC&REV_0205']
+        self.assertFalse(msc.pnp_readiness(old)['ready'])
 
 
 if __name__ == '__main__':

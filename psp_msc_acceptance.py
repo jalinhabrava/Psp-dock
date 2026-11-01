@@ -26,7 +26,7 @@ from psp_composite_client import PROBE_SIZE, PROBE_SHA256, _new_local_destinatio
 from psp_winusb_transport import WinUSBError
 from bridge_hid import MSC_TEST_PID
 
-MSC_REVISION = 0x0205
+MSC_REVISION = 0x0206
 MSC_PRODUCT = MSC_TEST_PID
 VOLUME_LABEL = 'PSPDOCKTEST'
 VOLUME_SERIAL = '50444334'
@@ -37,49 +37,69 @@ MSC_DISK = re.compile(r'^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(?:&|\\)', r
 
 DISCOVER_SCRIPT = r'''
 $ErrorActionPreference='Stop'
+$keys=@('DEVPKEY_Device_Parent','DEVPKEY_Device_Service','DEVPKEY_Device_HardwareIds',
+        'DEVPKEY_Device_ProblemCode','DEVPKEY_Device_LocationPaths')
+$devices=@(Get-PnpDevice -PresentOnly -Class 'USB','HIDClass','DiskDrive' | Where-Object {
+    $_.InstanceId -match '^(USB|HID)\\VID_054C&PID_01CC(&|\\)' -or
+    $_.InstanceId -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)' -or
+    $_.InstanceId -match '^USB\\(VID_0000&PID_000[02]|UNKNOWN)'
+})
+$byId=@{}
+$nodes=@(foreach($device in $devices) {
+    $props=@{}
+    $values=@(Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName $keys -ErrorAction SilentlyContinue)
+    foreach($p in $values) {if($null -ne $p) {$props[$p.KeyName]=$p.Data}}
+    $node=[PSCustomObject]@{instance=$device.InstanceId;status=$device.Status;class=$device.Class;
+        parent=$props['DEVPKEY_Device_Parent'];service=$props['DEVPKEY_Device_Service'];
+        hardware_ids=@($props['DEVPKEY_Device_HardwareIds']);
+        problem=$props['DEVPKEY_Device_ProblemCode'];location_paths=@($props['DEVPKEY_Device_LocationPaths']);
+        unidentified_usb_failure=($device.InstanceId -match '^USB\\(VID_0000&PID_000[02]|UNKNOWN)')}
+    $byId[$device.InstanceId]=$node
+    $node
+})
 function Get-DeviceChain([string]$id) {
     $seen=@{}
-    for($depth=0; $depth -lt 6 -and $id -and -not $seen.ContainsKey($id); $depth++) {
+    for($depth=0; $depth -lt 6 -and $id -and -not $seen.ContainsKey($id) -and $byId.ContainsKey($id); $depth++) {
         $seen[$id]=$true
-        $device=Get-PnpDevice -InstanceId $id -ErrorAction Stop
-        $props=@{}
-        $keys=@('DEVPKEY_Device_Parent','DEVPKEY_Device_Service','DEVPKEY_Device_HardwareIds')
-        $values=@(Get-PnpDeviceProperty -InstanceId $id -KeyName $keys -ErrorAction SilentlyContinue)
-        foreach($p in $values) {if($null -ne $p) {$props[$p.KeyName]=$p.Data}}
-        [PSCustomObject]@{instance=$id;status=$device.Status;
-            parent=$props['DEVPKEY_Device_Parent'];service=$props['DEVPKEY_Device_Service'];
-            hardware_ids=@($props['DEVPKEY_Device_HardwareIds'])}
+        $node=$byId[$id]
+        $node
         if($id -match '^USB\\VID_054C&PID_01CC\\[^\\]+$') {break}
-        $id=$props['DEVPKEY_Device_Parent']
+        $id=$node.parent
     }
 }
-$volumes=@(Get-CimInstance Win32_DiskDrive | Where-Object {
-    $_.PNPDeviceID -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)'
+$hids=@($nodes | Where-Object {
+    $_.instance -match '^HID\\VID_054C&PID_01CC&MI_00(&|\\)'
 } | ForEach-Object {
-    $disk=$_
-    $chain=@(Get-DeviceChain $disk.PNPDeviceID)
-    $parts=@(Get-CimAssociatedInstance -InputObject $disk -Association Win32_DiskDriveToDiskPartition)
-    foreach($part in $parts) {
-        $logical=@(Get-CimAssociatedInstance -InputObject $part -Association Win32_LogicalDiskToPartition)
-        foreach($volume in $logical) {
-            [PSCustomObject]@{root=($volume.DeviceID+'\');label=$volume.VolumeName;
-                serial=$volume.VolumeSerialNumber;filesystem=$volume.FileSystem;
-                disk_pnp_id=$disk.PNPDeviceID;disk_index=$disk.Index;chain=$chain}
+    [PSCustomObject]@{instance=$_.instance;chain=@(Get-DeviceChain $_.instance)}
+})
+$disks=@($nodes | Where-Object {$_.instance -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)'})
+$volumes=@()
+# No disk/partition WMI traversal until both function stacks are present.
+# Parent/MI01 failures are still returned immediately in usb_nodes.
+if($disks.Count -gt 0 -and $hids.Count -gt 0) {
+    $volumes=@(Get-CimInstance Win32_DiskDrive | Where-Object {
+        $_.PNPDeviceID -match '^USBSTOR\\DISK&VEN_PSPDOCK&PROD_MSC_HID_TEST(&|\\)'
+    } | ForEach-Object {
+        $disk=$_
+        $chain=@(Get-DeviceChain $disk.PNPDeviceID)
+        $parts=@(Get-CimAssociatedInstance -InputObject $disk -Association Win32_DiskDriveToDiskPartition)
+        foreach($part in $parts) {
+            $logical=@(Get-CimAssociatedInstance -InputObject $part -Association Win32_LogicalDiskToPartition)
+            foreach($volume in $logical) {
+                [PSCustomObject]@{root=($volume.DeviceID+'\');label=$volume.VolumeName;
+                    serial=$volume.VolumeSerialNumber;filesystem=$volume.FileSystem;
+                    disk_pnp_id=$disk.PNPDeviceID;disk_index=$disk.Index;chain=$chain}
+            }
         }
-    }
-})
-$hids=@(Get-PnpDevice -PresentOnly | Where-Object {
-    $_.InstanceId -match '^HID\\VID_054C&PID_01CC&MI_00(&|\\)'
-} | ForEach-Object {
-    [PSCustomObject]@{instance=$_.InstanceId;chain=@(Get-DeviceChain $_.InstanceId)}
-})
-ConvertTo-Json -InputObject @{supported=$true;backend='windows-cim';volumes=$volumes;hid_nodes=$hids} -Depth 8 -Compress
+    })
+}
+ConvertTo-Json -InputObject @{supported=$true;backend='windows-cim';volumes=$volumes;hid_nodes=$hids;usb_nodes=$nodes} -Depth 8 -Compress
 '''
 
 
 def discover_volumes(*, run=subprocess.run) -> dict:
     if os.name != 'nt':
-        return {'supported': False, 'backend': 'unavailable', 'volumes': [], 'hid_nodes': []}
+        return {'supported': False, 'backend': 'unavailable', 'volumes': [], 'hid_nodes': [], 'usb_nodes': []}
     completed = run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', DISCOVER_SCRIPT],
                     capture_output=True, text=True, timeout=45, creationflags=0x08000000)
     if completed.returncode:
@@ -90,7 +110,8 @@ def discover_volumes(*, run=subprocess.run) -> dict:
     if (not isinstance(data, dict) or data.get('supported') is not True or
             data.get('backend') != 'windows-cim' or
             not isinstance(data.get('volumes'), list) or len(data['volumes']) > 16 or
-            not isinstance(data.get('hid_nodes'), list) or len(data['hid_nodes']) > 16):
+            not isinstance(data.get('hid_nodes'), list) or len(data['hid_nodes']) > 16 or
+            not isinstance(data.get('usb_nodes'), list) or len(data['usb_nodes']) > 64):
         raise WinUSBError('Respuesta de volúmenes Windows no válida.')
     return data
 
@@ -369,6 +390,53 @@ def pnp_readiness(snapshot: dict) -> dict:
     return dict(result, ready=True, composite_parent=volume['composite_parent'])
 
 
+class TransitionHistory:
+    """Append changed states durably; never rewrite an earlier observation."""
+
+    MAX_BYTES = 8 * 1024 * 1024
+
+    def __init__(self, path: Path, started: float):
+        self.path, self.started = path, started
+        self.count = self.bytes = 0
+        self.full = False
+        self.previous = {}
+        with path.open('x', encoding='utf-8'):
+            pass
+
+    def append(self, kind: str, state: dict) -> bool:
+        canonical = json.dumps(state, sort_keys=True, ensure_ascii=False, separators=(',', ':'))
+        if self.previous.get(kind) == canonical:
+            return True
+        event = {'sequence': self.count + 1, 'utc': datetime.now(timezone.utc).isoformat(),
+                 'elapsed_seconds': round(time.monotonic() - self.started, 4),
+                 'kind': kind, 'state': state}
+        data = (json.dumps(event, sort_keys=True, ensure_ascii=False, separators=(',', ':')) + '\n').encode('utf-8')
+        if self.bytes + len(data) > self.MAX_BYTES:
+            self.full = True
+            return False
+        with self.path.open('ab') as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        self.count += 1
+        self.bytes += len(data)
+        self.previous[kind] = canonical
+        return True
+
+
+def _transition_state(observation: dict) -> dict:
+    storage = observation.get('storage', {})
+    result = {}
+    for key, identity in (('usb_nodes', 'instance'), ('hid_nodes', 'instance'), ('volumes', 'root')):
+        values = storage.get(key, [])
+        result[key] = sorted(values, key=lambda row: str(row.get(identity, ''))
+                             if isinstance(row, dict) else str(row)) if isinstance(values, list) else values
+    for key in ('readiness', 'discovery_error'):
+        if key in observation:
+            result[key] = observation[key]
+    return result
+
+
 def monitor(output_directory: Path, *, wait_seconds: int = 0,
             rounds: int = 8, min_duration_seconds: float = 8,
             discover=discover_volumes, diagnostics=None, acceptance=run_probe) -> dict:
@@ -392,6 +460,7 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
     root.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     deadline = started + wait_seconds
+    history = TransitionHistory(root / 'transitions.jsonl', started)
     record = {
         'schema': 'pspdock-msc-monitor-v1',
         'started_utc': datetime.now(timezone.utc).isoformat(),
@@ -402,6 +471,7 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
         'psp_writes': False, 'driver_changes': False,
         'wait_seconds': wait_seconds, 'observations': 0,
         'probe_directory': str(root / 'probe'),
+        'transition_history': str(history.path), 'transition_history_max_bytes': history.MAX_BYTES,
     }
 
     def capture():
@@ -410,10 +480,20 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
             result['diagnostics'] = diagnostics()
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             result['diagnostic_error'] = (type(exc).__name__ + ': ' + str(exc))[:300]
+        data = result.get('diagnostics', {})
+        # SetupAPI sections stay in snapshots. Transition history retains
+        # device identities/status/errors, not repeated driver-install logs.
+        devices = data.get('devices', []) if isinstance(data, dict) else []
+        state = {'devices': sorted(devices, key=lambda row: str(row.get('instance', ''))
+                                   if isinstance(row, dict) else str(row))}
+        if 'diagnostic_error' in result:
+            state['diagnostic_error'] = result['diagnostic_error']
+        history.append('diagnostics', state)
         return result
 
     _publish_json(root / 'monitor.json', record)
     try:
+        history.append('monitor', {'result': 'waiting', 'revision': f'{MSC_REVISION:04X}', 'probe_attempts': 0})
         latest = capture()
         _publish_json(root / 'before.json', latest)
         _publish_json(root / 'latest.json', latest)
@@ -438,12 +518,15 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
             latest['observation'] = observation
             _publish_json(root / 'latest.json', latest)
             _publish_json(root / 'monitor.json', record)
+            if not history.append('observation', _transition_state(observation)):
+                raise WinUSBError('El historial alcanzó 8 MiB; se detiene la observación sin descartar estados anteriores.')
             if readiness['ambiguous']:
                 raise WinUSBError(readiness['reason'])
             if readiness['ready']:
                 record['result'] = 'probing'
                 record['probe_attempts'] = 1
                 _publish_json(root / 'monitor.json', record)
+                history.append('monitor', {'result': 'probing', 'probe_attempts': 1})
                 probe = acceptance(root / 'probe', rounds=rounds,
                                    min_duration_seconds=min_duration_seconds)
                 record['probe'] = probe
@@ -464,6 +547,11 @@ def monitor(output_directory: Path, *, wait_seconds: int = 0,
         record['finished_utc'] = datetime.now(timezone.utc).isoformat()
         record['seconds'] = round(time.monotonic() - started, 4)
         _publish_json(root / 'after.json', capture())
+        history.append('monitor', {'result': record['result'], 'probe_attempts': record['probe_attempts'],
+                                  'error': record.get('error'),
+                                  'physical_usb_transfer_verified': record['physical_usb_transfer_verified']})
+        record['transition_count'] = history.count
+        record['transition_history_limit_reached'] = history.full
         _publish_json(root / 'monitor.json', record)
 
 

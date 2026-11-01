@@ -20,12 +20,16 @@
 #include "msc_scsi.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockStorageTest",PSP_MODULE_KERNEL,2,5);
+PSP_MODULE_INFO("PSPDockStorageTest",PSP_MODULE_KERNEL,2,6);
 
 static volatile int running,active,connected,stop_requested,ever_connected;
 static volatile int hid_busy,ctl_busy,rx_busy,tx_busy,rx_ready,bulk_fault;
 static volatile int ctl_submitting,bulk_submitting,tx_ready;
 static volatile int bot_reset_pending,reset_clear_mask;
+static volatile int link_attached,link_reset_pending,ctl_quiescing,need_initial_pad=1;
+static volatile uint32_t link_generation,ctl_generation,bot_reset_generation;
+static volatile uint32_t bot_reset_sequence;
+static volatile uint32_t rx_generation,tx_generation;
 static volatile int tx_size;
 static volatile int rx_code,rx_size,tx_code;
 static volatile unsigned hid_sent,commands;
@@ -45,9 +49,16 @@ enum BotPhase { BOT_CBW, BOT_DATA, BOT_FINISH_DATA, BOT_CSW, BOT_CSW_WAIT, BOT_R
 static enum BotPhase bot_phase;
 static unsigned data_pending;
 static int data_stalls_applied;
+static uint32_t cable_absent_since,last_usb_poll;
+static int cable_absence_pending,usb_poll_started;
 
 static void set_stage(unsigned stage,int error) {
     if(ui){ui->stage=stage;if(error)ui->error=error;}
+}
+static void request_shutdown(unsigned reason){
+    int irq=sceKernelCpuSuspendIntr();
+    if(ui && !ui->stop_reason)ui->stop_reason=reason;
+    stop_requested=1;sceKernelCpuResumeIntr(irq);
 }
 static void hid_status(uint8_t out[32]) {
     int irq=sceKernelCpuSuspendIntr();
@@ -58,6 +69,7 @@ static void hid_status(uint8_t out[32]) {
 static int pad_done(struct UsbdDeviceReq *r,int a,int b) {
     (void)a;(void)b;
     if(r->retcode==0 && r->recvsize==8){hid_sent++;if(ui)ui->hid_reports=hid_sent;}
+    else need_initial_pad=1;
     hid_busy=0;return 0;
 }
 static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
@@ -67,6 +79,8 @@ static int rx_done(struct UsbdDeviceReq *r,int a,int b) {
     int irq;(void)a;(void)b;
     irq=sceKernelCpuSuspendIntr();
     rx_code=r->retcode;rx_size=r->recvsize;rx_ready=1;rx_busy=0;
+    if(ui && active && !link_reset_pending && !bot_reset_pending && rx_generation==link_generation)
+        ui->last_rx_code=r->retcode;
     sceKernelCpuResumeIntr(irq);
     return 0;
 }
@@ -74,14 +88,19 @@ static int tx_done(struct UsbdDeviceReq *r,int a,int b) {
     int irq;(void)a;(void)b;
     irq=sceKernelCpuSuspendIntr();
     tx_code=r->retcode;tx_size=r->recvsize;tx_ready=1;tx_busy=0;
+    if(ui && active && !link_reset_pending && !bot_reset_pending && tx_generation==link_generation)
+        ui->last_tx_code=r->retcode;
     sceKernelCpuResumeIntr(irq);return 0;
 }
-static int control_submit(const uint8_t *data,int size,int receive) {
+static int control_submit_checked(const uint8_t *data,int size,int receive,
+                                  int check_generation,uint32_t generation) {
     int irq=sceKernelCpuSuspendIntr();int result;
-    if(!active || ctl_busy || size<0 || size>(int)sizeof(ctl_buffer)) {
+    if(!active || ctl_quiescing || ctl_busy || size<0 || size>(int)sizeof(ctl_buffer) ||
+       (check_generation && generation!=link_generation)) {
         sceKernelCpuResumeIntr(irq);return -1;
     }
-    ctl_busy=1;ctl_submitting=1;sceKernelCpuResumeIntr(irq);
+    ctl_busy=1;ctl_submitting=1;ctl_generation=link_generation;
+    sceKernelCpuResumeIntr(irq);
     memset(&ctl_req,0,sizeof(ctl_req));ctl_req.endp=&pdc_endpoints[0];
     ctl_req.data=ctl_buffer;ctl_req.size=size;ctl_req.func=ctl_done;
     if(receive){
@@ -97,6 +116,9 @@ static int control_submit(const uint8_t *data,int size,int receive) {
     ctl_submitting=0;
     sceKernelCpuResumeIntr(irq);
     return result;
+}
+static int control_submit(const uint8_t *data,int size,int receive){
+    return control_submit_checked(data,size,receive,0,0);
 }
 static int receive_control(int endpoint,int arg2,struct DeviceRequest *r) {
     uint8_t answer[32];int length,irq;
@@ -117,7 +139,8 @@ static int receive_control(int endpoint,int arg2,struct DeviceRequest *r) {
         /* Supervisor drains both bulk pipes BEFORE submitting the EP0
          * status phase. Never clear HALT or reset a data toggle here. */
         irq=sceKernelCpuSuspendIntr();
-        bot_reset_pending=1;reset_clear_mask=3;
+        bot_reset_pending=1;bot_reset_generation=link_generation;
+        bot_reset_sequence++;reset_clear_mask=3;
         sceKernelCpuResumeIntr(irq);
         if(ui)ui->ctrl_status++;
         return 0;
@@ -161,14 +184,32 @@ static int receive_control(int endpoint,int arg2,struct DeviceRequest *r) {
     return -1;
 }
 static int attach(int speed,void *a,void *b){
-    (void)a;(void)b;
-    if(speed!=1 && speed!=2){bulk_fault=-10;stop_requested=1;return -1;}
-    ever_connected=1;connected=1;set_stage(PDC_STAGE_CONNECTED,0);return 0;
+    int irq;(void)a;(void)b;
+    if(speed!=1 && speed!=2){bulk_fault=-10;request_shutdown(PDC_STOP_ERROR);return -1;}
+    irq=sceKernelCpuSuspendIntr();
+    if(active){
+        ever_connected=1;link_attached=1;need_initial_pad=1;
+        connected=!link_reset_pending;
+        if(ui)ui->attach_count++;
+    }
+    sceKernelCpuResumeIntr(irq);
+    if(connected)set_stage(PDC_STAGE_CONNECTED,0);
+    return 0;
 }
 static int detach(int a,int b,int c){
-    (void)a;(void)b;(void)c;
-    connected=0;
-    if(ever_connected)stop_requested=1;
+    int irq=sceKernelCpuSuspendIntr();
+    connected=0;link_attached=0;
+    /* PSPSDK documents detach as configuration unset. It is not evidence
+     * that the physical cable was removed: Windows can reconfigure USB. */
+    if(active){
+        link_generation++;link_reset_pending=1;
+        if(ui){
+            ui->detach_count++;ui->link_generation=link_generation;
+            ui->detach_arg1=a;ui->detach_arg2=b;ui->detach_arg3=c;
+            ui->stage=PDC_STAGE_RECONNECT;
+        }
+    }
+    sceKernelCpuResumeIntr(irq);
     return 0;
 }
 static int alternate(int a,int b,int c){(void)a;(void)c;return b==0?0:-1;}
@@ -208,22 +249,23 @@ static int sample_pad(SceSize args,void *argp){
     while(running){
         if(sceCtrlPeekBufferPositive(&pad,1)>0){
             if((pad.Buttons&(PSP_CTRL_START|PSP_CTRL_SELECT))==(PSP_CTRL_START|PSP_CTRL_SELECT)){
-                if(++hold>=250)stop_requested=1;
+                if(++hold>=250)request_shutdown(PDC_STOP_USER);
             }else hold=0;
             sceKernelWaitSema(lifecycle_lock,1,NULL);
-            if(active && connected){
+            if(active && connected && !link_reset_pending){
                 encode_pad(&pad,sample);irq=sceKernelCpuSuspendIntr();
                 memcpy(latest_pad,sample,8);
-                send=!hid_busy && (!hid_sent || memcmp(pad_buffer,sample,8) ||
+                send=active && connected && !link_reset_pending && !hid_busy &&
+                     (need_initial_pad || !hid_sent || memcmp(pad_buffer,sample,8) ||
                      (idle_rate && (uint32_t)(sceKernelGetSystemTimeLow()-last_pad_time)>=(uint32_t)idle_rate*4000));
-                if(send){hid_busy=1;memcpy(pad_buffer,sample,8);}
+                if(send){hid_busy=1;need_initial_pad=0;memcpy(pad_buffer,sample,8);}
                 sceKernelCpuResumeIntr(irq);
                 if(send){
                     memset(&pad_req,0,sizeof(pad_req));pad_req.endp=&pdc_endpoints[1];
                     pad_req.data=pad_buffer;pad_req.size=8;pad_req.func=pad_done;
                     sceKernelDcacheWritebackRange(pad_buffer,sizeof(pad_buffer));
                     result=sceUsbbdReqSend(&pad_req);
-                    if(result<0)hid_busy=0;
+                    if(result<0){hid_busy=0;need_initial_pad=1;}
                     else last_pad_time=sceKernelGetSystemTimeLow();
                 }
             }
@@ -267,12 +309,13 @@ static int bulk_submit(int receive,unsigned size){
     struct UsbdDeviceReq *r=receive?&rx_req:&tx_req;
     int irq,result;
     irq=sceKernelCpuSuspendIntr();
-    if(!active || bot_reset_pending || (receive?(rx_busy||rx_ready):(tx_busy||tx_ready))){
+    if(!active || !connected || link_reset_pending || bot_reset_pending ||
+       (receive?(rx_busy||rx_ready):(tx_busy||tx_ready))){
         sceKernelCpuResumeIntr(irq);return 1;
     }
     bulk_submitting=1;
-    if(receive){rx_busy=1;rx_ready=0;}
-    else{tx_busy=1;tx_ready=0;}
+    if(receive){rx_busy=1;rx_ready=0;rx_generation=link_generation;}
+    else{tx_busy=1;tx_ready=0;tx_generation=link_generation;}
     sceKernelCpuResumeIntr(irq);
     memset(r,0,sizeof(*r));
     r->endp=&pdc_endpoints[receive?3:2];r->size=(int)size;
@@ -297,12 +340,15 @@ static int take_tx(int *code,int *size){
 }
 static int apply_data_stalls(void){
     int result;
+    if(!active || !connected || link_reset_pending)return 1;
     if(bot.plan.stall_in){result=sceUsbbdStall(&pdc_endpoints[2]);if(result<0)return result;}
+    if(!active || !connected || link_reset_pending)return 1;
     if(bot.plan.stall_out){result=sceUsbbdStall(&pdc_endpoints[3]);if(result<0)return result;}
     return 0;
 }
 static int recover_bot(void){
     unsigned tries;int result,irq;
+    uint32_t generation=bot_reset_generation,sequence=bot_reset_sequence;
     /* This runs in the only bulk submitter, so a reset callback cannot
      * race a later data submission. Cancel/drain; preserve HALT/toggles. */
     sceUsbbdReqCancelAll(&pdc_endpoints[2]);
@@ -314,6 +360,8 @@ static int recover_bot(void){
     irq=sceKernelCpuSuspendIntr();
     rx_ready=0;tx_ready=0;
     sceKernelCpuResumeIntr(irq);
+    if(link_reset_pending || generation!=link_generation || sequence!=bot_reset_sequence)
+        return 1; /* The setup packet belongs to an old configuration/reset. */
     msc_reset(&bot);bot_phase=BOT_CBW;data_pending=0;data_stalls_applied=0;
     /* Zero-byte send supplies the control status phase only after drain.
      * Actual USBBus status-phase/CLEAR_FEATURE routing is a hardware gate.
@@ -321,8 +369,10 @@ static int recover_bot(void){
      * requests: USBBus may consume them internally. A queued bulk request
      * must remain hardware-blocked until the host clears that endpoint.
      * Queue rejection is surfaced as an error, never cleared locally. */
-    result=control_submit(NULL,0,0);if(result<0)return result;
-    bot_reset_pending=0;return 0;
+    result=control_submit_checked(NULL,0,0,1,generation);if(result<0)return result;
+    irq=sceKernelCpuSuspendIntr();
+    if(sequence==bot_reset_sequence)bot_reset_pending=0;
+    sceKernelCpuResumeIntr(irq);return 0;
 }
 static int advance_bot(void){
     int irq,ready,code=0,size=0,result;size_t count;
@@ -335,19 +385,25 @@ static int advance_bot(void){
         if(code!=0){if(ui)ui->rx_errors++;return code<0?code:-1310;}
         sceKernelDcacheInvalidateRange(command_buffer,sizeof(command_buffer));
         result=msc_begin(&bot,command_buffer,(size_t)size);
+        if(ui){
+            ui->last_scsi_opcode=bot.plan.valid_cbw?command_buffer[15]:UINT32_MAX;
+            ui->scsi_host_length=bot.plan.host_length;ui->scsi_completed=bot.completed;
+        }
         if(result<0){
             if(ui)ui->rx_errors++;
             result=apply_data_stalls();bot_phase=BOT_RESET_WAIT;
+            if(ui)ui->bot_phase=(uint32_t)bot_phase;
             return result;
         }
         data_pending=0;data_stalls_applied=0;bot_phase=BOT_DATA;
+        if(ui)ui->bot_phase=(uint32_t)bot_phase;
         set_stage(PDC_STAGE_FILE,0);
     }
     if(bot_phase==BOT_DATA){
         if(take_tx(&code,&size)){
             if(code!=0 || size!=(int)data_pending)return code<0?code:-1311;
             if(msc_data_complete(&bot,(uint32_t)size)<0)return -1312;
-            if(ui)ui->bytes_read+=(uint32_t)size;
+            if(ui){ui->bytes_read+=(uint32_t)size;ui->scsi_completed=bot.completed;}
             data_pending=0;
         }
         /* A completion may arrive immediately after take_tx tested its
@@ -364,35 +420,95 @@ static int advance_bot(void){
             data_pending=(unsigned)count;return bulk_submit(0,(unsigned)count);
         }
         bot_phase=BOT_FINISH_DATA;
+        if(ui)ui->bot_phase=(uint32_t)bot_phase;
     }
     if(bot_phase==BOT_FINISH_DATA){
         if(!data_stalls_applied){
-            result=apply_data_stalls();if(result<0)return result;
+            result=apply_data_stalls();if(result!=0)return result;
             data_stalls_applied=1;
         }
         if(msc_csw(&bot,response_buffer)!=(int)MSC_CSW_SIZE)return -1315;
         bot_phase=BOT_CSW;
+        if(ui)ui->bot_phase=(uint32_t)bot_phase;
     }
     if(bot_phase==BOT_CSW){
         /* A halted IN pipe is not cleared by firmware. USBBus must hold
          * this CSW until host CLEAR_FEATURE. Verify this on the PSP. */
         result=bulk_submit(0,MSC_CSW_SIZE);
-        if(result==0)bot_phase=BOT_CSW_WAIT;
+        if(result==0){bot_phase=BOT_CSW_WAIT;if(ui)ui->bot_phase=(uint32_t)bot_phase;}
         return result;
     }
     if(bot_phase==BOT_CSW_WAIT && take_tx(&code,&size)){
         if(code!=0 || size!=(int)MSC_CSW_SIZE)return code<0?code:-1316;
         commands++;if(ui)ui->bulk_commands=commands;
         bot_phase=bot.plan.reset_required?BOT_RESET_WAIT:BOT_CBW;
+        if(ui)ui->bot_phase=(uint32_t)bot_phase;
         set_stage(PDC_STAGE_CONNECTED,0);
     }
     return 0;
+}
+static int observe_cable(uint32_t now,int usb){
+    if(ui)ui->usb_state=(uint32_t)usb;
+    if(usb<0)return usb;
+    if(!ever_connected || (usb&PSP_USB_CABLE_CONNECTED)){
+        cable_absence_pending=0;return 0;
+    }
+    if(!cable_absence_pending){cable_absence_pending=1;cable_absent_since=now;}
+    else if((uint32_t)(now-cable_absent_since)>=500000u)
+        request_shutdown(PDC_STOP_CABLE);
+    return 0;
+}
+static int poll_cable(void){
+    uint32_t now=sceKernelGetSystemTimeLow();
+    if(usb_poll_started && !link_reset_pending && (uint32_t)(now-last_usb_poll)<50000u)
+        return 0;
+    usb_poll_started=1;last_usb_poll=now;
+    return observe_cable(now,sceUsbGetState());
+}
+static int quiesce_link(void){
+    uint32_t generation;unsigned tries;int irq,result=0,old_control;
+    sceKernelWaitSema(lifecycle_lock,1,NULL);
+    irq=sceKernelCpuSuspendIntr();
+    generation=link_generation;connected=0;
+    old_control=(ctl_busy||ctl_submitting) && ctl_generation!=generation;
+    if(old_control)ctl_quiescing=1;
+    sceKernelCpuResumeIntr(irq);
+    /* Holding lifecycle_lock drains any pad submit already in flight.
+     * This supervisor is the sole bulk submitter. EP0 stays available
+     * except while cancelling a request from the OLD configuration. */
+    if(old_control){
+        for(tries=0;ctl_submitting && tries<2000;tries++)sceKernelDelayThread(1000);
+        if(ctl_submitting){result=-1320;goto done;}
+        if(ctl_busy)sceUsbbdReqCancelAll(&pdc_endpoints[0]);
+        for(tries=0;ctl_busy && tries<2000;tries++)sceKernelDelayThread(1000);
+        if(ctl_busy){result=-1321;goto done;}
+        ctl_quiescing=0;
+    }
+    sceUsbbdReqCancelAll(&pdc_endpoints[1]);
+    sceUsbbdReqCancelAll(&pdc_endpoints[2]);
+    sceUsbbdReqCancelAll(&pdc_endpoints[3]);
+    for(tries=0;(hid_busy||rx_busy||tx_busy)&&tries<2000;tries++)sceKernelDelayThread(1000);
+    if(hid_busy||rx_busy||tx_busy){result=-1322;goto done;}
+    msc_reset(&bot);bot_phase=BOT_CBW;data_pending=0;data_stalls_applied=0;
+    irq=sceKernelCpuSuspendIntr();
+    rx_ready=0;tx_ready=0;need_initial_pad=1;
+    /* A fresh BOT reset may arrive while cancelling an old transfer.
+     * Preserve that request; only discard requests from the old epoch. */
+    if(bot_reset_pending && bot_reset_generation!=link_generation)bot_reset_pending=0;
+    if(generation==link_generation){
+        link_reset_pending=0;connected=active && link_attached;
+    }
+    sceKernelCpuResumeIntr(irq);
+    set_stage(connected?PDC_STAGE_CONNECTED:PDC_STAGE_RECONNECT,0);
+done:
+    ctl_quiescing=0;sceKernelSignalSema(lifecycle_lock,1);return result;
 }
 static int io_worker(SceSize args,void *argp){
     int usb,storage,bus,result;
     (void)args;(void)argp;
     set_stage(PDC_STAGE_GUARD,0);
-    usb=sceUsbGetState();storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);
+    usb=sceUsbGetState();if(ui)ui->usb_state=(uint32_t)usb;
+    storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);
     bus=sceUsbGetDrvState(PSP_USBBUS_DRIVERNAME);
     if(!hid_lab_safe_to_start(usb,storage,bus)){result=-1002;goto ended;}
     if(stop_requested || (ui && ui->request_stop)){result=0;goto ended;}
@@ -406,10 +522,15 @@ static int io_worker(SceSize args,void *argp){
     if(result<0)goto cleanup;
     activated=1;set_stage(PDC_STAGE_READY,0);
     while(!stop_requested && !(ui && ui->request_stop)){
-        if(connected && active){
+        result=poll_cable();if(result<0){bulk_fault=result;break;}
+        if(stop_requested || (ui && ui->request_stop))break;
+        if(link_reset_pending){
+            result=quiesce_link();if(result<0){bulk_fault=result;break;}
+        }
+        if(connected && active && !link_reset_pending){
             if(bot_reset_pending)result=recover_bot();
             else result=advance_bot();
-            if(result<0){bulk_fault=result;break;}
+            if(result<0 && !link_reset_pending){bulk_fault=result;break;}
         }
         sceKernelDelayThread(1000);
     }
@@ -418,6 +539,10 @@ cleanup:
     {int stopped=stop_usb();if(stopped<0)result=stopped;}
 ended:
     running=0;
+    if(ui){
+        if(result<0)ui->stop_reason=PDC_STOP_ERROR;
+        else if(!ui->stop_reason && ui->request_stop)ui->stop_reason=PDC_STOP_USER;
+    }
     if(result<0)set_stage(PDC_STAGE_ERROR,result);
     else set_stage(PDC_STAGE_STOPPED,0);
     if(ui && !started && !activated && !bus_owned && !hid_busy && !ctl_busy &&
@@ -457,7 +582,7 @@ failed:
 }
 int module_stop(SceSize args,void *argp){
     int result;SceUInt timeout=3000000;(void)args;(void)argp;
-    stop_requested=1;
+    request_shutdown(PDC_STOP_MODULE);
     if(io_thread>=0){result=sceKernelWaitThreadEnd(io_thread,&timeout);if(result<0)return result;}
     running=0;timeout=1000000;
     if(pad_thread>=0){result=sceKernelWaitThreadEnd(pad_thread,&timeout);if(result<0)return result;}

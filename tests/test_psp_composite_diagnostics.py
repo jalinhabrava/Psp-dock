@@ -61,6 +61,20 @@ class CompositeDiagnosticTests(unittest.TestCase):
         self.assertEqual(result['sections'], [])
         self.assertIn('error', result)
 
+    def test_setupapi_body_mentions_do_not_capture_unrelated_driver_packages(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'setupapi.dev.log'
+            unrelated = '>>> [SetupCopyOEMInf - OTHER-DRIVER]\n' + ('private unrelated line\n' * 3000)
+            unrelated += 'Hardware IDs supported: USB\\VID_0000&PID_0002\n'
+            relevant = '>>> [Device Install (Hardware initiated) - USB\\VID_054C&PID_01CC\\TEST]\n'
+            path.write_text(unrelated + relevant + ('actual device details\n' * 1000), encoding='utf-8')
+            result = diagnostic.setupapi_snapshot(path)
+        self.assertEqual(len(result['sections']), 1)
+        self.assertNotIn('OTHER-DRIVER', result['sections'][0])
+        self.assertNotIn('private unrelated line', result['sections'][0])
+        self.assertLessEqual(len(result['sections'][0]), 4000)
+        self.assertIn('PID_01CC', result['sections'][0])
+
 
 if __name__ == '__main__':
     unittest.main()

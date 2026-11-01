@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from tests.test_psp_msc_package import fixture_package
-from psp_msc_package import REMOTE_FOLDER, FILES, verify_package
+from psp_msc_package import REMOTE_FOLDER, FILES, digest, verify_package
 
 
 def load_without_hardware():
@@ -157,6 +157,125 @@ class MSCInstallTests(unittest.TestCase):
         self.assertFalse(self.target.exists())
         verify_package(self.package)
         self.assertEqual(self.original.read_bytes(), b'ORIGINAL WORKING HOMEBREW')
+
+    def prepare_upgrade(self):
+        old = self.install()
+        old['revision'] = '0205'
+        old['identity'] = {'volume_serial': 'SERIAL', 'usb_device_id': 'USB-ID'}
+        self.receipt = self.root / 'previous.json'
+        self.receipt.write_text(json.dumps(old))
+        self.archive = self.root / 'previous-test'
+        self.previous = {name: (self.target / name).read_bytes() for name in FILES}
+        binary = self.package / REMOTE_FOLDER / 'dockmsc.prx'
+        binary.write_bytes(binary.read_bytes() + b'NEW-0206')
+        manifest_file = self.package / 'manifest.json'
+        manifest = json.loads(manifest_file.read_text())
+        manifest['files']['dockmsc.prx'] = {'size': binary.stat().st_size, 'sha256': digest(binary)}
+        manifest_file.write_text(json.dumps(manifest))
+
+    def upgrade(self, identity=lambda: True):
+        return self.installer.upgrade_package(self.package, self.psp, self.snapshot,
+            'SERIAL', 'USB-ID', self.receipt, self.archive, same_device=identity)
+
+    def test_upgrade_archives_exact_old_version_and_verifies_new_version(self):
+        self.prepare_upgrade()
+        result = self.upgrade()
+        self.assertTrue(result['installed'])
+        self.assertTrue(result['previous_archived_and_verified'])
+        for name in FILES:
+            self.assertEqual((self.archive / 'files' / name).read_bytes(), self.previous[name])
+            self.assertEqual((self.target / name).read_bytes(),
+                             (self.package / REMOTE_FOLDER / name).read_bytes())
+        phases = [json.loads(line)['phase'] for line in
+                  (self.archive / 'upgrade.jsonl').read_text().splitlines()]
+        self.assertEqual(phases, ['planned', 'previous_archived', 'previous_held', 'published', 'verified'])
+        self.assertEqual(list(self.target.parent.glob('.pspdock-msc-*')), [])
+        self.assertEqual(self.original.read_bytes(), b'ORIGINAL WORKING HOMEBREW')
+        self.assertEqual(self.savedata.read_bytes(), b'ORIGINAL SAVEDATA')
+
+    def test_upgrade_refuses_changed_previous_file_extra_file_and_wrong_identity(self):
+        for case in ('changed', 'extra', 'identity'):
+            with self.subTest(case=case):
+                # Each subcase has an independent device and receipt.
+                if self.target.exists():
+                    for path in self.target.iterdir():
+                        path.unlink()
+                    self.target.rmdir()
+                self.prepare_upgrade()
+                if case == 'changed':
+                    (self.target / 'dockmsc.prx').write_bytes(b'UNKNOWN BINARY')
+                elif case == 'extra':
+                    (self.target / 'NOT-OURS').write_bytes(b'KEEP')
+                else:
+                    data = json.loads(self.receipt.read_text())
+                    data['identity']['usb_device_id'] = 'OTHER'
+                    self.receipt.write_text(json.dumps(data))
+                before = {p.name: p.read_bytes() for p in self.target.iterdir()}
+                with self.assertRaises(ValueError):
+                    self.upgrade()
+                self.assertFalse(self.archive.exists())
+                self.assertEqual(before, {p.name: p.read_bytes() for p in self.target.iterdir()})
+
+    def test_upgrade_refuses_corrupt_new_package_before_backup_or_psp_write(self):
+        self.prepare_upgrade()
+        (self.package / REMOTE_FOLDER / 'dockmsc.prx').write_bytes(b'CORRUPT')
+        with self.assertRaises(ValueError):
+            self.upgrade()
+        self.assertFalse(self.archive.exists())
+        self.assertEqual(self.previous, {p.name: p.read_bytes() for p in self.target.iterdir()})
+
+    def test_upgrade_device_change_during_staging_leaves_old_published(self):
+        self.prepare_upgrade()
+        with self.assertRaises(ValueError):
+            self.upgrade(Mock(side_effect=[True, True, False]))
+        self.assertEqual(self.previous, {p.name: p.read_bytes() for p in self.target.iterdir()})
+        self.assertEqual(len(list(self.target.parent.glob('.pspdock-msc-*'))), 1)
+        self.assertEqual((self.archive / 'files/dockmsc.prx').read_bytes(), self.previous['dockmsc.prx'])
+
+    def test_upgrade_failed_publish_restores_verified_old_directory(self):
+        self.prepare_upgrade()
+        original_rename = Path.rename
+        def fail_publish(source, destination):
+            if source.name.startswith('.pspdock-msc-') and 'previous-' not in source.name:
+                raise OSError('simulated rename failure')
+            return original_rename(source, destination)
+        with patch.object(Path, 'rename', fail_publish), self.assertRaises(OSError):
+            self.upgrade()
+        self.assertEqual(self.previous, {p.name: p.read_bytes() for p in self.target.iterdir()})
+        self.assertIn('previous_restored', (self.archive / 'upgrade.jsonl').read_text())
+        self.assertEqual(list(self.target.parent.glob('.pspdock-msc-previous-*')), [])
+
+    def test_upgrade_failed_journal_after_old_rename_restores_verified_old_directory(self):
+        self.prepare_upgrade()
+        original_dump = self.installer.json.dump
+        def fail_held_note(record, writer, **kwargs):
+            if record.get('phase') == 'previous_held':
+                raise OSError('simulated PC journal failure')
+            return original_dump(record, writer, **kwargs)
+        with patch.object(self.installer.json, 'dump', side_effect=fail_held_note):
+            with self.assertRaises(OSError):
+                self.upgrade()
+        self.assertEqual(self.previous, {p.name: p.read_bytes() for p in self.target.iterdir()})
+        self.assertIn('previous_restored', (self.archive / 'upgrade.jsonl').read_text())
+        self.assertEqual(list(self.target.parent.glob('.pspdock-msc-previous-*')), [])
+        self.assertEqual(self.original.read_bytes(), b'ORIGINAL WORKING HOMEBREW')
+
+    def test_upgrade_device_change_after_old_rename_never_rolls_back_on_unknown_mount(self):
+        self.prepare_upgrade()
+        with self.assertRaises(ValueError):
+            self.upgrade(Mock(side_effect=[True, True, True, False, False]))
+        self.assertFalse(self.target.exists())
+        held = list(self.target.parent.glob('.pspdock-msc-previous-*'))
+        self.assertEqual(len(held), 1)
+        self.assertEqual((held[0] / 'dockmsc.prx').read_bytes(), self.previous['dockmsc.prx'])
+        self.assertIn('manual_recovery_required', (self.archive / 'upgrade.jsonl').read_text())
+
+    def test_upgrade_archive_on_psp_is_rejected_without_write(self):
+        self.prepare_upgrade()
+        self.archive = self.psp / 'previous-test'
+        with self.assertRaises(ValueError):
+            self.upgrade()
+        self.assertFalse(self.archive.exists())
 
 
 if __name__ == '__main__':

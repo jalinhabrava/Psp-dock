@@ -29,6 +29,7 @@ typedef struct {unsigned Buttons;uint8_t Lx,Ly;} SceCtrlData;
 #define PSP_CTRL_LEFT (1u<<16)
 #define PSP_USBSTOR_DRIVERNAME "USBStor"
 #define PSP_USBBUS_DRIVERNAME "USBBus"
+#define PSP_USB_CABLE_CONNECTED 0x020
 struct UsbEndpoint {int endpnum,unk1,unk2;};
 struct DeviceRequest {uint8_t bmRequestType,bRequest;uint16_t wValue,wIndex,wLength;};
 struct UsbdDeviceReq {

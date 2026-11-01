@@ -46,7 +46,7 @@ def fixture_package(root: Path) -> Path:
     for name, raw in data.items():
         (directory / name).write_bytes(raw)
         records[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
-    manifest = {'schema': 'pspdock-msc-test-package-v1', 'revision': '0205',
+    manifest = {'schema': 'pspdock-msc-test-package-v1', 'revision': '0206',
                 'expected_usb_identity': dict(package.USB_IDENTITY),
                 'folder': package.REMOTE_FOLDER, 'synthetic_storage': True,
                 'real_memory_stick_access': False, 'storage_read_only': True,
@@ -119,7 +119,7 @@ class MSCPackageTests(unittest.TestCase):
 
     def test_kernel_corruption_and_unexpected_package_file_are_rejected(self):
         root = fixture_package(self.root / 'package')
-        self.assertEqual(package.verify_package(root)['revision'], '0205')
+        self.assertEqual(package.verify_package(root)['revision'], '0206')
         binary = root / package.REMOTE_FOLDER / 'dockmsc.prx'
         original = binary.read_bytes()
         binary.write_bytes(b'X' + original[1:])

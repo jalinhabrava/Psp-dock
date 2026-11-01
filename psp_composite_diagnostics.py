@@ -92,9 +92,19 @@ def setupapi_snapshot(log_path: Path | None = None) -> dict:
         encoding = 'utf-16-le' if data.count(b'\0') > len(data) // 8 else 'utf-8'
         text = data.decode(encoding, errors='replace').lstrip('\ufeff')
         sections = re.split(r'(?=^>>>\s+\[)', text, flags=re.M)
-        selected = [part for part in sections if SETUPAPI_RELEVANT.search(part)][-8:]
-        report['sections'] = [part if len(part) <= 16000 else
-                              part[:500] + '\n[section truncated]\n' + part[-15000:]
+        # A driver-package log can mention many hardware IDs internally.
+        # Match the actual device-install header, not arbitrary body text.
+        selected = []
+        for part in sections:
+            header = part.splitlines()[0] if part else ''
+            if (re.match(r'^>>>\s+\[Device Install\b', header, re.I) and
+                    SETUPAPI_RELEVANT.search(header)):
+                selected.append(part)
+        selected = selected[-8:]
+        report['maximum_section_chars'] = 4000
+        report['selection'] = 'device-install-header-only'
+        report['sections'] = [part if len(part) <= 4000 else
+                              part[:500] + '\n[section truncated]\n' + part[-3400:]
                               for part in selected]
     except OSError as exc:
         report['error'] = (type(exc).__name__ + ': ' + str(exc))[:240]

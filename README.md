@@ -1,18 +1,46 @@
 # PSP Dock · prototipo para Windows
 
-## Prueba USBSTOR + HID 0205 con gráficos XMB
+## USBSTOR + HID 0206 instalada; aceptación física pendiente
 
-La rama del controlador compuesto incorpora una prueba de almacenamiento
-USB estándar y mando simultáneos, instalada en `PSP/GAME/PSPDockStorageTest`.
-Incluye el thumbnail, la presentación y el fondo de PSP Dock dentro del
-EBOOT. La compilación PSPDEV, los tests de transporte y la auditoría de
-binarios pasan; **abrirla y comprobar la enumeración en la PSP sigue
-pendiente**. El disco es ficticio, de 512 KiB y solo lectura: aún no ofrece
-acceso a la Memory Stick real ni devolución de partidas.
+La prueba **PSP Dock - USB Storage + HID 0206** mantiene un mando HID y
+un disco USB estándar en el mismo dispositivo compuesto. Está instalada
+en `PSP/GAME/PSPDockStorageTest`: **cuatro archivos, 367.483 bytes,
+releídos y verificados por SHA-256**. Conserva aparte el PSP Dock estable.
+La versión 0205 anterior quedó verificada y archivada en el PC.
+El disco es ficticio, de 512 KiB y solo lectura: todavía no ofrece los
+archivos reales de la Memory Stick ni devolución de partidas.
 
-Procedimiento: [USBSTOR + HID 0205](homebrew/composite-mscdemo/README.md).
-Evidencia y diferencias con el prototipo WinUSB:
+**0205 ya tuvo una ejecución física.** El 1 de noviembre, entre
+22:19:45 y 22:20:06 de Madrid, Windows enumeró el padre `usbccgp`,
+`MI_00` con `HidUsb`, `MI_01` con `USBSTOR` y el disco identificado por
+nuestro SCSI INQUIRY. Después retiró esos dispositivos y el homebrew
+volvió al XMB sin reiniciar la PSP. No se confirmó montaje del volumen,
+lectura de archivos ni movimiento HID durante una lectura. El monitor
+anterior había terminado antes de ese intento; un timeout seguido de
+reset es una hipótesis, no la causa demostrada.
+
+0206 corrige la interpretación de la desconfiguración USB: cancela y
+espera las transferencias antiguas, permite una nueva configuración y
+solo trata como desconexión física la ausencia confirmada del cable.
+La pantalla final conserva contadores, motivo de parada y errores hasta
+que se pulse **O**. El título XMB incluye la revisión; la nueva identidad
+usa **PSP DOCK** grande en ICON0 y PIC0 y un fondo grafito sin texto,
+para evitar duplicar el nombre al componer las capas del XMB.
+
+La compilación y auditoría PSPDEV/WSL pasan, incluidos 13 casos BOT,
+50.000 entradas malformadas y 11 escenarios asíncronos del wrapper bajo
+sanitizadores. Pasan también **60 pruebas focales en Windows**: 18 del
+instalador y 42 de aceptación, diagnóstico y paquetes. Se verificaron el
+título SFO y los bytes exactos de los tres recursos XMB nuevos dentro del
+EBOOT. **La aceptación física de 0206 sigue pendiente**: la instalación
+verificada no demuestra montaje ni lecturas simultáneas con el mando.
+Los recuentos de tests no se suman a las suites históricas de más abajo.
+
+Procedimiento: [USBSTOR + HID 0206](homebrew/composite-mscdemo/README.md).
+Captura física, límites y estado de cada variante:
 [validación del controlador](COMPOSITE-DRIVER-VALIDATION.md).
+Esta sección contiene el estado vigente del controlador compuesto;
+los apartados siguientes conservan el historial del producto.
 
 ## Estado de integración — 1 de noviembre de 2026
 
