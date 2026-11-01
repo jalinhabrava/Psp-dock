@@ -55,6 +55,43 @@ class RetroInventoryTests(unittest.TestCase):
         self.assertEqual(len(retro['emulators']), 6)
         self.assertEqual(len(game_inventory(self.root)), 0)
 
+    def test_real_world_psp_homebrew_labels_have_specific_windows_cores(self):
+        for title,expected in (
+            ('UO gpSP kai 3.4 test 4 Build 225','gba'),
+            ('Snes9xTYLmecm 0.4.2 Mod Rev.26','snes'),
+            ('CPS1PSP 2.3.5 for PSP','cps1'),
+            ('CPS2PSP 2.3.5 for PSP slim','cps2'),
+            ('MVSPSP 2.3.5 for PSP','neogeo'),
+            ('Mame4All PSP v4.9r2','arcade'),
+            ('PSPHUGO-v1.3.1-fw5x','pce'),
+            ('RACE! PSP 2.16','ngp'),
+            ('PicoDrive','md'),
+        ):
+            with self.subTest(title=title):
+                folder=self.install('HOME_'+str(len(list(self.game.iterdir()))))
+                with patch('psp_retro.read_metadata',return_value={'TITLE':title}):
+                    profile=emulator_profile(folder,folder/'EBOOT.PBP')
+                self.assertIsNotNone(profile)
+                self.assertIn(expected,profile['systems'])
+                self.assertIn(expected,SYSTEMS)
+
+    def test_arcade_zip_romset_is_detected_but_never_extracted(self):
+        folder=self.install('cps1psp')
+        with zipfile.ZipFile(folder/'sf2.zip','w') as archive:
+            archive.writestr('sf2_23.bin',b'fixture')
+            archive.writestr('sf2_22.bin',b'fixture')
+        roms=emulator_inventory(self.root)['roms']
+        self.assertEqual(len(roms),1)
+        self.assertEqual(roms[0]['system'],'cps1')
+        self.assertFalse((folder/'sf2_23.bin').exists())
+
+    def test_licensed_alternatives_are_selected_by_default(self):
+        self.assertEqual(SYSTEMS['snes'][1],'bsnes_libretro.dll')
+        self.assertEqual(SYSTEMS['md'][1],'blastem_libretro.dll')
+        self.assertEqual(SYSTEMS['32x'][1],'blastem_libretro.dll')
+        self.assertEqual(SYSTEMS['sms'][1],'gearsystem_libretro.dll')
+        self.assertEqual(SYSTEMS['gg'][1],'gearsystem_libretro.dll')
+
     def test_sfo_title_matches_when_folder_name_is_generic(self):
         folder = self.install('GAMES_01')
         with patch('psp_retro.read_metadata',return_value={'TITLE':'TempGBA4PSP v1.45'}):

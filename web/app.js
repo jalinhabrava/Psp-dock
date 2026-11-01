@@ -97,6 +97,10 @@ async function mutate(path, body, success) {
 async function refresh() {
   try {
     const state = await request('/api/state');
+    if (state.retro_install) {
+      try { state.retro_install.progress = await request('/api/retro-install-status'); }
+      catch { /* XMB still works when an optional status request fails. */ }
+    }
     ui.state = state;
     ui.serviceOffline = false;
     $('error').hidden = !state.error && !state.recovery_required;
@@ -954,7 +958,7 @@ async function openSettings() {
   $('settings-save').disabled = true;
   try {
     const settings = await request('/api/settings');
-    for (const key of ['emulator', 'retroarch', 'library', 'memstick', 'psp_root', 'scale', 'backend']) {
+    for (const key of ['emulator', 'retroarch', 'retro_install_policy', 'library', 'memstick', 'psp_root', 'scale', 'backend']) {
       const field = $('settings-form').elements.namedItem(key);
       field.value = settings[key] ?? (key === 'scale' ? '3' : key === 'backend' ? 'directx11' : '');
     }
@@ -1448,7 +1452,7 @@ async function xmbSaveSetting(key, value, label) {
   if (!xmb.settings) await xmbLoadSettings();
   if (!xmb.settings) { toast('No se pudieron leer los ajustes actuales.'); return; }
   const fields = {};
-  for (const name of ['emulator', 'retroarch', 'retro_button_layout', 'library', 'memstick', 'psp_root', 'scale', 'backend']) fields[name] = xmb.settings[name] ?? '';
+  for (const name of ['emulator', 'retroarch', 'retro_install_policy', 'retro_button_layout', 'library', 'memstick', 'psp_root', 'scale', 'backend']) fields[name] = xmb.settings[name] ?? '';
   fields[key] = value;
   fields.scale = Number(fields.scale) || 3;
   if (await mutate('/api/settings', fields, `${label}: guardado.`)) await xmbLoadSettings();
@@ -1474,6 +1478,13 @@ function xmbBuildSections() {
         [['nintendo','Nintendo: ✕ = B / ○ = A (predeterminada)'],['psp','PSP: ✕ = A / ○ = B']],
         settingsValue('retro_button_layout','nintendo'),
         value => xmbSaveSetting('retro_button_layout',value,'Controles RetroArch')) },
+    { key:'retro-auto',t:'Instalación de emuladores retro',icon:'retro',
+      s:() => ({auto:'Automática al detectar homebrew PSP',ask:'Preguntar antes de descargar',off:'Desactivada'})[settingsValue('retro_install_policy','ask')],
+      activate:()=>xmbValues('Instalación de emuladores oficiales',
+        [['auto','Automática · solo núcleos detectados'],
+         ['ask','Preguntar antes de descargar'],['off','No descargar emuladores']],
+         settingsValue('retro_install_policy','ask'),
+         value=>xmbSaveSetting('retro_install_policy',value,'Instalación retro')) },
     { key: 'backend', t: 'Motor gráfico', s: () => ({ directx11: 'Direct3D 11', vulkan: 'Vulkan', gles: 'OpenGL' })[settingsValue('backend', 'directx11')] || settingsValue('backend', ''), icon: 'hd',
       activate: () => xmbValues('Motor gráfico', [['directx11', 'Direct3D 11'], ['vulkan', 'Vulkan'], ['gles', 'OpenGL']], settingsValue('backend', 'directx11'),
         (value) => xmbSaveSetting('backend', value, 'Motor gráfico')) },
@@ -1549,6 +1560,7 @@ function xmbBuildSections() {
     activate: async () => { toast('Buscando PSP…'); await refresh(); } }];
 
   const retro = state.retro || {};
+  const installer=state.retro_install || {};
   out.retro = (retro.emulators || []).map((emulator) => {
     const roms = (retro.roms || []).filter((rom) => rom.emulator_id === emulator.id);
     const ready = roms.filter((rom) => rom.availability === 'ready').length;
@@ -1560,6 +1572,31 @@ function xmbBuildSections() {
       menu: () => xmbRetroEmulatorMenu(emulator),
     };
   });
+  if ((retro.emulators || []).length) {
+    const prog=installer.progress || {};
+    const active=prog.active === true;
+    const missing=installer.missing_cores?.length || 0;
+    const reviewed=installer.requires_license_review?.length || 0;
+    const licensing=reviewed ? ` · ${reviewed} núcleo(s) requieren licencia comercial o instalación independiente` : '';
+    const text=active ? `${prog.item || 'Descargando'} · ${prog.bytes_total ? Math.round((prog.bytes_done || 0)*100/prog.bytes_total)+'%' : 'conectando'}` :
+      prog.phase === 'failed' ? `Instalación no completada: ${prog.error || 'error de descarga'}` :
+      installer.external ? 'RetroArch externo: se respetará su ubicación original' :
+      installer.status === 'ready' ? 'Núcleos con licencia permitida instalados' + licensing :
+      `RetroArch portable y ${missing} núcleo(s) pendientes${licensing} · en ${installer.managed_path || 'la carpeta elegida'}`;
+    out.retro.unshift({ key:'retro-installer',t:active ? 'Instalando emuladores…' :
+      installer.status === 'ready' ? 'Emuladores Windows preparados' : 'Instalar emuladores Windows',
+      s:text,icon:active ? 'sync' : 'retro',
+      chip:active ? ['inh','DESCARGANDO'] : installer.status === 'ready' ? ['pc','LISTOS'] : missing ? ['copy','INSTALAR'] : null,
+      activate:()=>{
+        if (active) { toast(text);return; }
+        if (installer.external) {toast('Has elegido un RetroArch externo. El Dock no lo modificará; instala allí los núcleos mediante su actualizador.');return;}
+        if (!installer.needed) {toast(text);return;}
+        if (!state.selected_device) {toast('Conecta la PSP en modo almacenamiento USB Sony para autorizar los emuladores detectados.');return;}
+        xmbConfirm(`¿Instalar los emuladores correspondientes a esta PSP?<small>Se descargarán RetroArch 1.22.2 y ${missing} núcleo(s) permitidos para este producto en la carpeta seleccionada en Ajustes.${reviewed ? ' Los núcleos con licencia no comercial requieren revisión y NO se descargarán automáticamente.' : ''} No se descargan ROMs ni BIOS ni se escribe en la PSP.</small>`,
+          false,()=>mutate('/api/install-retro',{},'Instalación en el PC iniciada. Puedes seguir usando el XMB.'));
+      },
+    });
+  }
   if (!out.retro.length) out.retro = [{ key:'no-retro', t:'No hay emuladores reconocidos',
     s:'Se detectan gpSP, TempGBA, Snes9xTYL, NesterJ, PicoDrive, Daedalus y otros.',
     icon:'search', activate:()=>toast('Conecta la PSP en almacenamiento USB para detectar los emuladores instalados y sus ROMs.') }];

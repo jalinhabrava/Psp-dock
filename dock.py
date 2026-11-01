@@ -20,6 +20,8 @@ from dock_events import EventJournal
 from dock_preflight import assess_storage
 from psp_artwork import read_icon, valid_png
 from psp_retro import SYSTEMS, emulator_inventory, emulator_profile, retroarch_core
+from retro_installer import (RetroInstallError, install_plan as pc_retro_install_plan,
+                             install_required as install_pc_retro, managed_retroarch)
 from retro_runtime import (LAYOUTS, prepare_joypad_profile,
                            private_save_paths, retroarch_arguments)
 from retro_saves import (plan_retro_saves, copy_sram_verified, _baseline_key,
@@ -420,12 +422,14 @@ class Dock:
         self.config_path = self.data / 'settings.json'
         bundled = ROOT / 'tools/PPSSPP/PPSSPPWindows64.exe'
         defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'retroarch': '',
+                    'retro_install_policy':'ask',
                     'retro_button_layout':'nintendo', 'library': str(self.data / 'library'),
                     'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3,
                     'backend': 'directx11','storage_root':str(self.data)}
         self.config = read_json(self.config_path, defaults)
         self.config.setdefault('storage_root',str(self.data))
         self.config.setdefault('retroarch', '')
+        self.config.setdefault('retro_install_policy', 'ask')
         self.config.setdefault('retro_button_layout','nintendo')
         self.process = None
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
@@ -481,6 +485,11 @@ class Dock:
                         type(rom.get('modified_ns')) is int and rom['modified_ns'] >= 0):
                     self.last_roms.append(rom)
         self.cached_retro_results = None
+        self.retro_installer_lock=threading.Lock()
+        self.retro_install_progress={'active':False,'phase':'idle','item':'',
+                                      'bytes_done':0,'bytes_total':0,'error':'',
+                                      'installed_cores':[]}
+        self.retro_install_attempted=set()
         self.retro_save_baselines_path = self.data/'retro-save-baselines.json'
         self.retro_save_cache_path = self.data/'retro-save-catalog.json'
         save_cache = read_json(self.retro_save_cache_path,{})
@@ -713,6 +722,11 @@ class Dock:
                              'roms':found['roms']})
             self.retro_volume = serial
             self.last_emulators, self.last_roms = found['emulators'], found['roms']
+            if self.config.get('retro_install_policy')=='auto':
+                # PC-only downloads after a live read-only PSP inventory.
+                # Network traffic belongs to a separate worker, never the
+                # PSP USB scan or the /api/state HTTP thread.
+                self.start_retro_install(automatic=True)
         roms = []
         for rom in self.last_roms:
             local = inside(library, rom['relative'])
@@ -732,6 +746,89 @@ class Dock:
                                      'retroarch_available':any(retroarch_core(self.config['retroarch'], system)
                                            for system in SYSTEMS)}
         return self.cached_retro_results
+
+    def retro_install_state(self):
+        plan=pc_retro_install_plan(self.config['storage_root'],self.last_emulators,
+                                   self.config.get('retroarch',''))
+        with self.retro_installer_lock:
+            progress=dict(self.retro_install_progress)
+        return {**plan,'policy':self.config['retro_install_policy'],
+                'progress':progress,'volume_present':bool(self.root())}
+
+    def start_retro_install(self, automatic=False):
+        """Schedule a *PC-only* installation of detected emulator equivalents.
+
+        Installer mode will set policy='auto' after selecting storage_root;
+        legacy installations default to 'ask' for no surprise downloads.
+        """
+        if self.demo or self.recovery_required or self.running() or self.session.get('pending_return'):
+            if automatic:return False
+            raise ValueError('Termina o recupera la sesión antes de instalar emuladores.')
+        if self.storage_polling_paused or self.session.get('exit_requested'):
+            if automatic:return False
+            raise ValueError('La PSP está cambiando de modo o saliendo del Dock.')
+        root=self.root()
+        if root is None or not self.last_emulators or volume_identity(root)!=self.retro_volume:
+            if automatic:return False
+            raise ValueError('Conecta una PSP en almacenamiento Sony y detecta primero sus emuladores.')
+        if automatic and self.config.get('retro_install_policy')!='auto':
+            return False
+        plan=pc_retro_install_plan(self.config['storage_root'],self.last_emulators,
+                                   self.config.get('retroarch',''))
+        if plan['external']:
+            if automatic:return False
+            raise ValueError('RetroArch está en una carpeta externa. No se modificará: instala los núcleos allí manualmente.')
+        if not plan['needed']:
+            if not self.config.get('retroarch') and plan['retroarch_installed']:
+                self.config['retroarch']=str(managed_retroarch(self.config['storage_root']))
+                atomic_json(self.config_path,self.config)
+            return False
+        key=(self.retro_volume,str(self.config['storage_root']),
+             tuple(plan['requested_cores']))
+        with self.retro_installer_lock:
+            if self.retro_install_progress['active']:
+                return False
+            if automatic and key in self.retro_install_attempted:
+                return False
+            self.retro_install_attempted.add(key)
+            self.retro_install_progress={'active':True,'phase':'queued',
+                                         'item':'RetroArch y núcleos oficiales',
+                                         'bytes_done':0,'bytes_total':0,
+                                         'error':'','installed_cores':[]}
+        storage=self.config['storage_root']
+        emulators=[{'name':emu['name'],'systems':list(emu['systems'])}
+                   for emu in self.last_emulators]
+        configured=self.config.get('retroarch','')
+
+        def job():
+            def report(**values):
+                with self.retro_installer_lock:
+                    self.retro_install_progress.update(values)
+            try:
+                result=install_pc_retro(storage,emulators,configured=configured,
+                                        progress=report)
+                # Commit only AFTER download hash, payload extraction and
+                # all selected cores are installed. Changing the storage
+                # target while the worker runs is blocked in settings.
+                with self.lock:
+                    if self.config['storage_root'] != storage:
+                        raise ValueError('La ubicación cambió durante la instalación.')
+                    self.config['retroarch']=str(managed_retroarch(storage))
+                    atomic_json(self.config_path,self.config)
+                    self.cached_retro_results=None
+                    self.last_storage_scan_at=0
+                    self.events.record('retro_emulators_installed',evidence='pc_observed',
+                                       count=len(result['installed_cores']),
+                                       result='verified_pc_install')
+                report(phase='ready',error='',installed_cores=result['installed_cores'])
+            except Exception as exc:
+                # A connection failure cannot become a successful install.
+                # Never delete an older RetroArch installation or PSP files.
+                report(phase='failed',error=str(exc)[:500])
+            finally:
+                report(active=False)
+        threading.Thread(target=job,daemon=True,name='PSPDockRetroInstaller').start()
+        return True
 
     def retro_save_plan(self):
         """Read-only SRAM plan; USB source is accessed only when mounted.
@@ -1722,6 +1819,11 @@ class Dock:
                 new['storage_root'] != self.config['storage_root']):
             raise ValueError('Para mover los datos usa la migración verificada.')
         config = {**self.config, **{k:v for k,v in new.items() if k in self.config}}
+        with self.retro_installer_lock:
+            if self.retro_install_progress['active']:
+                raise ValueError('Termina la instalación de emuladores antes de cambiar ajustes.')
+        if config.get('retro_install_policy') not in ('ask','auto','off'):
+            raise ValueError('Política de instalación de emuladores desconocida.')
         if config.get('retro_button_layout') not in LAYOUTS:
             raise ValueError('Distribución del mando retro desconocida.')
         if (not isinstance(config.get('retroarch'),str) or
@@ -1759,6 +1861,9 @@ class Dock:
     def relocate_storage(self, target):
         """Copy PC games, saves, textures and media into an empty folder."""
         from storage_layout import migrate_pc_data
+        with self.retro_installer_lock:
+            if self.retro_install_progress['active']:
+                raise ValueError('La instalación retro debe terminar antes de mover los datos.')
         if self.demo or self.running() or self.session.get('pending_return'):
             raise ValueError('Termina la sesión y devuelve partidas antes de cambiar la carpeta.')
         if (self.session.get('exit_requested') or self.transfer_status['active']
@@ -1773,6 +1878,9 @@ class Dock:
                                old_storage=Path(self.config['storage_root']))
         updated={**self.config,'storage_root':report['path'],
                  'library':report['library'],'memstick':report['memstick']}
+        old_managed=managed_retroarch(self.config['storage_root'])
+        if self.config.get('retroarch') and Path(self.config['retroarch'])==old_managed:
+            updated['retroarch']=str(managed_retroarch(report['path']))
         self.validate_layout(self.root(),updated)
         atomic_json(self.config_path,updated)
         self.config=updated
@@ -1859,6 +1967,7 @@ class Dock:
         device = self.root()
         games = self.games()
         retro = self.retro_catalog()
+        retro_install=self.retro_install_state()
         retro_saves=self.retro_save_plan() if not running else {
             'rows':[], 'pending':0,'conflicts':0,'unmanaged':0,'offline':True}
         saves = (self.save_plan() if not running
@@ -1888,7 +1997,8 @@ class Dock:
             any(rom['availability']=='ready' and rom['core_available'] for rom in retro['roms'])
         )
         return {'demo': self.demo, 'devices': self.devices(), 'selected_device': str(device) if device else None,
-                'games': games, 'retro':retro, 'retro_saves':retro_saves,
+                'games': games, 'retro':retro,'retro_install':retro_install,
+                'retro_saves':retro_saves,
                 'retro_button_layout':self.config['retro_button_layout'],
                 'saves': saves,
                 'copy_queue':dict(self.copy_queue),
@@ -2335,6 +2445,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     return self.reply(dock.psp_launcher_input())
                 if self.path == '/api/media-status':
                     return self.reply(dock.xmb_media_progress)
+                if self.path == '/api/retro-install-status':
+                    # Network downloads do not own Dock.lock or block USB
+                    # scanning, so status can be polled independently.
+                    with dock.retro_installer_lock:
+                        return self.reply(dict(dock.retro_install_progress))
                 if self.path == '/api/copy-queue':
                     return self.reply(dock.copy_queue)
                 if self.path.startswith('/api/media/'):
@@ -2430,6 +2545,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                         dock.transfer(body['ids'])
                     elif self.path == '/api/retro-transfer':
                         dock.transfer_retro(body['ids'])
+                    elif self.path == '/api/install-retro':
+                        dock.start_retro_install(automatic=False)
                     elif self.path == '/api/queue-game-copy':
                         dock.request_game_copy_from_hid(body.get('id'))
                     elif self.path == '/api/cancel-game-copy':

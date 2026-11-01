@@ -25,7 +25,7 @@ class StorageLocationError(ValueError):
 
 CONTENT_DIRS = ('artwork','xmb-assets','profile-backups','backups',
                 'retro-profiles','retro-saves','retro-states',
-                'retro-save-backups','retro-save-journals')
+                'retro-save-backups','retro-save-journals','emulators')
 
 
 def choose_pc_storage_parent(*, run=subprocess.run)->str | None:

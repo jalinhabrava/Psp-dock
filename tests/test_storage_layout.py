@@ -81,7 +81,9 @@ class PCStorageMigrationTests(unittest.TestCase):
         for folder,name in [('retro-saves/volume-a','game.srm'),
                             ('retro-states/volume-a','game.state'),
                             ('retro-profiles/autoconfig/dinput','PSP Dock HID.cfg'),
-                            ('retro-save-backups','original.bak')]:
+                            ('retro-save-backups','original.bak'),
+                            ('emulators/retroarch','retroarch.exe'),
+                            ('emulators/retroarch/cores','mgba_libretro.dll')]:
             dest=self.old/folder/name
             dest.parent.mkdir(parents=True,exist_ok=True)
             dest.write_bytes(b'RETRO_FICTITIOUS')
@@ -89,13 +91,16 @@ class PCStorageMigrationTests(unittest.TestCase):
         self.migrate(first)
         for file in ('retro-saves/volume-a/game.srm','retro-states/volume-a/game.state',
                      'retro-profiles/autoconfig/dinput/PSP Dock HID.cfg',
-                     'retro-save-backups/original.bak'):
+                     'retro-save-backups/original.bak',
+                     'emulators/retroarch/retroarch.exe',
+                     'emulators/retroarch/cores/mgba_libretro.dll'):
             self.assertEqual((first/file).read_bytes(),b'RETRO_FICTITIOUS')
         second=self.root/'relocated-twice'
         migrate_pc_data(target=second,library=first/'library',
                         memstick=first/'memstick',old_data=self.old,old_storage=first)
         self.assertEqual((second/'retro-saves/volume-a/game.srm').read_bytes(),b'RETRO_FICTITIOUS')
         self.assertEqual((first/'retro-saves/volume-a/game.srm').read_bytes(),b'RETRO_FICTITIOUS')
+        self.assertEqual((second/'emulators/retroarch/cores/mgba_libretro.dll').read_bytes(),b'RETRO_FICTITIOUS')
 
 
 if __name__=='__main__':
