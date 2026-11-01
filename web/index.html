@@ -4,19 +4,39 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07374b">
-  <title>PSP Dock · Tu próxima partida</title>
+  <title>PSP Dock</title>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div class="xmb" id="xmb" tabindex="-1">
+  <div class="xmb waiting" id="xmb" tabindex="-1">
     <img class="xmb-game-background" id="xmb-game-background" alt="" aria-hidden="true" hidden>
     <img class="xmb-game-overlay" id="xmb-game-overlay" alt="" aria-hidden="true" hidden>
     <audio id="xmb-game-audio" preload="none" aria-hidden="true"></audio>
     <canvas class="xmb-waves" id="xmb-waves" aria-hidden="true"></canvas>
+    <section class="dock-connect" id="dock-connect" aria-labelledby="dock-connect-title" tabindex="-1">
+      <div class="dock-connect-content">
+        <p class="dock-connect-brand">PSP <span>DOCK</span><i aria-hidden="true"></i></p>
+        <p class="dock-connect-eyebrow">TU PSP, EN ESTE PC</p>
+        <h1 id="dock-connect-title">Conecta tu PSP</h1>
+        <p class="dock-connect-intro" id="dock-connect-intro">El menú aparecerá al detectar el modo Dock.</p>
+        <ol class="dock-connect-steps" id="dock-connect-steps">
+          <li><span class="dock-connect-number" aria-hidden="true">01</span><div><h2>Abre PSP Dock en la consola</h2><p>Ve a Juego → Memory Stick y abre PSP Dock.</p></div></li>
+          <li><span class="dock-connect-number" aria-hidden="true">02</span><div><h2>Conecta el cable USB</h2><p>Conecta la PSP a este ordenador.</p></div></li>
+        </ol>
+        <div class="dock-connect-status" id="dock-connect-status" role="status" aria-live="polite">
+          <span class="dock-connect-dot" aria-hidden="true"></span>
+          <div><b id="dock-connect-status-title">Comprobando conexión…</b><p id="dock-connect-status-detail">Puedes conectar la consola en cualquier momento.</p><button type="button" class="dock-connect-prepare" id="dock-connect-prepare" hidden>Preparar biblioteca <span aria-hidden="true">→</span></button></div>
+        </div>
+        <div class="dock-connect-footer"><span id="dock-connect-footer">La app está esperando tu PSP.</span><button type="button" id="dock-connect-close">Cerrar app <span aria-hidden="true">↗</span></button></div>
+        <p class="dock-connect-error" id="dock-connect-error" role="alert" hidden></p>
+      </div>
+    </section>
+    <div class="xmb-menu" id="xmb-menu" hidden>
     <div class="xmb-safe" id="xmb-safe">
       <div class="xmb-crumb" id="xmb-crumb" aria-live="polite"></div>
       <div class="xmb-status" role="status"><span class="xmb-busy" id="xmb-busy" hidden></span><span class="xmb-hid" id="xmb-hid"><i aria-hidden="true"></i><span id="xmb-hid-label">Buscando PSP…</span></span><time id="clock"></time></div>
+      <aside class="dock-diagnostic" id="dock-diagnostic" role="status" hidden><b>Modo diagnóstico · 0207</b><span>Disco de prueba de 512 KiB. Puedes navegar; los juegos están desactivados.</span></aside>
       <nav class="xmb-cats" id="xmb-cats" aria-label="Secciones"></nav>
       <div class="xmb-list" id="xmb-list" role="listbox" aria-label="Elementos de la sección"></div>
       <div class="xmb-hints" id="xmb-hints" aria-hidden="true"></div>
@@ -27,6 +47,7 @@
     <div class="xmb-copy-status" id="xmb-copy-status" role="status" hidden>
       <div><b id="xmb-copy-heading">Preparando copia del juego</b>
       <p id="xmb-copy-description"></p></div>
+    </div>
     </div>
   </div>
 

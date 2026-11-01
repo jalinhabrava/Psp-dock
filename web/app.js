@@ -13,6 +13,9 @@ const ui = {
   nativePadHeld: {}, nativePadDirection: '', nativePadAt: 0,
   graphicsGame: null,
   textureProgress: null,
+  appClosing: false, appClosed: false,
+  appClientId: '', appHeartbeatTimer: null, appHeartbeatPending: false, appPageHidden: false,
+  storageSetupRequested: false,
 };
 const bytes = (value) => {
   const n = Number(value) || 0;
@@ -46,13 +49,62 @@ async function request(path, body) {
   }
   const response = await fetch(path, options);
   let result;
-  try { result = await response.json(); } catch { throw new Error('El servicio local no ha devuelto una respuesta válida.'); }
+  try { result = await response.json(); } catch { throw new Error('PSP Dock no ha devuelto una respuesta válida.'); }
   if (!response.ok) throw new Error(result.error || 'No se pudo completar la operación.');
   return result;
 }
+async function appHeartbeat() {
+  if (ui.appClosing || ui.appClosed || ui.appPageHidden || ui.appHeartbeatPending) return;
+  ui.appHeartbeatPending = true;
+  clearTimeout(ui.appHeartbeatTimer);
+  try {
+    await request('/api/app/heartbeat', { client_id: ui.appClientId });
+  } catch {
+    // /api/state supplies the visible connection error. A transient
+    // missed heartbeat must not close a window or invent device state.
+  } finally {
+    ui.appHeartbeatPending = false;
+    if (!ui.appClosing && !ui.appClosed && !ui.appPageHidden)
+      ui.appHeartbeatTimer = setTimeout(appHeartbeat, 2000);
+  }
+}
+async function closeDockApp() {
+  if (!xmbConnectionView().waiting || ui.appClosing || ui.appClosed) return;
+  ui.appClosing = true;
+  $('dock-connect-error').hidden = true;
+  xmbRender();
+  try {
+    await request('/api/app/close', { client_id: ui.appClientId, reason: 'button' });
+    ui.appClosed = true;
+    clearTimeout(ui.appHeartbeatTimer);
+    xmbRender();
+    // Chrome app windows can close here; an ordinary browser tab may
+    // refuse. The closed screen remains useful in that case.
+    window.close();
+  } catch (error) {
+    $('dock-connect-error').textContent = error.message;
+    $('dock-connect-error').hidden = false;
+  } finally {
+    ui.appClosing = false;
+    xmbRender();
+    if (!ui.appClosed) void appHeartbeat();
+  }
+}
+function appPageLeaving() {
+  ui.appPageHidden = true;
+  clearTimeout(ui.appHeartbeatTimer);
+  if (ui.appClosed || !ui.token || !ui.appClientId) return;
+  // sendBeacon cannot set X-Dock-Token. keepalive retains the same
+  // origin/token checks; the server's lease covers an interrupted send.
+  void fetch('/api/app/close', {
+    method: 'POST', keepalive: true, cache: 'no-store',
+    headers: { 'Content-Type': 'application/json', 'X-Dock-Token': ui.token },
+    body: JSON.stringify({ client_id: ui.appClientId, reason: 'pagehide' }),
+  }).catch(() => {});
+}
 async function mutate(path, body, success) {
   if (ui.busy) return false;
-  if (ui.serviceOffline) { toast('Reconecta el servicio local de PSP Dock antes de continuar.'); return false; }
+  if (ui.serviceOffline) { toast('Espera a que PSP Dock recupere la conexión antes de continuar.'); return false; }
   if (ui.state?.recovery_required) { toast('Sesión interrumpida: revisa PPSSPP y la recuperación antes de continuar.'); return false; }
   ui.busy = true;
   ui.operation = path;
@@ -95,6 +147,7 @@ async function mutate(path, body, success) {
   }
 }
 async function refresh() {
+  if (ui.appClosing || ui.appClosed) return;
   try {
     const state = await request('/api/state');
     ui.state = state;
@@ -105,11 +158,11 @@ async function refresh() {
   } catch (error) {
     ui.serviceOffline = true;
     $('error').hidden = false;
-    $('error').textContent = `Servicio local no disponible. ${error.message}`;
+    $('error').textContent = `PSP Dock no responde. ${error.message}`;
     if (ui.state) render();
     else {
       $('device-status').classList.add('offline');
-      $('device-label').textContent = 'Servicio sin conexión';
+      $('device-label').textContent = 'La app no responde';
       $('device-role').textContent = 'RECONEXIÓN PENDIENTE';
       xmbRender();
     }
@@ -132,11 +185,14 @@ function renderDevices() {
   const role = $('device-role');
   label.replaceChildren();
   if (ui.serviceOffline) {
-    label.textContent = 'Servicio local sin conexión';
+    label.textContent = 'La app no responde';
     role.textContent = 'NO SE PUEDEN REALIZAR OPERACIONES';
   } else if (state.scanning) {
     label.textContent = 'Buscando PSP…';
     role.textContent = 'LEYENDO EL ESTADO DEL DOCK';
+  } else if (manualHid && state.controller_status.mode === 'msc_diagnostic') {
+    label.textContent = 'PSP Dock · modo diagnóstico';
+    role.textContent = 'DISCO DE PRUEBA DE 512 KiB · NAVEGACIÓN';
   } else if (manualHid) {
     label.textContent = state.session?.exit_requested ? 'Salida del Dock solicitada' : 'Mando PSP HID detectado';
     role.textContent = state.session?.exit_requested ? 'VOLVER A ALMACENAMIENTO MANUALMENTE' : 'MODO MANDO MANUAL · PDK1';
@@ -166,6 +222,7 @@ function renderDevices() {
 }
 function render() {
   const state = ui.state;
+  if (xmbConnectionView().waiting) { xmbRender(); return; }
   const games = state.games || [];
   renderDevices();
   renderPreflight();
@@ -234,7 +291,7 @@ function render() {
   const pending = games.filter((game) => game.availability === 'missing');
   $('transfer-all').hidden = !pending.length;
   $('transfer-all').disabled = !state.selected_device || state.recovery_required || state.session?.running || ui.serviceOffline;
-  $('session-status').textContent = ui.serviceOffline ? 'Servicio desconectado · las operaciones están pausadas' :
+  $('session-status').textContent = ui.serviceOffline ? 'PSP Dock no responde · las operaciones están pausadas' :
     state.recovery_required ? 'Sesión interrumpida · recupera PPSSPP antes de continuar' :
       state.session?.running ? '● PPSSPP en ejecución · vuelve al Dock al terminar' :
         state.session?.pending_return && state.session?.exit_requested ?
@@ -304,8 +361,9 @@ function renderPreflight() {
   const returnPending = !!(state.session?.pending_return ||
     state.session?.exit_requested);
   const playing = !!state.session?.running;
+  const diagnostic = state.controller_status?.mode === 'msc_diagnostic';
   const inHidXmb = !playing && !state.session?.exit_requested &&
-    state.controller_status?.connected === true && prepared;
+    state.controller_status?.connected === true && !diagnostic && prepared;
   panel.hidden = disconnected && !state.games?.length && !returnPending && !state.recovery_required && !state.controller_status?.connected;
   renderRuntimeReadiness(state, prepared);
   $('preflight-summary').textContent = [
@@ -320,7 +378,7 @@ function renderPreflight() {
   let title = 'Preparando el inventario de tu PSP';
   let description = plan.reason || 'Comprobando juegos y guardados.';
   if (ui.serviceOffline) {
-    title = 'Servicio local desconectado';
+    title = 'PSP Dock no responde';
     description = 'Las operaciones están pausadas hasta recuperar la conexión con PSP Dock.';
   } else if (state.demo) {
     title = 'Demostración del modo Dock';
@@ -350,6 +408,9 @@ function renderPreflight() {
   } else if (state.session?.return_result === 'verified' && plan.connected) {
     title = 'Partidas devueltas y verificadas';
     description = 'La PSP y el PC están sincronizados. Antes de quitar el cable, usa la extracción segura del almacenamiento de Windows. El cambio automático de USB sigue pendiente.';
+  } else if (diagnostic) {
+    title = 'PSP Dock · modo diagnóstico 0207';
+    description = 'Puedes navegar por el menú. La PSP ofrece un disco de prueba de 512 KiB; los juegos están desactivados.';
   } else if (state.controller_status?.connected) {
     title = 'Mando PSP HID detectado en Windows';
     description = prepared && state.runtime_prepared === true ?
@@ -395,13 +456,14 @@ function renderPreflight() {
   $('preflight-description').textContent = description;
   $('preflight-caveat').textContent = state.demo ?
     'Vista sintética: el inicio y la conexión HID de juegos reales están desactivados.' :
+    diagnostic ? 'El disco de prueba es sintético. No contiene los juegos ni las partidas de tu Memory Stick.' :
     state.controller_status?.connected ?
       'HID PDK1 comprobado; es una conexión manual. El puente automático entre USB y mando aún está pendiente.' :
       'Mando PSP: el cambio automático USB almacenamiento ↔ HID todavía no está implementado.';
-  const canAct = !!plan.connected && !state.recovery_required && !playing && !ui.busy && !ui.serviceOffline;
+  const canAct = !!plan.connected && !diagnostic && !state.recovery_required && !playing && !ui.busy && !ui.serviceOffline;
   $('preflight-copy').hidden = !canAct || !plan.missing_games || returnPending;
   $('preflight-saves').hidden = !canAct || !(returnPending || plan.save_actions || plan.save_conflicts || !prepared);
-  const canRetryRuntime = !!state.selected_device && !state.demo && !state.scanning &&
+  const canRetryRuntime = !!state.selected_device && !state.demo && !diagnostic && !state.scanning &&
     prepared && state.runtime_prepared === false && !state.recovery_required && !playing && !returnPending;
   $('preflight-prepare-runtime').hidden = !canRetryRuntime;
   $('preflight-prepare-runtime').disabled = ui.busy || ui.serviceOffline || !plan.ready_games;
@@ -458,18 +520,20 @@ function renderSelected(scroll, focus = false) {
   const pendingSaves = !!(saves.actions?.length || saves.conflicts?.length);
   const prepared = state.preflight?.saves_prepared === true;
   const manualHid = state.controller_status?.connected === true;
+  const connection = dockConnectionView(state, { serviceOffline: ui.serviceOffline });
   const canLaunch = !ui.serviceOffline && !state.scanning && !state.demo && !!state.can_launch_game &&
-    state.runtime_prepared === true && manualHid && game.availability === 'ready' &&
+    connection.canPlay && state.runtime_prepared === true && manualHid && game.availability === 'ready' &&
     !!state.emulator?.available && !state.session?.running &&
     !state.session?.exit_requested && !state.recovery_required && !pendingSaves && prepared;
   $('launch-button').disabled = !canLaunch;
   let note = 'Mando PSP HID PDK1 detectado. El juego se abrirá en PPSSPP con la biblioteca local; la conexión HID es manual.';
-  if (ui.serviceOffline) note = 'El servicio local está desconectado. Reconéctalo para jugar.';
+  if (ui.serviceOffline) note = 'La app no responde. Espera a que recupere la conexión para jugar.';
   else if (state.recovery_required) note = 'Hay una sesión interrumpida. Recupérala antes de jugar.';
   else if (state.session?.running) note = 'PPSSPP está abierto. Termina la sesión antes de lanzar otra partida.';
   else if (state.session?.pending_return && (state.session?.exit_requested || !manualHid))
     note = 'La salida del Dock está pendiente. Vuelve a almacenamiento USB y confirma la devolución de partidas.';
   else if (state.demo) note = 'Biblioteca sintética: estos juegos no se pueden ejecutar.';
+  else if (connection.diagnostic) note = 'Modo diagnóstico 0207: puedes navegar. Los juegos están desactivados mientras se usa el disco de prueba de 512 KiB.';
   else if (game.availability === 'missing') note = state.selected_device ?
     'Este juego está en la PSP. Cópialo al PC tras revisar la transferencia.' :
     'Este juego aún no está en el PC. Vuelve a almacenamiento USB si quieres copiarlo.';
@@ -511,6 +575,8 @@ function launch() {
   const state = ui.state;
   const game = state?.games?.find((item) => item.id === ui.selected);
   if (state.demo) { toast('Esta es una muestra sintética. El inicio está desactivado.'); return; }
+  if (state.controller_status?.mode === 'msc_diagnostic') { toast('Modo diagnóstico: puedes navegar, pero los juegos están desactivados.'); return; }
+  if (xmbConnectionView().waiting) return;
   if (state.session?.running) { toast('PPSSPP ya está en ejecución.'); return; }
   if (state.session?.pending_return && (state.session?.exit_requested || !state.controller_status?.connected)) {
     if (state.selected_device) openSaves();
@@ -538,7 +604,7 @@ function launch() {
       'Vuelve al modo almacenamiento USB y prepara PPSSPP antes de utilizar el mando HID.');
     return;
   }
-  if (!state.can_launch_game || state.controller_status?.connected !== true) {
+  if (!state.can_launch_game || !dockConnectionView(state).canPlay) {
     toast(state.selected_device ?
       'Las partidas están listas. Entra manualmente en modo mando HID PDK1 y vuelve a intentarlo.' :
       'Todavía no se detecta el mando PSP HID PDK1 necesario para iniciar el juego.');
@@ -678,7 +744,7 @@ async function startTransfer() {
   $('transfer-percent').textContent = '0 %';
   $('transfer-phase').textContent = 'Iniciando copia…';
   $('transfer-progress-file').textContent = 'Preparando el primer juego…';
-  $('transfer-progress-bytes').textContent = 'Esperando datos del servicio local…';
+  $('transfer-progress-bytes').textContent = 'Esperando datos de PSP Dock…';
   transferFeedback('');
   renderTransferControls();
   void pollTransferStatus(run);
@@ -696,7 +762,7 @@ async function startTransfer() {
       renderTransferStatus(finalStatus);
       if (!completed && finalStatus.phase === 'idle') {
         $('transfer-phase').textContent = 'No se pudo iniciar la copia';
-        transferFeedback('La copia no llegó a comenzar. Revisa el error del servicio local antes de reintentar.');
+        transferFeedback('La copia no llegó a comenzar. Revisa el error de PSP Dock antes de reintentar.');
       }
     } catch {
       transferFeedback('No se pudo consultar el estado final. Comprueba la biblioteca antes de reintentar.');
@@ -748,7 +814,7 @@ function preparePpsspp() {
     'La preparación de PPSSPP sigue pendiente. Revisa el aviso y vuelve a intentarlo.');
 }
 function syncResultMessage(state, returning = false) {
-  if (ui.serviceOffline) return 'Operación enviada; reconecta el servicio para comprobar el resultado.';
+  if (ui.serviceOffline) return 'Operación enviada; espera a que PSP Dock responda para comprobar el resultado.';
   if (returning) return state?.session?.pending_return ?
     'Partidas sin conflictos sincronizadas; aún quedan pendientes de devolución.' :
     'Devolución de partidas comprobada.';
@@ -1012,6 +1078,9 @@ $('storage-location-browse').addEventListener('click', async () => {
   }
 });
 document.addEventListener('keydown', (event) => {
+  // Native button behavior (including Enter on «Cerrar app») remains
+  // available; no keyboard shortcut may operate the hidden XMB.
+  if (xmbConnectionView().waiting) return;
   if (ui.busy || document.querySelector('dialog[open]') || event.altKey || event.ctrlKey || event.metaKey || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
   const button = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'accept', ' ': 'accept',
     Escape: 'back', Backspace: 'back', t: 'menu', T: 'menu', ContextMenu: 'menu', PageUp: 'pageLeft', PageDown: 'pageRight', Home: 'start' }[event.key];
@@ -1075,6 +1144,7 @@ function controllerInput(pad) {
   };
 }
 function gamepadLoop(time) {
+  if (ui.appClosed) return;
   // On PSP HID prefer the Windows-native WinMM source to the browser:
   // otherwise one physical CROSS can fire twice (WinMM + Gamepad API).
   if (ui.nativePadConnected && Date.now() - ui.nativePadLastAt < 600) {
@@ -1169,7 +1239,7 @@ function processNativePspFrame(input, now) {
 }
 async function pollNativePspInput() {
   try {
-    if (!document.hidden && !ui.serviceOffline) {
+    if (!document.hidden && !ui.serviceOffline && !ui.appClosing && !ui.appClosed) {
       const frame = await request('/api/controller-input');
       if (frame.connected === true && frame.source === 'psp_winmm') {
         if (!ui.nativePadConnected) {
@@ -1200,7 +1270,7 @@ async function pollNativePspInput() {
     ui.nativePadDirection = '';
     ui.gamepadId = '';
   } finally {
-    setTimeout(pollNativePspInput, ui.nativePadConnected ? 80 : 400);
+    if (!ui.appClosed) setTimeout(pollNativePspInput, ui.nativePadConnected ? 80 : 400);
   }
 }
 // ===================================================================
@@ -1208,10 +1278,49 @@ async function pollNativePspInput() {
 // tests/xmb_navigation_model.test.js. Secciones en horizontal,
 // elementos en vertical, submenú, menú △ y confirmación Sí/No.
 // ===================================================================
+// ==== inicio del modelo de conexión puro ====
+function dockConnectionView(state, options = {}) {
+  const current = state || {};
+  const controller = current.controller_status || {};
+  const session = current.session || {};
+  const demo = current.demo === true;
+  const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
+  const stable = controller.connected === true && controller.mode === 'hid_manual';
+  const storage = !demo && !options.serviceOffline && controller.mode === 'usb_storage' &&
+    controller.connected !== true && typeof current.selected_device === 'string' && current.selected_device.trim().length > 0;
+  const storageSetup = storage && options.storageSetupRequested === true && !options.closed;
+  const transfer = options.transferInFlight === true || current.transfer_status?.active === true ||
+    ['waiting_for_storage', 'copying'].includes(current.copy_queue?.status);
+  const protectedWork = !!(session.running || session.pending_return || session.exit_requested ||
+    current.recovery_required || transfer || options.busy || options.textureActive ||
+    current.copy_queue?.status === 'interrupted_review');
+  const connected = !options.serviceOffline && (stable || diagnostic);
+  const waiting = options.closed === true || !(demo || connected || protectedWork || storageSetup);
+  const kind = options.closed ? 'closed' : options.serviceOffline ? 'offline' : !state ? 'loading' :
+    controller.mode === 'usb_storage' || current.selected_device ? 'storage' : 'connect';
+  const copy = {
+    loading: ['Comprobando conexión…', 'Puedes conectar la consola en cualquier momento.'],
+    connect: ['Esperando el modo Dock', 'Si el cable ya está conectado, abre PSP Dock en la consola.'],
+    storage: ['PSP conectada en almacenamiento USB', storage ?
+      'Puedes preparar la biblioteca aquí, o salir del modo USB de Sony y abrir PSP Dock en la consola.' :
+      'Sal del modo USB de Sony y abre PSP Dock en la consola para entrar al menú.'],
+    offline: ['La app no puede actualizar la conexión', 'Espera un momento. Si no se recupera, cierra esta ventana y vuelve a abrir PSP Dock en Windows.'],
+    closed: ['Esta ventana ya está desconectada', 'Puedes cerrar esta ventana.'],
+  }[kind];
+  return {
+    waiting, screen: waiting ? 'waiting' : 'menu', kind, diagnostic: diagnostic && !demo,
+    canPrepareStorage: storage && !options.closed, storageSetup,
+    canPlay: !demo && !options.serviceOffline && !options.closed && stable && controller.can_play === true,
+    protectedWork, status: copy[0], detail: copy[1],
+  };
+}
+// ==== fin del modelo de conexión puro ====
+
 function xmbStep(nav, view, button) {
   const next = { ...nav, idx: { ...nav.idx } };
   const clamp = (value, count) => Math.max(0, Math.min(Math.max(1, count) - 1, value));
   const done = (effect = null) => ({ nav: next, effect });
+  if (view.waiting === true) return done();
   if (next.confirm) {
     if (button === 'left' || button === 'right' || button === 'up' || button === 'down')
       next.confirm = { yes: !next.confirm.yes };
@@ -1310,6 +1419,61 @@ const xmb = {
 try { xmb.theme = localStorage.getItem('psp-dock-theme') || 'month'; } catch { /* sin almacenamiento */ }
 try { xmb.mediaSound = localStorage.getItem('psp-dock-xmb-sound') !== 'off'; } catch { /* sin almacenamiento */ }
 
+function xmbConnectionView() {
+  const connection = dockConnectionView(ui.state, {
+    serviceOffline: ui.serviceOffline, transferInFlight: ui.transferInFlight,
+    busy: ui.busy, textureActive: ui.textureProgress?.active, closed: ui.appClosed,
+    storageSetupRequested: ui.storageSetupRequested,
+  });
+  // Opt-in belongs to the current storage connection. A disconnect or
+  // switch into HID must not reopen preparation on the next USB arrival.
+  if (!connection.canPrepareStorage) ui.storageSetupRequested = false;
+  return connection;
+}
+function requestStorageSetup() {
+  const connection = xmbConnectionView();
+  if (!connection.waiting || !connection.canPrepareStorage || ui.busy || ui.appClosing || ui.appClosed) return;
+  ui.storageSetupRequested = true;
+  xmb.nav = { ...xmb.nav, cat: 1, level: 'list', subIdx: 0, side: null, confirm: null };
+  render();
+}
+function xmbRenderConnection(connection) {
+  const waiting = $('dock-connect');
+  const changed = waiting.hidden === connection.waiting;
+  waiting.hidden = !connection.waiting;
+  const menu = $('xmb-menu');
+  menu.hidden = connection.waiting;
+  menu.inert = connection.waiting;
+  menu.setAttribute('aria-hidden', String(connection.waiting));
+  $('xmb').classList.toggle('waiting', connection.waiting);
+  $('xmb').classList.toggle('has-diagnostic', connection.diagnostic && !connection.waiting);
+  $('dock-diagnostic').hidden = !connection.diagnostic || connection.waiting;
+  $('dock-connect-status').dataset.kind = connection.kind;
+  $('dock-connect-status-title').textContent = connection.status;
+  $('dock-connect-status-detail').textContent = connection.detail;
+  $('dock-connect-prepare').hidden = !connection.canPrepareStorage || !connection.waiting;
+  $('dock-connect-prepare').disabled = ui.appClosing || ui.appClosed;
+  $('dock-connect-title').textContent = ui.appClosed ? 'Hasta la próxima' : 'Conecta tu PSP';
+  $('dock-connect-intro').textContent = ui.appClosed ? 'Tus datos se conservan en el PC.' : 'El menú aparecerá al detectar el modo Dock.';
+  $('dock-connect-steps').hidden = ui.appClosed;
+  $('dock-connect-footer').textContent = ui.appClosing ? 'Cerrando PSP Dock…' : ui.appClosed ? 'La app ya no está esperando conexiones.' : 'La app está esperando tu PSP.';
+  $('dock-connect-close').disabled = ui.appClosing || ui.appClosed;
+  if (connection.waiting) {
+    xmbPreviewGame(null);
+    if (changed) {
+      // No active operation reaches this branch. Discard transient
+      // confirmations and dialogs so reconnecting cannot accept one.
+      xmb.nav = { ...xmb.nav, level: 'list', subIdx: 0, side: null, confirm: null };
+      xmb.sub = null; xmb.side = null; xmb.confirm = null;
+      document.querySelectorAll('dialog[open]').forEach((dialog) => dialog.close());
+      waiting.focus({ preventScroll: true });
+    }
+  } else if (changed) {
+    $('dock-connect-error').hidden = true;
+    $('xmb').focus({ preventScroll: true });
+  }
+}
+
 function xmbPreviewGame(gameId) {
   if (xmb.mediaGame === gameId) return;
   xmb.mediaGame = gameId;
@@ -1405,6 +1569,7 @@ async function xmbSaveSetting(key, value, label) {
 function xmbGameIcon(game) { return { game }; }
 function xmbBuildSections() {
   const state = ui.state || {};
+  const diagnostic = state.controller_status?.mode === 'msc_diagnostic';
   const games = state.games || [];
   const saves = state.saves || { actions: [], conflicts: [], unchanged: 0 };
   if (ui.state) renderSaves();
@@ -1470,9 +1635,9 @@ function xmbBuildSections() {
   dock.push({ key: 'refresh', t: 'Buscar PSP de nuevo', s: xmbText('device-label') + (xmbText('device-role') ? ' · ' + xmbText('device-role').toLowerCase() : ''), icon: 'search',
     activate: async () => { toast('Buscando PSP…'); await refresh(); } });
   const canExit = xmbUsable('preflight-exit-dock');
-  dock.push({ key: 'exit', t: 'Salir del Dock', s: canExit ? 'Devuelve tus partidas y vuelve a jugar en la PSP' : 'Disponible con el mando PSP conectado y PPSSPP cerrado', icon: 'exit',
+  dock.push({ key: 'exit', t: diagnostic ? 'Cerrar la prueba en la PSP' : 'Salir del Dock', s: diagnostic ? 'Mantén START+SELECT en la consola para terminar la prueba USB.' : canExit ? 'Devuelve tus partidas y vuelve a jugar en la PSP' : 'Disponible con el mando PSP conectado y PPSSPP cerrado', icon: 'exit',
     dim: !canExit,
-    activate: () => canExit ?
+    activate: () => diagnostic ? toast('Mantén START+SELECT en la PSP para cerrar la prueba de USB Storage + HID.') : canExit ?
       xmbConfirm('¿Salir del Dock?<small>Después mantén START+SELECT 1,5 s en la PSP y vuelve al modo USB para devolver las partidas.</small>', false, () => $('preflight-exit-dock').click()) :
       toast('Salir del Dock se activa cuando la PSP está conectada como mando y no hay ningún juego abierto.') });
   out.dock = dock;
@@ -1483,7 +1648,7 @@ function xmbBuildSections() {
     chip: state.demo ? ['inh', 'DEMO'] : availability[game.availability], icon: xmbGameIcon(game),
     focus: () => { if (ui.selected !== game.id) { ui.selected = game.id; renderSelected(false); } },
     activate: () => xmbLaunch(game), menu: () => xmbGameMenu(game),
-  })) : [{ key: 'empty', t: xmbText('empty-title') || 'Conecta tu PSP', s: xmbText('empty-description'), icon: 'search',
+  })) : [{ key: 'empty', t: diagnostic ? 'PSP Dock conectada' : xmbText('empty-title') || 'Conecta tu PSP', s: diagnostic ? 'Prueba USB Storage + HID · puedes recorrer las secciones del menú.' : xmbText('empty-description'), icon: diagnostic ? 'info' : 'search',
     activate: async () => { toast('Buscando PSP…'); await refresh(); } }];
 
   const partidas = [];
@@ -1697,8 +1862,13 @@ function xmbResolve(slot) {
   });
 }
 function xmbLaunch(game) {
+  if (xmbConnectionView().waiting) return;
   ui.selected = game.id;
   renderSelected(false);
+  if (ui.state?.controller_status?.mode === 'msc_diagnostic') {
+    toast('Modo diagnóstico: puedes navegar, pero los juegos están desactivados.');
+    return;
+  }
   if (game.availability === 'missing' && ui.state?.controller_status?.connected) {
     // CROSS on a missing title opens the same contextual right-hand menu.
     // Neither CROSS nor TRIANGLE may queue a copy directly.
@@ -1713,6 +1883,11 @@ function xmbLaunch(game) {
       !document.querySelector('dialog[open]') && $('launch-button').disabled) toast(xmbText('launch-note'));
 }
 function xmbQueueMissingGame(game) {
+  if (xmbConnectionView().waiting) return;
+  if (ui.state?.controller_status?.mode === 'msc_diagnostic') {
+    toast('El disco de prueba no contiene juegos. La copia está desactivada en modo diagnóstico.');
+    return;
+  }
   xmbConfirm('¿Copiar ' + xmbEscape(game.title) +
     ' al PC?<small>Se pausará el control mientras se copia. ' +
     'Hasta completar el puente USB, hay que salir de HID con START+SELECT ' +
@@ -1723,8 +1898,9 @@ function xmbQueueMissingGame(game) {
     });
 }
 function xmbGameMenu(game) {
+  const diagnostic = ui.state?.controller_status?.mode === 'msc_diagnostic';
   const opts = [
-    { t: game.availability === 'missing' ? 'Sincronizar con Dock' : 'Jugar', s: game.title },
+    { t: diagnostic ? 'Juegos desactivados' : game.availability === 'missing' ? 'Sincronizar con Dock' : 'Jugar', s: diagnostic ? 'Disco de prueba · sólo navegación' : game.title },
     { t: 'Ajustes gráficos de este juego', s: xmbGfxSummary(xmb.gfx[game.id]?.choice) },
     { t: 'Partidas', s: 'Abre la sección Partidas' },
     { t: 'Información', s: `${game.format || 'JUEGO'} · ${bytes(game.size)}` },
@@ -1732,6 +1908,7 @@ function xmbGameMenu(game) {
   xmbLoadGraphics(game.id);
   xmbSide(game.title, opts, (index) => {
     if (index === 0) {
+      if (diagnostic) { toast('Modo diagnóstico: puedes navegar, pero los juegos están desactivados.'); return; }
       // Only an explicitly selected menu action can begin the
       // confirmation dialog; TRIANGLE itself has no side effects.
       if (game.availability === 'missing') xmbQueueMissingGame(game);
@@ -1743,6 +1920,7 @@ function xmbGameMenu(game) {
   });
 }
 function xmbGoto(id) {
+  if (xmbConnectionView().waiting) return;
   const cat = XMB_SECTIONS.findIndex(([key]) => key === id);
   if (cat < 0) return;
   xmb.nav = { ...xmb.nav, cat, level: 'list', subIdx: 0, side: null, confirm: null };
@@ -1753,6 +1931,8 @@ function xmbCurrentItems() {
   return xmb.nav.level === 'sub' ? xmbGraphicsRows(xmb.sub?.id || null) : section?.items || [];
 }
 function xmbPress(button) {
+  const connection = xmbConnectionView();
+  if (connection.waiting) return;
   if (!xmb.sections.length) xmb.sections = xmbBuildSections();
   if (ui.textureProgress?.active) return;
   if (!xmb.nav.confirm &&
@@ -1765,6 +1945,7 @@ function xmbPress(button) {
   }
   if (ui.state?.session?.running && button !== 'back') return;
   const view = {
+    waiting: connection.waiting,
     sections: xmb.sections.map((section) => ({ id: section.id, count: section.items.length })),
     subCount: xmb.nav.level === 'sub' ? xmbGraphicsRows(xmb.sub?.id || null).length : 0,
     sideCount: xmb.side?.opts.length || 0,
@@ -1784,7 +1965,7 @@ function xmbPress(button) {
     xmbGoto('dock');
     const items = xmb.sections.find((section) => section.id === 'dock')?.items || [];
     xmb.nav.idx = { ...xmb.nav.idx, dock: Math.max(0, items.length - 1) };
-    toast('Salir del Dock · pulsa ✕ para confirmar.');
+    toast(connection.diagnostic ? 'Cierra la prueba con START+SELECT en la PSP.' : 'Salir del Dock · pulsa ✕ para confirmar.');
   }
   xmbRender();
 }
@@ -1854,6 +2035,7 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
     node.style.top = (r === 0 ? 20.5 : r > 0 ? 21 + r * 5.6 : 7.2 + (r + 1) * 5.2) + 'cqw';
     node.style.opacity = collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
     node.onclick = () => {
+      if (xmbConnectionView().waiting) return;
       if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
       else if (collapsed) xmbPress('back');
       else if (r === 0) xmbPress('accept');
@@ -1863,7 +2045,9 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
   });
 }
 function xmbRender() {
-  if (!ui.state && !ui.serviceOffline) return;
+  const connection = xmbConnectionView();
+  xmbRenderConnection(connection);
+  if (connection.waiting) return;
   const state = ui.state || {};
   xmb.sections = xmbBuildSections();
   const nav = xmb.nav;
@@ -1894,7 +2078,7 @@ function xmbRender() {
       node.style.left = (XMB_CAT_X + i * XMB_CAT_GAP) + 'cqw';
       node.innerHTML = XMB_ICONS[item.id] + '<span></span><em class="xmb-badge" hidden></em>';
       node.querySelector('span').textContent = item.label;
-      node.addEventListener('click', () => { xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
+      node.addEventListener('click', () => { if (xmbConnectionView().waiting) return; xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
       return node;
     }));
   }
@@ -1913,11 +2097,11 @@ function xmbRender() {
   if (inSub) xmbPlaceColumn('sub:', rows, nav.subIdx, 26, false, used);
   for (const [key, node] of xmb.els) if (!used.has(key)) { node.remove(); xmb.els.delete(key); }
 
-  $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
+  $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : connection.storageSetup ? 'PREPARACIÓN · almacenamiento USB' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
   const hid = state.controller_status?.connected === true;
   $('xmb-hid').classList.toggle('on', hid);
   $('xmb-hid').classList.toggle('storage', !hid && !!state.selected_device);
-  $('xmb-hid-label').textContent = ui.serviceOffline ? 'Sin servicio' : hid ? 'PSP HID' : state.selected_device ? 'PSP USB' : 'Sin PSP';
+  $('xmb-hid-label').textContent = ui.serviceOffline ? 'Sin conexión con la app' : connection.diagnostic ? 'PSP · diagnóstico' : hid ? 'PSP HID' : state.selected_device ? 'PSP USB' : 'Sin PSP';
   $('xmb-busy').hidden = !ui.busy;
   $('xmb-busy').textContent = ui.busy ? 'Procesando…' : '';
 
@@ -1975,7 +2159,7 @@ function xmbRenderHints(item) {
   else if (nav.level === 'sub') { add('▲▼', 'Ajuste'); add('✕', 'Cambiar'); add('○', 'Volver'); }
   else {
     add('◀▶', 'Sección'); add('▲▼', 'Elegir');
-    if (item?.game) { add('✕', item.game.availability === 'missing' ? 'Menú' : 'Jugar'); add('△', 'Opciones'); }
+    if (item?.game) { add('✕', xmbConnectionView().diagnostic ? 'Información' : item.game.availability === 'missing' ? 'Menú' : 'Jugar'); add('△', 'Opciones'); }
     else if (item) add('✕', 'Entrar');
   }
   $('xmb-hints').replaceChildren(...hints.map(([glyph, label]) => {
@@ -2023,6 +2207,24 @@ xmbApplyTheme();
 setInterval(xmbApplyTheme, 60000);
 xmbWaves();
 xmbLoadSettings();
+
+function appNewClientId() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
+}
+ui.appClientId = appNewClientId();
+$('dock-connect-close').addEventListener('click', closeDockApp);
+$('dock-connect-prepare').addEventListener('click', requestStorageSetup);
+window.addEventListener('pagehide', appPageLeaving);
+window.addEventListener('pageshow', () => {
+  if (!ui.appPageHidden || ui.appClosed) return;
+  ui.appPageHidden = false;
+  // A document restored from the back/forward cache is a new lease.
+  // Its former ID may have a server-side tombstone from pagehide.
+  ui.appClientId = appNewClientId();
+  void appHeartbeat();
+});
+void appHeartbeat();
+xmbRender();
 
 function updateClock() {
   // Como la PSP: día/mes y hora.

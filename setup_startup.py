@@ -1,10 +1,9 @@
-"""Opt-in, reversible per-user Windows startup for PSP Dock.
+"""Legacy Windows startup cleanup and LIVE data location helpers.
 
-The script is NOT called by dock.py and never silently installs anything.
-It adds a single marked .cmd to the current user's Startup folder ONLY when
-explicitly invoked with --install. The background pythonw process merely
-monitors for an attached PSP storage device and opens the localhost XMB.
-It does NOT enable a USBSTOR/HID role bridge or touch the PSP/firmware.
+David chose manual Windows launch: the visible app waits for the PSP and
+closes its detector when the app is closed. New startup registration is
+retired. --status and --remove remain for reversible legacy cleanup.
+Pure data-location helpers also serve the normal manual launcher.
 """
 from __future__ import annotations
 
@@ -122,6 +121,10 @@ def main() -> int:
     # start_dock.py can discover it in future sessions.
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
+    if args.install:
+        print("Inicio con Windows retirado. Abre Iniciar-PSP-Dock.cmd; "
+              "la aplicación esperará a que conectes la PSP.")
+        return 1
     if os.name != "nt":
         parser.error("El inicio automático es exclusivo de Windows.")
     if not os.environ.get("APPDATA"):

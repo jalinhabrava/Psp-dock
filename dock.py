@@ -15,8 +15,10 @@ import threading
 import time
 import uuid
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dock_events import EventJournal
+from dock_lifecycle import UiLifecycle
 from dock_preflight import assess_storage
 from psp_artwork import read_icon, valid_png
 
@@ -501,6 +503,7 @@ class Dock:
             for g in self.last_games
         ]
         self.snapshot = {'demo':demo,'devices':[],'selected_device':None,'games':[],
+                         'connection_state':'waiting_psp',
                          'saves':{'actions':[],'conflicts':[],'unchanged':0},
                          'session':dict(self.session),'emulator':{'path':self.config['emulator'],'available':bool(self.config['emulator'])},
                          'error':None,'recovery_required':self.recovery_required,'scanning':True,
@@ -638,10 +641,11 @@ class Dock:
             # A game ended: restore the SAME XMB window automatically,
             # instead of leaving the player on another desktop window.
             # Never run Alt+Tab or focus an arbitrary process by title.
-            from ppsspp_windows_flow import return_to_xmb
-            restored = return_to_xmb()
-            self.events.record('xmb_focus_return', evidence='pc_observed',
-                               result='focused' if restored else 'not_found')
+            if not self.stop.is_set():
+                from ppsspp_windows_flow import return_to_xmb
+                restored = return_to_xmb()
+                self.events.record('xmb_focus_return', evidence='pc_observed',
+                                   result='focused' if restored else 'not_found')
         return self.process is not None or self.recovery_required
 
     def save_plan(self):
@@ -906,6 +910,7 @@ class Dock:
         if self.demo or self.running() or self.session.get('exit_requested'):
             raise ValueError('No se pueden solicitar copias en esta fase.')
         if not (self.snapshot.get('controller_status',{}).get('connected')
+                and self.snapshot.get('controller_status',{}).get('can_play') is True
                 and self.snapshot.get('selected_device') is None):
             raise ValueError('Esta solicitud requiere la PSP como mando HID.')
         if not isinstance(game_id,str) or not re.fullmatch('[0-9a-f]{24}',game_id):
@@ -1191,6 +1196,8 @@ class Dock:
     def launch(self, game_id):
         if self.demo:
             raise ValueError('La demostración contiene archivos sintéticos; no son juegos ejecutables.')
+        if self.snapshot.get('controller_status',{}).get('mode') == 'msc_diagnostic':
+            raise ValueError('El modo USB Storage + HID de prueba solo permite navegar; no inicia juegos.')
         if self.running():
             raise ValueError('Ya hay una sesión abierta o pendiente de recuperación.')
         if self.session.get('exit_requested'):
@@ -1224,8 +1231,14 @@ class Dock:
         # Manual HID-only mode is a verified PC-only fallback while the
         # kernel USBSTOR<->HID role bridge remains unavailable. A PDK1
         # device proves a gamepad, not firmware FAT ownership or same USB.
+        from psp_dock_identity import probe_dock
+        identity = probe_dock()
+        if identity is None or identity.get('can_play') is not True:
+            raise ValueError('Se requiere el mando Dock estable; el diagnóstico no autoriza juegos.')
         from ppsspp_hid_session import validate_hid_only
         first_hid = validate_hid_only()
+        if first_hid != {'path':identity['path'],'session':identity['session']}:
+            raise ValueError('La identidad HID cambió antes de preparar PPSSPP.')
         exe = self.prepared_runtime_path(verify_digest=True)
         if exe is None:
             raise ValueError('Prepara PPSSPP desde Windows MIENTRAS USBSTOR está activo antes de iniciar el mando HID.')
@@ -1242,7 +1255,7 @@ class Dock:
         # Verify the same HID session after reading the PC runtime. A
         # watchdog expiration or new USBSTOR attachment must block spawn.
         last_hid = validate_hid_only()
-        if first_hid != last_hid:
+        if first_hid != last_hid or probe_dock() != identity:
             raise ValueError('El mando HID cambió durante la preparación: cancelo PPSSPP.')
         args = [str(exe), '--fullscreen', '--pause-menu-exit', '--graphics=' + self.config['backend'],
                 str(inside(Path(self.config['library']), game['local_relative']))]
@@ -1454,26 +1467,39 @@ class Dock:
                 self.texture_download_status['active']=False
 
     def controller_status(self, storage_mounted):
-        """Observe manual PDK1 HID without authorizing a USB role handoff."""
+        """Classify navigation separately from eligibility for real games."""
+        unavailable = {'connected': False, 'can_play': False,
+                       'synthetic_storage': False}
         if self.demo:
-            return {'connected': False, 'mode': 'demo',
+            return {**unavailable, 'mode': 'demo',
                     'reason': 'La demo no controla ningún mando real.'}
         if self.storage_polling_paused:
-            return {'connected': False, 'mode': 'host_lock_preparation',
+            return {**unavailable, 'mode': 'host_lock_preparation',
                     'reason': 'Sondeo FAT suspendido; no es prueba de bloqueo Windows.'}
         if storage_mounted:
-            return {'connected': False, 'mode': 'usb_storage',
-                    'reason': 'Primero termina en almacenamiento; HID y FAT no deben coexistir.'}
+            return {**unavailable, 'mode': 'usb_storage',
+                    'reason': 'Almacenamiento Sony conectado. Abre PSP Dock para usar su mando.'}
         if os.name != 'nt':
-            return {'connected': False, 'mode': 'unsupported',
+            return {**unavailable, 'mode': 'unsupported',
                     'reason': 'El mando PDK1 se comprueba únicamente en Windows.'}
         try:
+            from psp_dock_identity import probe_dock
+            identity = probe_dock()
+            if identity is None:
+                return {**unavailable, 'mode': 'await_hid',
+                        'reason': 'Conecta tu PSP y abre PSP Dock en la consola.'}
+            if identity['mode'] == 'msc_diagnostic':
+                return {**identity, 'connected': True,
+                        'reason': 'USB Storage + HID conectado: disco de prueba de 512 KiB. '
+                                  'Puedes navegar; la Memory Stick real no está disponible.'}
             from ppsspp_hid_session import validate_hid_only
-            validate_hid_only()
+            checked = validate_hid_only()
+            if checked != {'path':identity['path'],'session':identity['session']}:
+                raise ValueError('La sesión HID cambió durante la comprobación.')
         except (OSError, ValueError) as exc:
-            return {'connected': False, 'mode': 'await_hid',
+            return {**unavailable, 'mode': 'await_hid',
                     'reason': str(exc)}
-        return {'connected': True, 'mode': 'hid_manual',
+        return {**identity, 'connected': True,
                 'reason': 'Mando HID PDK1 confirmado; no es prueba del bridge USB automático.'}
 
     def psp_launcher_input(self):
@@ -1490,8 +1516,13 @@ class Dock:
         seen = self.snapshot.get('controller_status', {})
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
+        profiles = {'hid_manual': (0x01CB, 0x0104),
+                    'msc_diagnostic': (0x01CC, 0x0207)}
+        expected = profiles.get(seen.get('mode'))
+        if expected is None or (seen.get('product_id'), seen.get('revision')) != expected:
+            return idle("La identidad del mando no corresponde a un modo Dock admitido.")
         try:
-            return PSPWinMMReader().read()
+            return PSPWinMMReader(expected_product=expected[0]).read()
         except (OSError, ValueError, RuntimeError) as exc:
             return idle(str(exc))
 
@@ -1503,23 +1534,28 @@ class Dock:
                  else {'actions': [], 'conflicts': [], 'unchanged': 0})
         remembered_serial = volume_identity(device) if device is not None else self.catalog_volume
         controller = self.controller_status(device is not None)
+        hid_eligible = bool(controller.get('connected') is True and
+                            controller.get('mode') == 'hid_manual' and
+                            controller.get('can_play') is True and
+                            controller.get('synthetic_storage') is False)
         preflight = assess_storage(
             connected=device is not None, demo=self.demo, games=games,
             saves=saves, session={**self.session, 'running': running},
             recovering=self.recovery_required,
             current_volume_serial=remembered_serial,
-            hid_connected=controller['connected'],
+            hid_connected=hid_eligible,
         )
         local_saves = inside(Path(self.config['memstick']), 'PSP/SAVEDATA')
         local_journal = bool(list(local_saves.glob('.dock-journal-*.json')))
         can_launch = bool(
-            controller['connected'] and preflight.saves_prepared and
+            hid_eligible and preflight.saves_prepared and
             preflight.ready_games > 0 and not running and
             not self.recovery_required and not local_journal and
             not self.session.get('exit_requested') and
             self.prepared_runtime_path() is not None
         )
         return {'demo': self.demo, 'devices': self.devices(), 'selected_device': str(device) if device else None,
+                'connection_state': 'dock_connected' if controller.get('connected') is True else 'waiting_psp',
                 'games': games, 'saves': saves,
                 'copy_queue':dict(self.copy_queue),
                 'copy_policy': self.copy_policy(),
@@ -1694,6 +1730,8 @@ class Dock:
             open_on_attach = False
             close_on_verified = False
             with self.lock:
+                if self.stop.is_set():
+                    break
                 try:
                     running = self.running()
                     root = self.root()
@@ -1789,6 +1827,11 @@ class Dock:
                 except (OSError, ValueError) as e:
                     self.error = str(e)
                     self.snapshot = {**self.snapshot,'error':self.error,'scanning':False,
+                                     'controller_status':{
+                                         'connected':False,'mode':'await_hid','can_play':False,
+                                         'synthetic_storage':False,
+                                         'reason':'No se pudo actualizar la conexión de la PSP.'},
+                                     'can_launch_game':False,'connection_state':'waiting_psp',
                                      'session':{**self.session,'running':self.running()}}
             if open_on_attach and self.on_connected:
                 # Browser opening is best-effort after the read-only audit,
@@ -1879,7 +1922,7 @@ def recover_session(data):
     finally:
         lock.close()
 
-def launch_xmb_window(url, *, app_window=False):
+def launch_xmb_window(url, *, app_window=False, reuse_existing=True, include_handles=None):
     """Open the Windows XMB as a standalone fullscreen app, not another tab.
 
     Only the fixed localhost URL generated by the bound HTTP service is
@@ -1890,12 +1933,18 @@ def launch_xmb_window(url, *, app_window=False):
         raise ValueError('La ventana XMB solo admite la URL local del Dock.')
     if not app_window:
         return webbrowser.open(url)
-    from xmb_window import maximize_existing_xmb, maximize_when_ready
+    from xmb_window import (enumerate_xmb_windows, maximize_existing_xmb,
+                            maximize_when_ready)
     # Preserve current selection/menu state in an already opened XMB,
     # instead of spawning another Chrome app window every time the user
     # double-clicks the desktop shortcut.
-    if maximize_existing_xmb():
+    if reuse_existing and maximize_existing_xmb(include_handles=include_handles):
         return True
+    previous_handles = set()
+    try:
+        previous_handles = {row['handle'] for row in enumerate_xmb_windows()}
+    except OSError:
+        pass
     candidates = [
         Path(os.environ.get('PROGRAMFILES', 'C:/Program Files')) /
         'Google/Chrome/Application/chrome.exe',
@@ -1913,6 +1962,7 @@ def launch_xmb_window(url, *, app_window=False):
     # titled XMB app is then safely maximized without touching any other
     # window or issuing keystrokes to the user's desktop.
     threading.Thread(target=maximize_when_ready,daemon=True,
+                     kwargs={'exclude_handles':previous_handles},
                      name='PSPDockXMBWindowMaximize').start()
     return proc
 
@@ -1922,9 +1972,65 @@ def service_fingerprint(data):
     return hashlib.sha256(str(Path(data).resolve()).encode('utf-8')).hexdigest()
 
 
-def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
+def app_close_blocker(dock, *, settle_finished_game=False):
+    """Inspect active work only; pending returns never initiate a sync here."""
+    if not dock.lock.acquire(blocking=False):
+        return 'Hay una operación en curso; espera a que termine.'
+    try:
+        if dock.process is not None:
+            if dock.process.poll() is None:
+                return 'Cierra PPSSPP normalmente antes de cerrar la app.'
+            if settle_finished_game:
+                # stop is already set during draining, so running() records
+                # the completed game without restoring a closed XMB window.
+                dock.running()
+        if dock.transfer_status.get('active'):
+            return 'Termina o cancela la copia antes de cerrar la app.'
+        if dock.texture_download_status.get('active'):
+            return 'Espera a que termine la instalación del pack.'
+        if dock.storage_polling_paused:
+            return 'Espera a que termine la preparación del volumen.'
+        return None
+    finally:
+        dock.lock.release()
+
+
+def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
+          *, ui_lifecycle=False):
     instance_lock = acquire_instance_lock(dock.data)
     token = secrets.token_urlsafe(32)
+    ui = UiLifecycle() if ui_lifecycle else None
+    lifecycle_done = threading.Event()
+    watcher_lock = threading.Lock()
+    watcher = None
+    previous_window_handles = set()
+    native_handles = frozenset()
+
+    def lifecycle_record(phase, reason=''):
+        if ui is None:
+            return
+        value = {
+            'schema': 'pspdock-ui-lifecycle-v1',
+            'utc': datetime.now(timezone.utc).isoformat(),
+            'pid': os.getpid(), 'phase': phase, 'reason': reason,
+            'pending_return_preserved': bool(dock.session.get('pending_return')),
+            'watcher_started': watcher is not None, **ui.snapshot(),
+        }
+        # These PC-only diagnostics never replace the save/session journal.
+        try:
+            atomic_json(dock.data / 'app-lifecycle.json', value)
+        except (OSError, ValueError):
+            pass
+
+    def start_watcher():
+        nonlocal watcher
+        with watcher_lock:
+            if watcher is None and not dock.stop.is_set():
+                watcher = threading.Thread(target=dock.watch, daemon=True,
+                                           name='PSPDockVisibleAppWatch')
+                watcher.start()
+                lifecycle_record('open')
+
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_):
             pass
@@ -1947,10 +2053,16 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                 if self.path == '/api/token':
                     return self.reply({'token':token})
                 if self.path == '/api/health':
+                    ui_state = ui.snapshot() if ui else {}
                     return self.reply({
                         'product':'psp-dock', 'demo':dock.demo,
                         'data_fingerprint':service_fingerprint(dock.data),
                         'port':self.server.server_port,
+                        'ui_lifecycle': ui is not None,
+                        'ui_clients': ui_state.get('clients', 0),
+                        'ui_connected_once': ui_state.get('connected_once', False),
+                        'native_handles': sorted(native_handles),
+                        'closing': ui_state.get('closing', False),
                     })
                 if self.path == '/api/state':
                     return self.reply(dock.snapshot)
@@ -2040,6 +2152,26 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
                     raise ValueError('Petición inválida.')
+                if self.path in ('/api/app/heartbeat', '/api/app/close'):
+                    if ui is None:
+                        raise ValueError('Este servidor no tiene una ventana de app gestionada.')
+                    if self.path == '/api/app/heartbeat':
+                        result = ui.heartbeat(body.get('client_id'))
+                        if not result.get('ignored'):
+                            start_watcher()
+                        return self.reply(result)
+                    reason = body.get('reason')
+                    # A rejected explicit close leaves the document's lease
+                    # intact. A real pagehide queues a safe drain instead.
+                    if reason == 'button':
+                        blocker = app_close_blocker(dock)
+                        if blocker:
+                            raise ValueError(blocker)
+                    result = ui.release(body.get('client_id'), reason)
+                    result['pending_return_preserved'] = bool(dock.session.get('pending_return'))
+                    return self.reply(result)
+                if ui is not None and ui.stopping:
+                    raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                 if self.path == '/api/cancel-transfer':
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.
@@ -2053,11 +2185,15 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                     # preference. Never block the browser for a new USB game
                     # inventory or accidentally copy games when skipping.
                     with dock.lock:
+                        if ui is not None and ui.stopping:
+                            raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                         dock.choose_copy_policy(body.get('choice'))
                         dock.snapshot={**dock.snapshot,
                                        'copy_policy':dock.copy_policy()}
                     return self.reply({'ok':True})
                 with dock.lock:
+                    if ui is not None and ui.stopping:
+                        raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                     previous_pending_return = bool(dock.session.get('pending_return'))
                     save_result = None
                     if self.path == '/api/transfer':
@@ -2147,6 +2283,52 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                                                          'running': dock.running()}}
                 self.reply({'error':str(e)},409)
     server = ThreadingHTTPServer(('127.0.0.1',port),Handler)
+    # Keep the LIVE lock until in-flight requests have finished. Python's
+    # ThreadingHTTPServer otherwise uses daemon request threads.
+    server.daemon_threads = False
+
+    def monitor_ui():
+        nonlocal native_handles
+        while not lifecycle_done.wait(0.5):
+            native_visible = None
+            if os.name == 'nt' and app_window:
+                try:
+                    from xmb_window import enumerate_xmb_windows, CHROME_CLASS, TITLE
+                    native_handles = frozenset(
+                        row['handle'] for row in enumerate_xmb_windows()
+                        if row.get('visible') is True and row.get('title') == TITLE
+                        and row.get('window_class') == CHROME_CLASS
+                        and type(row.get('handle')) is int and row['handle'] > 0
+                        and row['handle'] not in previous_window_handles)
+                    native_visible = bool(native_handles)
+                except OSError:
+                    # A failed Win32 observation is not a closed window.
+                    native_visible = None
+                    native_handles = frozenset()
+            if not ui.should_stop(native_visible):
+                continue
+            # Stop new USB observations immediately. Active requests and an
+            # already running emulator retain the data lock until safe exit.
+            dock.stop.set()
+            lifecycle_record('draining', ui.reason)
+            dock.events.record('app_window_closed', evidence='pc_observed',
+                               reason=ui.reason, result='draining')
+            while not lifecycle_done.is_set():
+                blocker = app_close_blocker(dock, settle_finished_game=True)
+                if blocker is None:
+                    break
+                lifecycle_done.wait(0.25)
+            if lifecycle_done.is_set():
+                return
+            if ui.reason == 'button':
+                try:
+                    from xmb_window import close_existing_xmb
+                    close_existing_xmb(include_handles=native_handles)
+                except OSError:
+                    pass
+            server.shutdown()
+            return
+
     def close_when_saved():
         # Called only after a verified ORIGINAL Sony volume and successful
         # return. UI gets a moment to display "Sincronización completa".
@@ -2154,7 +2336,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
             time.sleep(2.0)
             try:
                 from xmb_window import close_existing_xmb
-                close_existing_xmb()
+                close_existing_xmb(include_handles=native_handles if ui else None)
             finally:
                 server.shutdown()
         threading.Thread(target=finish,daemon=True,
@@ -2163,7 +2345,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
     url = f'http://127.0.0.1:{server.server_port}'
     metadata = {'product':'psp-dock', 'port':server.server_port,
                 'pid':os.getpid(), 'demo':dock.demo,
-                'data_fingerprint':service_fingerprint(dock.data)}
+                'data_fingerprint':service_fingerprint(dock.data),
+                'ui_lifecycle': ui is not None}
     try:
         atomic_json(dock.data/'server.json', metadata)
     except (OSError, ValueError):
@@ -2171,18 +2354,37 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
         instance_lock.close()
         raise
     print('PSP Dock: ' + url, flush=True)
-    if open_on_connect:
+    if open_on_connect and ui is None:
         dock.on_connected = lambda: launch_xmb_window(url,app_window=app_window)
-    threading.Thread(target=dock.watch, daemon=True).start()
-    if open_browser:
-        launch_xmb_window(url,app_window=app_window)
+    lifecycle_record('awaiting_window')
+    if ui is None:
+        start_watcher()
     try:
+        if open_browser:
+            if ui is not None and app_window:
+                try:
+                    from xmb_window import enumerate_xmb_windows
+                    previous_window_handles = {row['handle'] for row in enumerate_xmb_windows()}
+                except OSError:
+                    pass
+            launch_xmb_window(url,app_window=app_window,reuse_existing=False)
+        if ui is not None:
+            threading.Thread(target=monitor_ui, daemon=True,
+                             name='PSPDockWindowLifetime').start()
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
+        lifecycle_done.set()
         dock.stop.set()
         server.server_close()
+        # No daemon performing an existing copy may outlive our instance
+        # lock. Both workers check stop before beginning another item.
+        if watcher is not None:
+            watcher.join()
+        if dock.xmb_media_worker is not None:
+            dock.xmb_media_worker.join()
+        lifecycle_record('closed', ui.reason if ui else '')
         try:
             record=read_json(dock.data/'server.json',{})
             if record == metadata:
@@ -2214,7 +2416,7 @@ if __name__ == '__main__':
     elif args.demo:
         make_demo(data)
         serve(Dock(data,args.demo),args.port,not args.no_browser,args.open_on_connect,
-              args.app_window)
+              args.app_window, ui_lifecycle=args.app_window and not args.no_browser)
     else:
         serve(Dock(data,args.demo),args.port,not args.no_browser,args.open_on_connect,
-              args.app_window)
+              args.app_window, ui_lifecycle=args.app_window and not args.no_browser)

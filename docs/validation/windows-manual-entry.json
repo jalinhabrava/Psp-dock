@@ -1,0 +1,83 @@
+{
+  "schema": "pspdock-manual-windows-validation-v1",
+  "recorded_utc": "2026-11-01T23:03:33.793069+00:00",
+  "chosen_flow": "open_windows_app_then_start_psp_dock_and_connect_usb",
+  "automatic_launch_when_windows_app_is_closed": false,
+  "windows_service_installed": false,
+  "windows_startup_entry_installed": false,
+  "pnp_task_installed": false,
+  "firmware_0207_changed": false,
+  "physical_psp_transition_verified": false,
+  "physical_psp_transition_note": "The PSP was absent during this Windows-window check; test the arrival in the open app separately.",
+  "native_window": {
+    "started_utc": "2026-11-01T23:01:38.100800+00:00",
+    "finished_utc": "2026-11-01T23:01:49.190511+00:00",
+    "result": "passed",
+    "real_live_library": true,
+    "single_window_on_second_launch": true,
+    "close_method": "WM_CLOSE on this app HWND, same path as title-bar X",
+    "close_seconds": 4.172,
+    "process_exit_code": 0,
+    "server_record_removed": true,
+    "instance_lock_released": true,
+    "session_json_unchanged": true,
+    "lifecycle_closed": true,
+    "windows_after_close": 0
+  },
+  "ui_visual": {
+    "browser": "Installed Windows Chrome, isolated headless fixture",
+    "result": "passed",
+    "physical_hardware_evidence": false,
+    "scenarios": [
+      "waiting",
+      "diagnostic",
+      "stable",
+      "disconnected"
+    ],
+    "viewports": [
+      "1600x900",
+      "540x960"
+    ],
+    "javascript_errors": 0,
+    "unexpected_mutations": [],
+    "native_window_screenshot_captured": true
+  },
+  "tests": [
+    {
+      "stage": "integrated_host_before_final_window_association",
+      "python_tests": 87,
+      "result": "passed"
+    },
+    {
+      "stage": "final_window_association_and_existing_game_session_regression",
+      "python_tests": 41,
+      "result": "passed",
+      "overlaps_previous_run": true
+    },
+    {
+      "stage": "javascript_connection_and_lifetime",
+      "assertions": 151,
+      "result": "passed"
+    },
+    {
+      "stage": "javascript_existing_xmb_navigation_and_first_frame",
+      "suites": 2,
+      "result": "passed"
+    }
+  ],
+  "desktop_shortcut": {
+    "name": "PSP Dock.lnk",
+    "kind": "manual_only",
+    "source": "windows/Create-PSP-Dock-Shortcut.ps1",
+    "icon_sha256": "df9301388d45795493648f18c49de922129dc0cb1fbe265b84a9ced6ee7d2c03"
+  },
+  "evidence": {
+    "native-window-result.json": "73f323a08b4a857f84c9da3c606904c04a5256c3e933047a0298918cdaa76cd8",
+    "ui-preview-result.json": "464a3a37316c2bcbde888b6168190221a517e23cfc53164406dfc37d24ed28d0",
+    "native-waiting-window.png": "592845e10c5fb80de82eecdf273f6929fb98952ae8b22b23adaea7597d811a4b"
+  },
+  "limitations": [
+    "MSC 0207 still exposes only synthetic read-only FAT12, not the real Memory Stick.",
+    "No claim of physical menu transition until the user starts Dock on the PSP while Windows is open."
+  ]
+}

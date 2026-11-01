@@ -19,8 +19,9 @@ def status_report(**changes):
 
 
 class FakeHid:
-    def __init__(self, status):
+    def __init__(self, status, product=hid.PID, revision=0x0104):
         self.status = status
+        self.product, self.revision = product, revision
         self.sent = []
         self.events = []
 
@@ -33,6 +34,10 @@ class FakeHid:
     def get(self, handle):
         self.events.append(("get", handle))
         return self.status
+
+    def attributes(self, handle):
+        return {"vendor_id": hid.VID, "product_id": self.product,
+                "revision": self.revision}
 
     def set(self, handle, data):
         self.events.append(("set", handle))
@@ -82,14 +87,28 @@ class BridgeHidTests(unittest.TestCase):
         for product in (True, 0x02D2, '01CC', -1):
             with self.assertRaises(hid.BridgeHidError):
                 hid.expected_product_pattern(product)
-        api = FakeHid(hid.decode_status(status_report()))
+        api = FakeHid(hid.decode_status(status_report()), hid.MSC_TEST_PID, 0x0207)
         api.paths = lambda: [msc_path]
         with patch.object(hid.os, 'name', 'nt'), \
              patch.object(hid, '_WindowsHid', return_value=api) as constructor:
             result = hid.probe(expected_product=0x01CC)
         constructor.assert_called_once_with(expected_product=0x01CC)
         self.assertEqual(result['devices'][0]['path'], msc_path)
+        self.assertEqual(result['devices'][0]['product_id'], hid.MSC_TEST_PID)
+        self.assertEqual(result['devices'][0]['revision'], 0x0207)
         self.assertEqual(api.sent, [])
+
+    def test_revision_is_read_from_device_attributes_not_inferred_from_pid(self):
+        api = hid._WindowsHid.__new__(hid._WindowsHid)
+        api.expected_product = hid.PID
+        api.hid = Mock()
+        def attributes(_handle, pointer):
+            value = hid.C.cast(pointer, hid.C.POINTER(hid.HIDD_ATTRIBUTES)).contents
+            value.VendorID, value.ProductID, value.VersionNumber = 0x054C, 0x01CB, 0x0204
+            return True
+        api.hid.HidD_GetAttributes.side_effect = attributes
+        self.assertEqual(api.attributes(123), {
+            'vendor_id': 0x054C, 'product_id': 0x01CB, 'revision': 0x0204})
 
     def test_msc_native_api_rejects_wrong_pid_and_never_permits_mutation(self):
         msc_path = PATH.replace('pid_01cb', 'pid_01cc')

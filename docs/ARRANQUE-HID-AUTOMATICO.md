@@ -1,100 +1,106 @@
-# PSP Dock — Arranque de Windows bajo demanda desde PSP (piloto)
+# PSP Dock — abrir Windows y esperar a la consola
 
-## Objetivo y limitación
+## Decisión vigente
 
-El usuario no quiere un monitor ejecutándose cada vez que inicia Windows.
-Prefiere abrir PSP Dock en la consola, seleccionar **Iniciar PSP Dock en
-PC**, conectar el cable y ver el XMB en el ordenador sin ratón ni teclado.
+David eligió este flujo el 1 de noviembre de 2026:
 
-La PSP no tiene autoridad para iniciar directamente un ejecutable del PC
-mediante USB HID ordinario. Windows necesita **un registro previo del
-receptor**: un servicio iniciado por evento de interfaz USB, una tarea
-por evento de Plug and Play, o una aplicación residente. No se usa
-autorun.inf ni la PSP simula un teclado que escriba comandos (comportamiento
-tipo BadUSB, inseguro y dependiente del foco).
+1. Abrir **PSP Dock en Windows**.
+2. Ver la pantalla **Conecta tu PSP**.
+3. Abrir PSP Dock en la consola y conectar el cable.
+4. Pasar automáticamente al menú cuando la aplicación verifica el modo Dock.
 
-Microsoft documenta los servicios iniciados por llegada de interfaz USB
-como mecanismo robusto. Su inconveniente es que el servicio se ejecuta
-en sesión 0 y necesita otra pieza para abrir la UI del usuario.
-Para el MVP se estudia una tarea EventTrigger menos intrusiva.
+La detección se ejecuta dentro de la app abierta. No se instala un servicio
+Windows, una tarea de llegada USB ni un monitor al iniciar sesión. El botón
+de la PSP no se presenta como capaz de abrir una aplicación cerrada en el PC.
 
-## Implementación disponible
+## Identidades y estados
 
-- **PSP homebrew homebrew/psp-dock-app/main.c**: menú ANTES de cargar
-  el driver HID. X acepta iniciar el Dock en Windows; O vuelve a XMB
-  PSP. Requiere cable desenchufado inicialmente porque el controlador
-  actual rechaza arrancar HID sobre USBSTOR montado (seguridad FAT).
-  Después de X, PSP carga HID y pide conectar cable. No hay autoplay.
-- **Windows setup_usb_event.py**: registra reversiblemente una tarea
-  del usuario PSP Dock - USB HID con EventTrigger, **sin disparador
-  al iniciar sesión ni arrancar Windows**. No hay proceso residente.
-- **Windows on_psp_hid_arrival.py**: tras el evento, comprueba brevemente
-  el mando real Sony VID054C/PID01CB por WinMM. Solo entonces abre
-  o reutiliza el XMB a través de start_dock.launch(). No inicia PPSSPP.
-- El autoarranque anterior setup_startup.py está DESACTIVADO en este PC;
-  queda en el código como una alternativa que el usuario no desea usar.
+| Conexión | Comportamiento de la app |
+|---|---|
+| Sin PSP | Pantalla de espera, con el nombre PSP DOCK y los dos pasos de conexión. |
+| USB Sony normal 054C:02D2 | Indica almacenamiento USB; no afirma que el modo Dock esté activo. «Preparar biblioteca» permite abrir explícitamente las acciones de preparación anteriores. |
+| HID estable 054C:01CB / 0104 | Comprueba descriptor, PDK1 y sesión; permite navegar por el menú. Los juegos conservan sus comprobaciones independientes. |
+| Compuesto 054C:01CC / 0207 | Abre el menú en modo diagnóstico, permite navegar y mantiene los juegos desactivados. El disco de 512 KiB es sintético. |
+| Identidad ambigua, revisión desconocida o PDK1 inválido | Mantiene la espera y no habilita juegos. |
+| Desconexión sin trabajo pendiente | Vuelve a la pantalla de espera. |
+| Juego, transferencia o devolución pendiente | Conserva visibles el estado y las acciones de recuperación. |
 
-## Tarea Windows registrada
+La clasificación no ejecuta `SET_FEATURE`, no cambia el papel USB y no realiza
+copias de juegos o partidas. El volumen ficticio no se añade al descubrimiento
+de Memory Sticks. No se modifica el firmware 0207 físicamente validado.
 
-Nombre PSP Dock - USB HID, usuario normal sin elevación, evento 410
-del canal Microsoft-Windows-Kernel-PnP/Configuration. Windows ha
-confirmado una EventTrigger, cero LogonTrigger y estado Ready.
-La tarea permanece inactiva hasta recibir un evento.
+## Una ventana y una biblioteca
 
-**ADVERTENCIA:** el evento 410 significa «Device configured». Puede
-producirse solo durante instalación/configuración del controlador,
-NO necesariamente en cada reconexión a un puerto USB conocido.
-Tenemos registros reales del HID PSP en ese canal pero TODAVÍA NO
-se ha demostrado que aparezca en cada reconexión. El evento no es
-un protocolo host/PSP. Por limitación del filtro XPath actual,
-el trigger detecta configuraciones PnP en general, y su acción solo
-abre XMB tras comprobar que el mando real es el PSP Dock Sony.
+`start_dock.py` abre la ventana del Dock o reutiliza la instancia LIVE existente.
+La identidad HTTP de `server.json` y el bloqueo de la carpeta siguen vigentes.
+Abrir el acceso dos veces no crea dos escritores sobre las partidas.
 
-Si 410 no reaparece, NO activar AutoRun ni simular teclas. La
-alternativa robusta es un servicio Windows de tipo trigger-start,
-SERVICE_TRIGGER_TYPE_DEVICE_INTERFACE_ARRIVAL, limitado al Hardware
-ID Sony, con un puente explícito a la sesión gráfica del usuario.
-Requiere instalación administrativa y prueba de ida y vuelta.
-No hay que afirmar que esa alternativa ya esté implementada.
+La aplicación utiliza la biblioteca LIVE existente. Puede indicarse una ruta
+con `python start_dock.py --data RUTA_LIVE`. La detección no se instala como
+trabajo de inicio de Windows. El cierre de la ventana retira la detección
+cuando no hay una operación que deba finalizar; una devolución pendiente
+permanece registrada para la siguiente apertura y nunca se da por completada
+por cerrar la ventana.
 
-### Estado actual de pruebas
+## Retirada del piloto anterior
 
-- El nuevo menú PSP está compilado en el PC; NO instalado todavía
-  en la Memory Stick real porque la última sesión LIVE tenía
-  pending_return=true. No sustituir EBOOT con guardados pendientes.
-- Tarea Windows registrada; no hay monitor en el inicio de sesión.
-- Pruebas del guard HID y del XML superadas.
-- **NO se ha probado físicamente aún el arranque Windows desde una
-  nueva inserción de cable**. Ese será el siguiente ensayo de PnP.
+La tarea histórica **PSP Dock - USB HID** usaba el evento 410 del canal
+`Microsoft-Windows-Kernel-PnP/Configuration`. En el PC de David los últimos
+410 de Sony eran de las 21:20 UTC; las conexiones físicas posteriores de
+0206/0207, incluida la aceptación de las 22:23–22:24, no generaron ese evento.
+Por tanto no sirve para prometer apertura en cada reconexión.
 
-### Instalación reversible
+La tarea se eliminó con `setup_usb_event.py --remove`. La comprobación
+`setup_startup.py --status` devolvió **DESACTIVADO**. No se llegó a instalar
+ni crear un servicio Windows. Los modos `--install` de los scripts antiguos
+quedan retirados; `--remove` y la consulta de estado se conservan para limpiar
+instalaciones antiguas. Los helpers de localización de datos siguen usados
+por el lanzador manual.
 
-Desde la raíz del proyecto:
+Evidencia local del diagnóstico del piloto:
+`data/windows-dock-arrival/installed-task-before.xml`,
+`psp-pnp-history.json` e `installer-preflight.json`.
 
-    python setup_usb_event.py           # Vista previa
-    python setup_usb_event.py --install # Registrar tarea
-    python setup_usb_event.py --remove  # Retirar solo nuestra tarea
+## Comprobación del flujo
 
-La tarea abre SOLO el selector XMB. No copia ROMs ni saves y
-nunca lanza un juego por cuenta propia.
+### Resultado en el PC de David
 
-### Flujo previsto
+El 1 de noviembre, 23:01:38–23:01:49 UTC, la app real abrió una única ventana.
+La segunda apertura devolvió `already_running` con el mismo HWND. Enviando
+el cierre normal de la ventana, terminó con código 0 en **4,172 segundos**,
+eliminó `server.json`, liberó el bloqueo LIVE y conservó `session.json`
+idéntico por SHA-256. No había PSP HID conectada durante esta comprobación.
 
-1. En PSP abrir Juegos → PSP Dock.
-2. Con cable desconectado pulsar X: Iniciar PSP Dock en PC.
-3. Conectar cable cuando la consola lo indique.
-4. Windows reconoce HID, tarea PnP abre XMB si el evento existe.
-5. Navegar con PSP, elegir juego y volver al XMB al cerrarlo.
-6. Elegir Salir en el PC, terminar HID con START+SELECT, regresar
-   manualmente al almacenamiento Sony hasta tener bridge real.
+Las vistas de espera, diagnóstico, mando estable y desconexión se renderizaron
+en Chrome de Windows con fixtures aislados: 1600×900 y 540×960, sin errores JS,
+desbordamientos horizontales ni operaciones imprevistas. Se inspeccionó además
+la captura de la ventana real. Pasaron 87 pruebas Python de integración y
+41 de la revisión final de ventana/sesión (con solapamiento), 151 aserciones
+JS de conexión/cierre y las dos suites previas de navegación.
 
-**La sincronización inicial USBSTOR→HID con un solo cable sigue
-pendiente del bridge kernel y ACK auténtico.** Un primer HID directo
-no puede acceder mágicamente a juegos/saves que están solo en PSP.
+El acceso de escritorio **PSP Dock** se creó y releyó con su destino, argumentos
+e icono correctos. El script `windows/Create-PSP-Dock-Shortcut.ps1` instala,
+consulta o retira únicamente ese acceso. El icono envuelve el PNG del thumbnail
+aprobado en un contenedor ICO, sin cambiar sus píxeles.
 
-Referencias:
+La comprobación final encontró cero tareas PSP Dock, cero servicios PSPDock
+y ninguna entrada de inicio de sesión. El resumen con hashes está en
+[windows-manual-entry.json](validation/windows-manual-entry.json).
+**La llegada física a la nueva app y la navegación con la PSP se probarán aparte.**
 
-- https://learn.microsoft.com/en-us/windows/desktop/taskschd/task-scheduler-schema
-- https://learn.microsoft.com/en-us/windows/win32/services/service-trigger-events
-- https://learn.microsoft.com/en-us/windows-hardware/drivers/install/best-practices-win32services-interacting-with-devices
-- https://learn.microsoft.com/en-us/windows/win32/shell/autoplay-reg
+### Pasos para repetirla
+
+Se debe distinguir entre pruebas de código, vista de interfaz y conexión
+física. Para verificar una instalación:
+
+1. Abrir el acceso sin Dock HID: comprobar la pantalla de espera.
+2. Abrir de nuevo: comprobar que se reutiliza la misma instancia y ventana.
+3. Entrar en Dock en la PSP: comprobar transición y navegación HID.
+4. Con 0207, comprobar el aviso de diagnóstico y `can_launch_game=false`.
+5. Cerrar la ventana sin operaciones activas: comprobar que termina su
+   proceso y deja de detectar; volver a abrir restaura la espera.
+6. Revisar que no queda tarea PSP Dock ni entrada de inicio de sesión.
+
+No afirmar que la Memory Stick real está disponible porque el menú se abra.
+El criterio físico superado para 0207 sigue siendo almacenamiento sintético
+más HID simultáneo; el acceso real a juegos y partidas necesita otra fase.

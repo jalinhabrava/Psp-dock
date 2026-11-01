@@ -1,8 +1,5 @@
 @echo off
-cd /d "%~dp0"
-if exist "D:\Python312\python.exe" (
-    "D:\Python312\python.exe" setup_startup.py --install
-) else (
-    py -3.12 setup_startup.py --install
-)
+echo El inicio automatico se ha retirado.
+echo Abre Iniciar-PSP-Dock.cmd y conecta tu PSP cuando lo indique la ventana.
+echo No se ha instalado ningun servicio ni proceso de inicio.
 pause

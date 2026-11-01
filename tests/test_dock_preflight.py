@@ -108,6 +108,7 @@ class PreflightTests(unittest.TestCase):
                  patch.object(dock, "prepared_runtime_path", return_value=home/"runtime/fixture.exe"), \
                  patch.object(dock, "controller_status",
                               return_value={"connected": True, "mode": "hid_manual",
+                                            "can_play": True, "synthetic_storage": False,
                                             "reason": "synthetic controller"}):
                 self.assertTrue(dock.state()["can_launch_game"])
                 dock.request_exit()

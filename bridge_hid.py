@@ -57,6 +57,9 @@ class BridgeStatus:
 class BridgeDevice:
     path: str
     status: BridgeStatus
+    vendor_id: int = VID
+    product_id: int = PID
+    revision: int | None = None
 
 
 def _session_bytes(session: str | bytes) -> bytes:
@@ -200,12 +203,7 @@ class _WindowsHid:
         if handle == C.c_void_p(-1).value:
             raise self._failure("Abrir PSP HID")
         try:
-            attrs = HIDD_ATTRIBUTES()
-            attrs.Size = C.sizeof(attrs)
-            if not self.hid.HidD_GetAttributes(handle, C.byref(attrs)):
-                raise self._failure("Leer identidad HID")
-            if (attrs.VendorID, attrs.ProductID) != (VID, self.expected_product):
-                raise BridgeHidError("VID/PID de HID inesperados")
+            self.attributes(handle)
             data = C.c_void_p()
             if not self.hid.HidD_GetPreparsedData(handle, C.byref(data)):
                 raise self._failure("Leer descriptor HID")
@@ -221,6 +219,18 @@ class _WindowsHid:
             yield handle
         finally:
             self.kernel.CloseHandle(handle)
+
+    def attributes(self, handle) -> dict:
+        """Read the actual device revision, without inferring it from PID."""
+        attrs = HIDD_ATTRIBUTES()
+        attrs.Size = C.sizeof(attrs)
+        if not self.hid.HidD_GetAttributes(handle, C.byref(attrs)):
+            raise self._failure("Leer identidad HID")
+        if (attrs.VendorID, attrs.ProductID) != (VID, self.expected_product):
+            raise BridgeHidError("VID/PID de HID inesperados")
+        return {"vendor_id": int(attrs.VendorID),
+                "product_id": int(attrs.ProductID),
+                "revision": int(attrs.VersionNumber)}
 
     def get(self, handle) -> BridgeStatus:
         buf = C.create_string_buffer(WINDOWS_REPORT_SIZE)
@@ -248,7 +258,8 @@ def probe(*, expected_product: int = PID) -> dict:
     for path in api.paths():
         try:
             with api.open(path) as handle:
-                devices.append(asdict(BridgeDevice(path, api.get(handle))))
+                attributes = api.attributes(handle)
+                devices.append(asdict(BridgeDevice(path, api.get(handle), **attributes)))
         except (BridgeHidError, OSError) as exc:
             errors.append({"path": path, "error": str(exc)})
     return {"supported": True, "devices": devices, "errors": errors}

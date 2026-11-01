@@ -11,17 +11,19 @@ import os
 import time
 
 
-TITLE = 'PSP Dock · Tu próxima partida'
+TITLE = 'PSP Dock'
 CHROME_CLASS = 'Chrome_WidgetWin_1'
 
 
-def unique_target(rows: list[dict]) -> int | None:
+def unique_target(rows: list[dict], *, exclude_handles=(), include_handles=None) -> int | None:
     """Reject ambiguous titles and browser tabs or foreign window classes."""
     matches = [row for row in rows
                if row.get('visible') is True and
                row.get('title') == TITLE and
                row.get('window_class') == CHROME_CLASS and
-               type(row.get('handle')) is int and row['handle'] > 0]
+               type(row.get('handle')) is int and row['handle'] > 0 and
+               row['handle'] not in exclude_handles and
+               (include_handles is None or row['handle'] in include_handles)]
     return matches[0]['handle'] if len(matches) == 1 else None
 
 
@@ -57,15 +59,17 @@ def enumerate_xmb_windows() -> list[dict]:
             'visible':bool(user32.IsWindowVisible(hwnd)),
         })
         return True
-    user32.EnumWindows(cb(visit),0)
+    if not user32.EnumWindows(cb(visit),0):
+        raise OSError(C.get_last_error(), 'No se pudo observar la ventana de PSP Dock.')
     return rows
 
 
-def maximize_existing_xmb() -> bool:
+def maximize_existing_xmb(*, exclude_handles=(), include_handles=None) -> bool:
     """Make an existing Dock window occupy Windows' usable primary monitor."""
     if os.name != 'nt':
         return False
-    target=unique_target(enumerate_xmb_windows())
+    target=unique_target(enumerate_xmb_windows(), exclude_handles=exclude_handles,
+                         include_handles=include_handles)
     if target is None:
         return False
     user32=C.WinDLL('user32',use_last_error=True)
@@ -78,7 +82,7 @@ def maximize_existing_xmb() -> bool:
     return True
 
 
-def close_existing_xmb() -> bool:
+def close_existing_xmb(*, include_handles=None) -> bool:
     """Close only a uniquely identified PSP Dock window, not other apps.
 
     Never use Alt-F4 or kill Chrome. Only WM_CLOSE is delivered after the
@@ -87,7 +91,7 @@ def close_existing_xmb() -> bool:
     """
     if os.name != 'nt':
         return False
-    hwnd=unique_target(enumerate_xmb_windows())
+    hwnd=unique_target(enumerate_xmb_windows(), include_handles=include_handles)
     if hwnd is None:
         return False
     user32=C.WinDLL('user32',use_last_error=True)
@@ -96,7 +100,7 @@ def close_existing_xmb() -> bool:
     return bool(user32.PostMessageW(hwnd,0x0010,0,0))  # WM_CLOSE
 
 
-def maximize_when_ready(*, seconds=5, interval=0.15) -> bool:
+def maximize_when_ready(*, seconds=5, interval=0.15, exclude_handles=()) -> bool:
     """Graceful wait for an app window when Chrome starts asynchronously."""
     if not 0 < seconds <= 10 or not 0.05 <= interval <= 1:
         raise ValueError('Tiempo de preparación de ventana fuera de límites.')
@@ -104,7 +108,7 @@ def maximize_when_ready(*, seconds=5, interval=0.15) -> bool:
         return False
     deadline=time.monotonic()+seconds
     while time.monotonic()<deadline:
-        if maximize_existing_xmb():
+        if maximize_existing_xmb(exclude_handles=exclude_handles):
             return True
         time.sleep(interval)
     return False

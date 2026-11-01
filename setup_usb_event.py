@@ -1,7 +1,12 @@
-"""Reversible opt-in Windows Task Scheduler PnP launch, NO resident watcher.
+"""Retired PnP pilot: only preview/removal remains available from the CLI.
 
-The user must run --install to register one per-user EventTrigger task;
-running with no arguments is a dry-run preview. Windows Kernel-PnP
+The 410 subscription did not recur on the physically verified 0207
+connections. David chose opening Windows PSP Dock manually and waiting
+for the console in that window; do not replace this pilot with a service
+or a login watcher. --install is intentionally rejected before mutation.
+
+Historical implementation retained below for tests/legacy cleanup:
+Windows Kernel-PnP
 Configuration Event 410 can indicate configuration of a Sony HID,
 but may be emitted only on initial driver setup: do not promise it
 fires on every connection without a physical validation.
@@ -117,6 +122,10 @@ def main()->int:
     action.add_argument("--install",action="store_true")
     action.add_argument("--remove",action="store_true")
     args=parser.parse_args()
+    if args.install:
+        print("Piloto de autoarranque retirado. Abre Iniciar-PSP-Dock.cmd "
+              "y conecta la PSP cuando aparezca la pantalla de espera.")
+        return 1
     try:
         if os.name!="nt":
             raise ValueError("Solo compatible con Windows.")
@@ -130,10 +139,8 @@ def main()->int:
         xml=task_xml(python_exe=exe,event_script=script,
                      user_sid=current_user_sid())
         if not args.install:
-            print("PREVIEW: evento de Windows PnP 410 -> PSP Dock HID, "
-                  "sin monitor residente. No se ha registrado nada.")
-            print("ADVERTENCIA: el evento 410 puede producirse solo al "
-                  "instalar el driver. Debe probarse con reconexiones.")
+            print("RETIRADO: el flujo actual comienza abriendo PSP Dock "
+                  "en Windows. No se ha registrado ninguna tarea.")
             return 0
         install_task(xml)
         print("Tarea del usuario registrada. No hay monitor permanente.")

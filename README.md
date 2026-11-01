@@ -1,5 +1,39 @@
 # PSP Dock · prototipo para Windows
 
+## Inicio en Windows: abrir la app y conectar la PSP
+
+El flujo elegido por David es **manual en Windows**:
+
+1. Abre `Iniciar-PSP-Dock.cmd` (o el acceso PSP Dock).
+2. La ventana muestra **Conecta tu PSP**.
+3. Abre PSP Dock en la consola y conecta el cable USB.
+4. Cuando se verifica el mando Dock, aparece el menú automáticamente.
+
+La detección pertenece a la aplicación abierta. No se instala un servicio,
+un monitor al iniciar sesión ni una tarea que abra la app con Windows cerrado.
+El piloto PnP anterior se ha retirado del PC y los comandos antiguos de
+instalación de autoarranque rechazan nuevas altas. La app conserva la
+biblioteca LIVE existente y reutiliza su instancia al volver a abrir el acceso.
+
+El compuesto **01CC/0207** permite entrar y navegar en **modo diagnóstico**.
+Su disco ficticio de 512 KiB no habilita juegos ni se presenta como acceso
+a la Memory Stick. El mando estable **01CB/0104** conserva sus comprobaciones
+de preparación. Conectar el USB Sony normal **02D2** no se confunde con entrar
+en modo Dock. Los trabajos o devoluciones pendientes siguen visibles.
+Si la PSP está en almacenamiento Sony, **Preparar biblioteca** da acceso
+explícito a la preparación anterior; no inicia juegos ni cambia el modo USB.
+
+Detalles y estado de verificación: [inicio manual](docs/ARRANQUE-HID-AUTOMATICO.md).
+
+**Windows comprobado:** apertura real, segunda apertura sobre la misma ventana,
+cierre con la X en 4,172 s, proceso terminado, bloqueo liberado y sesión
+idéntica por SHA-256. El acceso **PSP Dock** del escritorio lleva el thumbnail
+aprobado como icono y abre esta versión sin consola adicional. El instalador
+manual está en `windows/Create-PSP-Dock-Shortcut.ps1` (Install/Status/Remove).
+La llegada física de la PSP a esta nueva pantalla sigue pendiente; las
+transiciones visuales se verificaron con fixtures en Chrome de Windows.
+[Registro de verificación](docs/validation/windows-manual-entry.json).
+
 ## USBSTOR + HID 0207: aceptación física completada con el disco de prueba
 
 **PSP Dock - USB Storage + HID 0207** está instalada en
@@ -104,20 +138,15 @@ USBSTOR to HID and back is NOT physically automated yet. The
 feature branch contains no PSP firmware changes and must not
 be presented as a fully seamless one-cable product.
 
-## Arranque USB sin monitor residente (piloto)
+## Piloto anterior de arranque USB: retirado
 
-**No hay proceso de PSP Dock lanzado al iniciar sesión de Windows.**
-Se retiró el autoarranque anterior. El homebrew PSP tiene en desarrollo
-un menú explícito X: Iniciar PSP Dock en PC antes de enumerar HID;
-Windows dispone de una tarea puntual de Plug and Play que abre el
-selector si detecta el mando Sony PSP Dock.
-
-El piloto PnP está registrado en Windows, pero NO se ha verificado
-todavía que el evento 410 se produzca en cada reconexión USB.
-No se usan teclas simuladas ni AutoRun inseguro. El EBOOT nuevo
-está compilado solo en el PC y no sustituye todavía el instalado
-en la PSP real mientras haya una devolución pendiente.
-Ver docs/ARRANQUE-HID-AUTOMATICO.md.
+Las entradas físicas del compuesto posteriores a las 21:20 UTC del
+1 de noviembre de 2026 no produjeron el evento 410 que esperaba la tarea.
+No es un disparador fiable de reconexión. La tarea **PSP Dock - USB HID**
+se eliminó y el inicio con Windows se comprobó **DESACTIVADO**.
+David descartó instalar un servicio y eligió el flujo manual descrito al
+principio. No reactivar los scripts de autoarranque ni añadir un servicio
+como sustitución. Ver docs/ARRANQUE-HID-AUTOMATICO.md.
 
 ## Estado actual — un solo PSP Dock, sin límite temporal
 
