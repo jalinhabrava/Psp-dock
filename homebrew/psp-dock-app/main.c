@@ -33,14 +33,53 @@ static int load_and_start(const char *path) {
 int main(void) {
     SceCtrlData pad;
     unsigned int exit_hold = 0;
+    int chosen = 0;
+    int released = 0;
     int first, second;
     pspDebugScreenInit();
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_DIGITAL);
     pspDebugScreenClear();
-    pspDebugScreenPrintf("PSP DOCK / CONTROLADOR USB\n\n");
-    pspDebugScreenPrintf("NO USB STORAGE, NO FAT WRITES\n");
-    pspDebugScreenPrintf("Keep USB cable OUT until the prompt.\n\n");
+    pspDebugScreenPrintf("PSP DOCK / INICIAR EN WINDOWS\n\n");
+    pspDebugScreenPrintf("1. Quita el cable USB antes de continuar.\n");
+    pspDebugScreenPrintf("2. Pulsa X: INICIAR PSP DOCK EN EL PC.\n");
+    pspDebugScreenPrintf("3. Conecta USB solo cuando lo indique.\n\n");
+    pspDebugScreenPrintf("CIRCULO: volver al menu PSP.\n");
+    pspDebugScreenPrintf("START+SELECT: salir de PSP Dock.\n\n");
+    pspDebugScreenPrintf("No se modifica USBSTOR ni FAT.\n\n");
+    /*
+     * This explicit operator choice precedes loading the HID driver.
+     * A connection will enumerate our PSP HID (PID 01CB), allowing an
+     * optional Windows PnP event handler to launch the Windows XMB.
+     * The PSP cannot itself start a Windows process without a registered
+     * Windows-side event handler. No synthetic keyboard commands.
+     *
+     * Starting with CROSS held from the game's launch screen must not
+     * immediately select this command: require a release first.
+     */
+    for (;;) {
+        sceCtrlPeekBufferPositive(&pad, 1);
+        if (!(pad.Buttons & PSP_CTRL_CROSS))
+            released = 1;
+        if (released && (pad.Buttons & PSP_CTRL_CROSS)) {
+            chosen = 1;
+            break;
+        }
+        if (pad.Buttons & PSP_CTRL_CIRCLE)
+            break;
+        if ((pad.Buttons & (PSP_CTRL_START | PSP_CTRL_SELECT)) ==
+                (PSP_CTRL_START | PSP_CTRL_SELECT))
+            break;
+        sceKernelDelayThread(100000);
+    }
+    if (!chosen) {
+        pspDebugScreenPrintf("Regresando al XMB.\n");
+        sceKernelExitGame();
+        return 0;
+    }
+    pspDebugScreenClear();
+    pspDebugScreenPrintf("PSP Dock seleccionado: esperando USB HID.\n");
+    pspDebugScreenPrintf("Mantente SIN cable durante la comprobacion.\n\n");
     first = load_and_start(HID_MODULE);
     second = first < 0 ? first : load_and_start(LAB_MODULE);
     if (first < 0 || second < 0) {

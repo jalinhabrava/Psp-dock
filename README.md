@@ -1,5 +1,20 @@
 # PSP Dock · prototipo para Windows
 
+## Arranque USB sin monitor residente (piloto)
+
+**No hay proceso de PSP Dock lanzado al iniciar sesión de Windows.**
+Se retiró el autoarranque anterior. El homebrew PSP tiene en desarrollo
+un menú explícito X: Iniciar PSP Dock en PC antes de enumerar HID;
+Windows dispone de una tarea puntual de Plug and Play que abre el
+selector si detecta el mando Sony PSP Dock.
+
+El piloto PnP está registrado en Windows, pero NO se ha verificado
+todavía que el evento 410 se produzca en cada reconexión USB.
+No se usan teclas simuladas ni AutoRun inseguro. El EBOOT nuevo
+está compilado solo en el PC y no sustituye todavía el instalado
+en la PSP real mientras haya una devolución pendiente.
+Ver docs/ARRANQUE-HID-AUTOMATICO.md.
+
 ## Estado actual — un solo PSP Dock, sin límite temporal
 
 El usuario pidió abandonar las sesiones artificiales de 90 segundos.
