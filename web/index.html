@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07374b">
+  <title>PSP Dock · Tu próxima partida</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <div class="ambient" aria-hidden="true"><div class="wave wave-one"></div><div class="wave wave-two"></div><div class="wave wave-three"></div><div class="horizon"></div></div>
+  <div class="shell">
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="PSP Dock, inicio">PSP<span>DOCK</span><i></i></a>
+      <div class="top-meta"><span class="prototype">PROTOTIPO LOCAL</span><time id="clock"></time><button class="icon-button settings-trigger" id="settings-open" aria-label="Abrir ajustes" title="Ajustes"><span class="gear" aria-hidden="true">⚙</span></button></div>
+    </header>
+
+    <main id="main">
+      <nav class="categories" aria-label="Secciones">
+        <button class="category active" id="games-tab" aria-current="page"><span class="controller-icon" aria-hidden="true"><i></i></span><span>Juegos</span></button>
+        <button class="category" id="saves-open"><span class="save-icon" aria-hidden="true"></span><span>Partidas<span class="count" id="save-count" hidden></span></span></button>
+        <div class="device-status" id="device-status"><span class="status-dot" aria-hidden="true"></span><span class="device-copy"><span id="device-label">Buscando PSP…</span><small id="device-role">COMPROBANDO ALMACENAMIENTO</small></span></div>
+      </nav>
+
+      <div id="error" class="error-message" role="alert" hidden></div>
+      <div id="demo-note" class="demo-note" hidden>VISTA DE DEMOSTRACIÓN <span>Biblioteca sintética · el inicio de juegos está desactivado</span></div>
+
+      <section class="dock-preflight" id="dock-preflight" hidden aria-label="Estado de preparación de PSP Dock">
+        <div class="dock-progress" aria-label="Proceso del Dock">
+          <span class="progress-step" id="phase-connect">01 · Conectar</span>
+          <span class="progress-step" id="phase-compare">02 · Comparar</span>
+          <span class="progress-step" id="phase-copy">03 · Sincronizar</span>
+          <span class="progress-step" id="phase-play">04 · Jugar</span>
+          <span class="progress-step" id="phase-return">05 · Devolver</span>
+        </div>
+        <div class="preflight-body">
+          <div>
+            <p class="eyebrow" id="preflight-kicker">PREPARANDO TU DOCK</p>
+            <h2 id="preflight-title">Revisando tu PSP</h2>
+            <p id="preflight-description" aria-live="polite">El inventario se compara antes de activar el modo mando.</p>
+            <span class="preflight-summary" id="preflight-summary"></span>
+            <div class="runtime-readiness" id="runtime-readiness" role="status" aria-live="polite" hidden>
+              <span class="runtime-indicator" aria-hidden="true"></span>
+              <span id="runtime-readiness-label">Comprobando PPSSPP en el PC…</span>
+            </div>
+            <p class="preflight-caveat" id="preflight-caveat">El cambio USB a mando todavía necesita una transición validada.</p>
+          </div>
+          <div class="preflight-actions">
+            <button type="button" class="button primary" id="preflight-copy" hidden>Copiar juegos pendientes</button>
+            <button type="button" class="button secondary" id="preflight-saves" hidden>Revisar partidas</button>
+            <button type="button" class="button secondary" id="preflight-prepare-runtime" hidden>Preparar PPSSPP</button>
+            <button type="button" class="button secondary" id="preflight-skip" hidden>Seguir con los disponibles</button>
+            <button type="button" class="button primary" id="preflight-exit-dock" hidden>Salir del Dock <span aria-hidden="true">↗</span></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="empty-view" id="empty-view" aria-labelledby="empty-title">
+        <div class="handheld" aria-hidden="true"><span class="handheld-pad">+</span><span class="handheld-screen"><b>PSP</b></span><span class="handheld-buttons">·<br>···</span></div>
+        <p class="eyebrow">TU BIBLIOTECA, SIN FRONTERAS</p>
+        <h1 id="empty-title">La partida continúa aquí.</h1>
+        <p id="empty-description">Conecta tu PSP por USB y activa el modo USB.<br>Tu biblioteca aparecerá en este espacio.</p>
+        <button class="button primary" id="refresh-button">Buscar PSP <span aria-hidden="true">↗</span></button>
+        <span class="empty-hint">También puedes elegir una biblioteca local en <button class="text-button" id="empty-settings">Ajustes</button>.</span>
+      </section>
+
+      <section class="library" id="library" hidden aria-label="Biblioteca de juegos">
+        <div class="library-heading"><p class="eyebrow" id="library-eyebrow">ELIGE TU PRÓXIMA PARTIDA</p><span id="library-count"></span></div>
+        <div class="library-stage">
+          <button type="button" class="track-arrow" id="game-prev" aria-label="Juego anterior" title="Juego anterior">‹</button>
+          <div class="game-track" id="game-track" role="group" aria-label="Juegos disponibles; usa izquierda y derecha para elegir"></div>
+          <button type="button" class="track-arrow" id="game-next" aria-label="Juego siguiente" title="Juego siguiente">›</button>
+        </div>
+        <div class="selection-guide"><span id="selection-progress">01 / 01</span><span>PSP: ← → elegir · ✕ jugar · ○ volver · □ partidas · △ gráficos · START ajustes</span></div>
+        <div class="game-details" id="game-details">
+          <div class="detail-title"><span class="eyebrow" id="game-format"></span><h1 id="game-title"></h1><p class="game-meta" id="game-meta"></p><p class="launch-note" id="launch-note"></p></div>
+          <div class="game-actions"><button class="button primary" id="launch-button">Jugar en PPSSPP <span aria-hidden="true">▶</span></button><button class="button secondary" id="graphics-open">Mejoras gráficas <span aria-hidden="true">✦</span></button><button class="button secondary" id="transfer-button">Copiar al PC <span aria-hidden="true">↓</span></button></div>
+        </div>
+        <div class="library-bottom"><span id="session-status"></span><button class="text-button" id="transfer-all" hidden>Copiar juegos pendientes <span aria-hidden="true">↗</span></button></div>
+      </section>
+    </main>
+
+    <footer class="footer"><div class="controls"><span><kbd>←</kbd><kbd>→</kbd> Elegir</span><span><kbd>✕</kbd> Jugar</span><span><kbd>○</kbd> Volver</span><span id="gamepad-status">Mando del navegador: sin detectar</span></div><span class="hardware-note">PSP HID puede navegar directamente en Windows. Cambio USBSTOR ↔ HID automático aún en desarrollo.</span></footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <dialog id="transfer-dialog" aria-labelledby="transfer-title">
+    <form method="dialog" class="dialog-content">
+      <div class="dialog-header"><p class="eyebrow">BIBLIOTECA LOCAL</p><button class="icon-button close" id="transfer-close-x" value="cancel" aria-label="Cerrar">×</button></div>
+      <h2 id="transfer-title">Copiar juegos al PC</h2>
+      <p id="transfer-summary"></p>
+      <ul class="transfer-list" id="transfer-list"></ul>
+      <section class="transfer-progress-panel" id="transfer-progress-panel" aria-label="Progreso de la copia" hidden>
+        <div class="transfer-progress-heading"><strong id="transfer-phase" role="status" aria-live="polite">Iniciando copia…</strong><strong id="transfer-percent">0 %</strong></div>
+        <progress id="transfer-progress" max="100" value="0" aria-label="Porcentaje de datos copiados" aria-describedby="transfer-progress-file transfer-progress-bytes"></progress>
+        <p class="transfer-progress-file" id="transfer-progress-file" aria-live="polite">Preparando el primer juego…</p>
+        <p class="transfer-progress-bytes" id="transfer-progress-bytes">0 B de 0 B</p>
+        <p class="transfer-progress-feedback" id="transfer-progress-feedback" role="status" aria-live="polite" hidden></p>
+      </section>
+      <p class="quiet">Solo se copian juegos ausentes de la PSP al PC. Cancelar conserva los juegos ya completados y todos los archivos de la PSP; la copia parcial del juego actual se descarta.</p>
+      <div class="dialog-actions">
+        <button class="button secondary" id="transfer-close" value="cancel">Cancelar</button>
+        <button type="button" class="button secondary" id="transfer-cancel-progress" hidden>Cancelar copia</button>
+        <button type="button" class="button primary" id="transfer-confirm">Confirmar copia</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="saves-dialog" aria-labelledby="saves-title">
+    <div class="dialog-content"><div class="dialog-header"><p class="eyebrow">CONTINUIDAD DE JUEGO</p><button type="button" class="icon-button close" data-close="saves-dialog" aria-label="Cerrar">×</button></div><h2 id="saves-title">Tus partidas</h2><p class="quiet">Comprueba la dirección de cada copia antes de confirmar. PC → PSP escribe en la Memory Stick; PSP → PC trae la partida al ordenador. Si ambas cambiaron, tú eliges cuál conservar.</p><div id="saves-content"></div><p class="sync-runtime-note" id="sync-runtime-note" role="status" aria-live="polite" hidden>Sincronizando partidas y preparando PPSSPP en el PC…</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="saves-dialog">Cerrar</button><button type="button" class="button primary" id="sync-button">Sincronizar partidas</button></div></div>
+  </dialog>
+
+  <dialog id="resolve-dialog" aria-labelledby="resolve-title"><div class="dialog-content"><div class="dialog-header"><p class="eyebrow">RESOLVER CONFLICTO</p><button type="button" class="icon-button close" data-close="resolve-dialog" aria-label="Cerrar">×</button></div><h2 id="resolve-title">Conservar esta versión</h2><p id="resolve-summary"></p><p class="quiet">La versión elegida reemplazará la del otro dispositivo. Comprueba el origen antes de continuar.</p><div class="dialog-actions"><button type="button" class="button secondary" data-close="resolve-dialog">Cancelar</button><button type="button" class="button primary" id="resolve-confirm">Usar esta versión</button></div></div></dialog>
+
+  <dialog class="settings-dialog" id="graphics-dialog" aria-labelledby="graphics-title">
+    <div class="dialog-content">
+      <div class="dialog-header"><p class="eyebrow">PPSSPP · PERFIL POR JUEGO</p><button type="button" class="icon-button close" data-close="graphics-dialog" aria-label="Cerrar">×</button></div>
+      <h2 id="graphics-title">Mejoras gráficas</h2>
+      <p id="graphics-game" class="quiet"></p>
+      <p class="quiet">Con la PSP: arriba/abajo para cambiar de ajuste, izquierda/derecha para elegir opción, ✕ confirmar y ○ volver.</p>
+      <p id="graphics-monitor" class="graphics-hardware" role="status">Detectando monitor y GPU…</p>
+      <p id="graphics-current" class="graphics-current"></p>
+      <label class="graphics-field">Calidad de renderizado
+        <select id="graphics-quality">
+          <option value="auto">Automático según resolución del monitor</option>
+          <option value="balanced">Equilibrado · menos carga gráfica</option>
+          <option value="quality">Calidad · más resolución y detalle</option>
+          <option value="ultra">Ultra · sobremuestreo adicional</option>
+          <option value="manual">Manual · escala elegida en Ajustes</option>
+        </select>
+      </label>
+      <label class="graphics-field">Proporción de pantalla
+        <select id="graphics-aspect">
+          <option value="fit">Original (recomendado) · sin deformación</option>
+          <option value="stretch">Ocupar toda la ultrawide · estirar imagen</option>
+        </select>
+      </label>
+      <label class="graphics-field">Mejorar texturas (PPSSPP)
+        <select id="graphics-texture">
+          <option value="off">Originales · sin procesamiento adicional</option>
+          <option value="xbrz2">xBRZ 2× · más nitidez (CPU)</option>
+          <option value="xbrz3">xBRZ 3× · alta calidad (CPU)</option>
+          <option value="xbrz4">xBRZ 4× · intensivo (CPU)</option>
+          <option value="bicubic2">Bicubic 2× · suavizado (CPU)</option>
+        </select>
+      </label>
+      <p id="graphics-pack" class="quiet">Identificando edición del juego y paquetes HD disponibles…</p>
+      <p class="graphics-warning" id="graphics-warning">El campo de visión ultrawide real requiere compatibilidad específica de cada juego.</p>
+      <p class="quiet">PSP Dock ajusta PPSSPP en el PC. No modifica juegos, partidas ni el firmware de la consola. La mejora de texturas por IA y DLSS no se activan automáticamente porque PPSSPP no dispone de una integración verificada para ello.</p>
+      <p class="form-error" id="graphics-error" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" class="button secondary" data-close="graphics-dialog">Cancelar</button><button type="button" class="button primary" id="graphics-save">Guardar perfil del juego</button></div>
+    </div>
+  </dialog>
+
+  <dialog class="settings-dialog" id="settings-dialog" aria-labelledby="settings-title"><form class="dialog-content" id="settings-form"><div class="dialog-header"><p class="eyebrow">CONFIGURACIÓN</p><button type="button" class="icon-button close" data-close="settings-dialog" aria-label="Cerrar">×</button></div><h2 id="settings-title">Prepara tu Dock.</h2><p class="quiet">Configura estas rutas una vez. Después, conecta tu PSP y continúa jugando.</p><label>Emulador PPSSPP<input name="emulator" placeholder="Ruta al ejecutable de PPSSPP" autocomplete="off"></label><label>Biblioteca del PC<input name="library" placeholder="Carpeta donde guardar los juegos" autocomplete="off"></label><label>Memory Stick de PPSSPP<input name="memstick" placeholder="Carpeta de datos de PPSSPP" autocomplete="off"></label><label>Raíz de la PSP <span class="optional">opcional</span><input name="psp_root" placeholder="Detección automática" autocomplete="off"></label><div class="settings-pair"><label>Escala manual de respaldo<select name="scale"><option value="1">1× · Original</option><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option value="5">5×</option><option value="6">6×</option></select></label><label>Motor gráfico<select name="backend"><option value="directx11">Direct3D 11</option><option value="vulkan">Vulkan</option><option value="gles">OpenGL</option></select></label></div><p id="settings-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button type="button" class="button secondary" data-close="settings-dialog">Cancelar</button><button class="button primary" type="submit" id="settings-save">Guardar ajustes</button></div></form></dialog>
+</body>
+</html>
