@@ -72,7 +72,7 @@ async function appHeartbeat() {
 }
 async function closeDockApp() {
   const connection = xmbConnectionView();
-  if (!(connection.waiting || connection.product?.canClose) || ui.appClosing || ui.appClosed) return;
+  if (!(connection.waiting || connection.product?.canClose || connection.product?.canDismiss) || ui.appClosing || ui.appClosed) return;
   ui.appClosing = true;
   ui.connectionRequestError = '';
   $('dock-connect-error').hidden = true;
@@ -1575,19 +1575,24 @@ function dockProductFlowView(state, options = {}) {
   const canReview = actionable && linkAvailable && phase === 'attention' && flow.can_review_saves === true;
   const canRetry = actionable && linkAvailable && phase === 'attention' && flow.can_retry === true && !!offerId;
   const canClose = actionable && phase === 'safe_to_disconnect' && flow.can_close === true;
+  const canCancel = actionable && linkAvailable && flow.can_cancel === true &&
+    flow.entry_completed !== true && flow.operation_active !== true && flow.game_running !== true;
+  const canDismiss = actionable && phase === 'attention' && flow.can_close_app === true &&
+    flow.operation_active !== true && flow.game_running !== true && state?.session?.running !== true;
   let note = '';
   if (phase === 'choosing') note = flow.capabilities?.controller_during_storage === true && state?.controller_status?.connected === true ?
     'Elige con la cruceta y confirma con ✕, o utiliza el teclado y el ratón. Los conflictos se revisan antes de reemplazar una partida.' :
     'Elige con el teclado o el ratón de este PC. Los conflictos se revisan antes de reemplazar una partida.';
   else if (['waiting_storage_return', 'syncing_out'].includes(phase)) note = 'La salida sólo sincroniza partidas y estados compatibles. Los juegos permanecen en el PC.';
   else if (copying) note = 'Mantén la PSP conectada hasta que termine la comprobación.';
+  else if (canDismiss) note = 'Puedes cerrar la app y conservar los datos de recuperación. La desconexión de la PSP debe completarse por separado.';
   const closeNote = typeof flow.window_close_message === 'string' ? flow.window_close_message.trim() : '';
   if (closeNote && closeNote !== message) note = [note, closeNote].filter(Boolean).join(' ');
   return {
     enabled, phase, visible, blocking: enabled && (phase !== 'ready' || !online || connectionInterrupted),
     usePcSaves: enabled && online && !connectionInterrupted && phase === 'ready' && flow.use_pc_saves === true && ['games', 'none'].includes(flow.choice),
     title, kicker: canceling ? 'CERRANDO LA CONEXIÓN' : stages[phase][1], message, note, offerId,
-    choosing: phase === 'choosing', canChoose, canReview, canRetry, canClose,
+    choosing: phase === 'choosing', canChoose, canReview, canRetry, canClose, canCancel, canDismiss,
     counts: { psp: count('psp_games'), pc: count('pc_games'), missing: count('missing_games'), saves: count('save_actions'), conflicts: count('save_conflicts') },
     showCounts: ['choosing', 'syncing_in', 'entering_controller'].includes(phase),
     showProgress: online && !connectionInterrupted && progress.visible,
@@ -1617,7 +1622,7 @@ function dockConnectionView(state, options = {}) {
   const link = dockLinkView(current);
   const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
   const nativeIdentity = controller.connected === true && controller.mode === 'native_dock' &&
-    controller.product_id === 0x01cd && controller.protocol_version === 3 && controller.firmware_revision === 0x0302 &&
+    controller.product_id === 0x01cd && controller.protocol_version === 3 && controller.firmware_revision === 0x0303 &&
     controller.host_confirmed === true && controller.synthetic_storage === false && (!link.present || link.phase === 'verified');
   const nativeController = nativeIdentity && controller.phase === 2 && product.enabled && product.phase === 'ready';
   const stable = controller.connected === true && controller.mode === 'hid_manual' || nativeController;
@@ -1892,7 +1897,8 @@ function renderProductFlow(product) {
   $('dock-session-retry').hidden = !product.canRetry;
   $('dock-session-refresh').hidden = !product.showRefresh;
   $('dock-session-refresh').disabled = ui.busy;
-  $('dock-session-close').hidden = !product.canClose;
+  $('dock-session-cancel').hidden = !product.canCancel;
+  $('dock-session-close').hidden = !(product.canClose || product.canDismiss);
   $('dock-session-close').disabled = ui.appClosing || ui.appClosed;
   $('dock-session-error').textContent = ui.productRequestError ?
     'No se pudo completar la solicitud. Comprueba el estado antes de reintentar.' : '';
@@ -1941,6 +1947,13 @@ async function retryProductSession() {
   if (!product?.canRetry) return;
   ui.productRequestError = '';
   const operation = mutate('/api/session-retry', { offer_id: product.offerId });
+  xmbRender();
+  await operation;
+}
+async function cancelProductSession() {
+  if (!xmbConnectionView().product?.canCancel) return;
+  ui.productRequestError = '';
+  const operation = mutate('/api/session-cancel', {});
   xmbRender();
   await operation;
 }
@@ -2930,6 +2943,7 @@ document.querySelectorAll('[data-session-choice]').forEach((button) => {
 $('dock-session-review').addEventListener('click', reviewProductSaves);
 $('dock-session-retry').addEventListener('click', retryProductSession);
 $('dock-session-refresh').addEventListener('click', refresh);
+$('dock-session-cancel').addEventListener('click', cancelProductSession);
 $('dock-session-close').addEventListener('click', closeDockApp);
 window.addEventListener('pagehide', appPageLeaving);
 window.addEventListener('pageshow', () => {

@@ -1,4 +1,4 @@
-/* Presentation regression for the actual 0302 launcher helper; no PSP APIs. */
+/* Presentation regression for the actual launcher helper; no PSP APIs. */
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -134,6 +134,6 @@ int main(void) {
     s.phase=PDN_PHASE_ERROR;s.error=0;v=pdn_ui_present(&s,0);
     assert(v.warning);assert(!v.exit_hint[0]);no_active_instructions(&v);
 
-    puts("Native 0302 UI: host confirmation, cancel/exit, true progress, errors and close gate PASS");
+    puts("Native 0303 UI: host confirmation, cancel/exit, true progress, errors and close gate PASS");
     return 0;
 }

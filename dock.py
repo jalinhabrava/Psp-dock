@@ -606,6 +606,26 @@ class Dock:
             devices.append({'root': explicit, 'label': 'Carpeta elegida en ajustes (identidad PSP sin verificar)'})
         return devices
 
+    def awaiting_native_app(self, devices):
+        """An installed native Dock is not a legacy storage-only session.
+
+        This small read-only check suppresses the expensive legacy ROM/save
+        inventory while XMB USB is open. It grants no USB identity or write
+        permission: native transport verification is still required.
+        """
+        if (self.demo or self.product_flow.enabled or self.session.get('pending_return') or
+                self.session.get('exit_requested') or
+                self.copy_queue.get('status') == 'waiting_for_storage'):
+            return False
+        return any(Path(row['root'], 'PSP/GAME/PSPDockNative/EBOOT.PBP').is_file()
+                   for row in devices)
+
+    def watch_interval(self):
+        # USB enumeration/handshake should not accumulate a 3-second delay
+        # between each stage. Established or stopped sessions stay quieter.
+        state = self.product_flow.snapshot()
+        return 1.0 if state['phase'] in ('ready', 'attention', 'safe_to_disconnect') else 0.25
+
     def root(self):
         if self.storage_polling_paused:
             return None
@@ -2162,11 +2182,19 @@ class Dock:
         except (OSError, ValueError, RuntimeError) as exc:
             return idle(str(exc))
 
-    def state(self):
+    def state(self, *, cached_catalogs=False):
         running = self.running()
         device = self.root()
-        games = self.games()
-        retro = self.retro_catalog()
+        # A native callback has just audited these catalogs. Publishing its
+        # UI result must not walk thousands of PSP ROMs a second time while
+        # the worker still holds the data lock. This cache is presentation
+        # only: copy/launch callbacks retain their fresh identity/file checks.
+        # None is explicit invalidation (for example a newly installed core
+        # or copied game), so never replace it with an older UI snapshot.
+        games = (self.cached_game_results if cached_catalogs and self.cached_game_results is not None
+                 else self.games())
+        retro = (self.cached_retro_results if cached_catalogs and self.cached_retro_results is not None
+                 else self.retro_catalog())
         retro_install=self.retro_install_state()
         retro_saves=self.retro_save_plan() if not running else {
             'rows':[], 'pending':0,'conflicts':0,'unmanaged':0,'offline':True}
@@ -2406,7 +2434,7 @@ class Dock:
                         product = self.product_flow.snapshot()
                         if (product_advanced or close_advanced or self.snapshot.get('product_flow',{}).get('revision') != product['revision']
                                 or self.snapshot.get('session',{}).get('running') != running):
-                            self.snapshot = {**self.state(), 'scanning':False}
+                            self.snapshot = {**self.state(cached_catalogs=True), 'scanning':False}
                         else:
                             controller=self.native_transport.controller_status()
                             self.snapshot={**self.snapshot,'controller_status':controller,
@@ -2416,6 +2444,16 @@ class Dock:
                             close_on_verified=True
                             self.session['close_after_verified_return']=False
                             atomic_json(self.data/'session.json',self.session)
+                    elif self.awaiting_native_app(devices):
+                        self.error = None
+                        self.last_device = None
+                        self.snapshot = {**self.snapshot, 'devices':devices,
+                            'selected_device':None, 'scanning':False, 'error':None,
+                            'connection_state':'waiting_psp',
+                            'controller_status':{'connected':False, 'can_play':False,
+                                'synthetic_storage':False, 'mode':'await_native',
+                                'reason':'Abre PSP Dock en la PSP para iniciar la sesión.'},
+                            'can_launch_game':False, 'can_launch_retro':False}
                     else:
                         root = self.root()
                         if root and not running:
@@ -2536,7 +2574,7 @@ class Dock:
                 except (OSError,ValueError):
                     # User can still close XMB manually. No save retries.
                     pass
-            self.stop.wait(3)
+            self.stop.wait(self.watch_interval())
 
 def make_demo(data):
     psp = Path(data) / 'sample-psp'
@@ -2902,6 +2940,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         dock.product_session.choose(body.get('choice'),body.get('offer_id'))
                     elif self.path == '/api/session-retry':
                         dock.product_session.retry(body.get('offer_id'))
+                    elif self.path == '/api/session-cancel':
+                        dock.product_session.request_cancel()
                     elif self.path == '/api/transfer':
                         dock.transfer(body['ids'])
                     elif self.path == '/api/retro-transfer':
@@ -2947,7 +2987,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     else:
                         return self.reply({'error':'No encontrado'},404)
                     if (dock.product_flow.enabled and self.path in (
-                            '/api/session-choice','/api/session-retry','/api/queue-game-copy','/api/exit-dock')):
+                            '/api/session-choice','/api/session-retry','/api/session-cancel','/api/queue-game-copy','/api/exit-dock')):
                         # Intent is already durable; the existing worker owns
                         # all USB/file operations. Do not block this POST on
                         # another expensive inventory or execute it twice.

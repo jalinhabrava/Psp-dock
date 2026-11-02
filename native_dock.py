@@ -23,16 +23,16 @@ from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError, VID
 from psp_usb import PspStorage, identify, _volume_serial
 
 PID = 0x01CD
-REVISION = 0x0302  # Firmware version, never inferred from Sony bcdDevice.
-RETIRED_REVISIONS = frozenset({0x0300, 0x0301})
-USB_REVISIONS = frozenset({0x0100, 0x0302})
+REVISION = 0x0303  # Firmware version, never inferred from Sony bcdDevice.
+RETIRED_REVISIONS = frozenset({0x0300, 0x0301, 0x0302})
+USB_REVISIONS = frozenset({0x0100, 0x0303})
 MAGIC, VERSION = b'PDK2', 3
 STATUS, SET_PHASE, HOST_BEGIN, HOST_PROGRESS = 1, 2, 3, 4
 STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR = 1, 2, 3, 4, 5, 255
 CONNECTED, PENDING, SONY_STORAGE, EXIT_REQUESTED, HOST_CONFIRMED = 1, 2, 4, 8, 16
 FRAME = struct.Struct('<4sBBBB16sIi')
 EXTENSION = struct.Struct('<4sHHIBBHQQ')
-EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', 0x0007, 0x03020001
+EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', 0x0007, 0x03030001
 REPORT_BYTES = 65
 WAITING, INVENTORY, CHOOSING, SYNC_IN, COPY_GAME, CONTROL_ACTIVITY, SYNC_OUT, SAFE_ACTIVITY = range(8)
 UNKNOWN, BYTES, FILES = 0, 1, 2
@@ -46,10 +46,11 @@ USB_PARENT = re.compile(r'^USB\\VID_054C&PID_01CD\\[^\\]+$', re.I)
 class NativeDockError(ValueError):
     def __init__(self, diagnostics, *, message='No se pudo verificar la conexión con PSP Dock.',
                  hint='Revisa la conexión y vuelve a abrir PSP Dock en la consola.',
-                 connection_phase='blocked'):
+                 connection_phase='blocked', details=None):
         super().__init__(diagnostics)
         self.message, self.hint = message, hint
         self.connection_phase = connection_phase
+        self.details = dict(details or {})
 
 
 @dataclass(frozen=True)
@@ -275,9 +276,11 @@ def request_command(path: str, session: str, phase: int, op: int, *,
         sequence = before.sequence + 1
         report = encode_command(session, sequence, phase, op, **fields)
         api.set(handle, report)
+        last_observed = before
         deadline = clock() + max(0.1, min(float(timeout), 5.0))
         while clock() < deadline:
             status = api.get(handle)
+            last_observed = status
             _validate_status_identity(status)
             if status.session != session or not status.connected or not status.sony_storage:
                 raise NativeDockError('La conexión cambió durante la confirmación de fase.')
@@ -293,7 +296,20 @@ def request_command(path: str, session: str, phase: int, op: int, *,
                         'session': session, 'sequence': sequence, 'operation': op,
                         'exit_requested': status.exit_requested}
             pause(0.025)
-    raise NativeDockError('La PSP no confirmó el cambio de fase; no se repite la orden automáticamente.')
+    operation = {HOST_BEGIN: 'HOST_BEGIN', SET_PHASE: 'SET_PHASE', HOST_PROGRESS: 'HOST_PROGRESS'}[op]
+    action = {HOST_BEGIN: 'el inicio de la conexión', SET_PHASE: 'el cambio de modo',
+              HOST_PROGRESS: 'la actualización del progreso'}[op]
+    diagnostics = (
+        f'La PSP no confirmó {action}. {operation}: secuencia enviada {sequence}; '
+        f'último estado: secuencia {last_observed.sequence}, resultado {last_observed.result}, '
+        f'pendiente {int(last_observed.pending)}, fase {last_observed.phase}, '
+        f'Windows confirmado {int(last_observed.host_confirmed)}. '
+        'No se repite automáticamente la orden.')
+    raise NativeDockError(diagnostics,
+        message=f'La PSP no confirmó {action}.',
+        hint='Pulsa Reintentar para comprobar la conexión de nuevo, o cierra PSP Dock.',
+        details={'operation': operation, 'sequence': sequence, 'requested_phase': phase,
+                 'before': asdict(before), 'last_observed': asdict(last_observed)})
 
 
 def request_phase(path: str, session: str, phase: int, **options) -> dict:
@@ -584,13 +600,21 @@ class NativeDockTransport:
     def finish_session(self, *, cancel=False) -> dict:
         with self._commands:
             current = self._fresh()
-            if cancel and current['phase'] in (STORAGE, CONTROLLER):
+            unclaimed = cancel and not current['host_confirmed']
+            if unclaimed:
+                # A failed HOST_BEGIN must not be needed to cancel itself.
+                # No Dock file work was admitted without the claim. The exact
+                # volume/parent is still rebound above and normal Windows PnP
+                # removal flushes it or returns its veto; USB is never forced.
+                if current['phase'] != STORAGE or not current['storage_ready']:
+                    raise NativeDockError('La PSP tiene una orden pendiente; espera a comprobar su estado antes de cancelar.')
+            elif cancel and current['phase'] in (STORAGE, CONTROLLER):
                 # Cancelling entry is an eject path, never a save callback.
                 self.set_phase(EXIT_SYNC)
                 current = self._link
-            if current['phase'] not in (EXIT_SYNC, SAFE):
+            if not unclaimed and current['phase'] not in (EXIT_SYNC, SAFE):
                 raise NativeDockError('La salida requiere completar la sincronización de vuelta.')
-            if current['phase'] != SAFE:
+            if not unclaimed and current['phase'] != SAFE:
                 self.set_phase(SAFE)
             storage, parent = self._storage, self._parent_node
             result = self._eject(storage, parent)

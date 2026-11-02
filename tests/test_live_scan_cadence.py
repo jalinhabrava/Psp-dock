@@ -67,6 +67,30 @@ class LiveScanningTests(unittest.TestCase):
         self.assertEqual(self.dock.snapshot['library_source'], 'cached_manifest')
         self.assertIsNone(self.dock.snapshot['selected_device'])
 
+    def test_native_app_in_xmb_usb_does_not_start_legacy_inventory(self):
+        native = self.psp/'PSP/GAME/PSPDockNative/EBOOT.PBP'
+        native.parent.mkdir(parents=True)
+        native.write_bytes(b'installed application marker, not an identity proof')
+        with patch.object(self.dock.stop, 'wait', side_effect=lambda delay:self.dock.stop.set()) as wait, \
+             patch.object(self.dock, 'state', side_effect=AssertionError('expensive legacy inventory')), \
+             patch.object(self.dock, 'save_plan', side_effect=AssertionError('premature save scan')), \
+             patch.object(self.dock, 'start_xmb_media_prefetch', side_effect=AssertionError('premature media scan')):
+            self.dock.watch()
+        self.assertEqual(self.dock.snapshot['controller_status']['mode'], 'await_native')
+        self.assertFalse(self.dock.product_flow.enabled)
+        self.assertFalse(self.dock.snapshot['scanning'])
+        self.assertFalse(self.dock.snapshot['can_launch_game'])
+        wait.assert_called_once_with(0.25)
+
+    def test_native_marker_does_not_override_explicit_legacy_return(self):
+        native = self.psp/'PSP/GAME/PSPDockNative/EBOOT.PBP'
+        native.parent.mkdir(parents=True)
+        native.write_bytes(b'marker')
+        devices = [{'root':str(self.psp)}]
+        self.assertTrue(self.dock.awaiting_native_app(devices))
+        self.dock.session['pending_return'] = True
+        self.assertFalse(self.dock.awaiting_native_app(devices))
+
 
 if __name__ == '__main__':
     unittest.main()

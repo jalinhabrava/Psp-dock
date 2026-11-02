@@ -72,6 +72,18 @@ class NativeWindowCloseTests(unittest.TestCase):
         self.assertTrue(self.ui.should_stop(native_visible=False))
         return self.dock.window_close.restore_once(self.ui,self.restore)
 
+    def test_explicit_close_does_not_restore_an_attention_window(self):
+        self.product.flow.enabled = True
+        self.product.flow.observe(self.transport.current)
+        self.product.flow.halt('HOST_BEGIN failed')
+        before = self.product.flow.path.read_bytes()
+        self.ui.release(A, 'button')
+        self.clock.now += 3
+        self.assertTrue(self.ui.should_stop(native_visible=False))
+        self.assertFalse(self.dock.window_close.restore_once(self.ui, self.restore))
+        self.restore.assert_not_called()
+        self.assertEqual(self.product.flow.path.read_bytes(), before)
+
     def show_restored_window(self):
         self.ui.heartbeat(B)
         self.ui.should_stop(native_visible=True)
@@ -135,7 +147,7 @@ class NativeWindowCloseTests(unittest.TestCase):
             self.assertEqual(self.finish_or_attention()['phase'], 'safe_to_disconnect')
         self.assertEqual(self.product.snapshot()['purpose'], 'cancel')
         self.assertEqual(self.transport.roles, [])
-        self.assertEqual(self.transport.begins, 1)
+        self.assertEqual(self.transport.begins, 0)
         self.assertFalse(self.product.entry_path.exists())
         self.assertEqual(self.psp_save.read_bytes(), b'old')
 

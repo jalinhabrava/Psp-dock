@@ -1,4 +1,4 @@
-/* Actual 0302 transport under asynchronous USB/module doubles. These tests
+/* Actual 0303 transport under asynchronous USB/module doubles. These tests
  * establish ownership and order, not Sony USBBus composition on hardware. */
 #include <assert.h>
 #include <stdio.h>
@@ -22,6 +22,27 @@ static int fail_load=-1,fail_start=-1,fail_usb_start,hold_cancel,queue_failure;
 static int start_failure_code=-601,suppress_sony_registration;
 static unsigned boot_loads,boot_starts,forbidden_loads;
 static void (*cancel_hook)(unsigned);
+/* Two-view cache fixture. Sony may copy EP0 OUT bytes with the CPU before
+ * invoking our callback. Such bytes live in the cached view; a subsequent
+ * invalidate discards them and reloads the old backing-store contents.
+ * This models cache semantics, not proof of the Sony path on this PSP. */
+static uint8_t ctl_memory[sizeof(ctl_buffer)];
+static int model_ep0_cache,receive_cache_prepared;
+static unsigned discarded_cpu_copies;
+void sceKernelDcacheInvalidateRange(void *p,size_t n){
+    if(!model_ep0_cache || p!=ctl_buffer)return;
+    assert(n<=sizeof(ctl_memory));
+    if(memcmp(p,ctl_memory,n))discarded_cpu_copies++;
+    memcpy(p,ctl_memory,n);
+}
+void sceKernelDcacheWritebackInvalidateRange(void *p,size_t n){
+    if(!model_ep0_cache || p!=ctl_buffer)return;
+    assert(n<=sizeof(ctl_memory));memcpy(ctl_memory,p,n);receive_cache_prepared=1;
+}
+void sceKernelDcacheWritebackRange(void *p,size_t n){
+    if(!model_ep0_cache || p!=ctl_buffer)return;
+    assert(n<=sizeof(ctl_memory));memcpy(ctl_memory,p,n);
+}
 enum { REQUIRED_MASK=15u, FAKE_BOOT_MODULE=104 };
 /* Independent Sony fixture: Boot really fails to link in this GAME model.
  * Keeping it in the double makes a regression to the 0300 bootstrap fail,
@@ -49,7 +70,12 @@ int sceUsbbdReqSend(struct UsbdDeviceReq *r){
     if(queue_failure)return queue_failure;
     assert(!pending[ep]);pending[ep]=r;submissions[ep]++;return 0;
 }
-int sceUsbbdReqRecv(struct UsbdDeviceReq *r){return sceUsbbdReqSend(r);}
+int sceUsbbdReqRecv(struct UsbdDeviceReq *r){
+    if(model_ep0_cache && r->data==ctl_buffer){
+        assert(receive_cache_prepared);receive_cache_prepared=0;
+    }
+    return sceUsbbdReqSend(r);
+}
 int sceUsbbdReqCancelAll(struct UsbEndpoint *ep){
     unsigned n=(unsigned)ep->endpnum;cancels[n]++;
     if(pending[n] && !hold_cancel)complete(n,-3,0);
@@ -156,6 +182,8 @@ static void fixture(void){
     fail_load=fail_start=-1;fail_usb_start=hold_cancel=queue_failure=0;cancel_hook=NULL;
     start_failure_code=-601;suppress_sony_registration=0;
     boot_loads=boot_starts=forbidden_loads=0;
+    model_ep0_cache=receive_cache_prepared=0;discarded_cpu_copies=0;
+    memset(ctl_memory,0,sizeof(ctl_memory));
 }
 static void connected_fixture(void){
     fixture();assert(start_usb()==0 && activated);fake_usb=0x222;
@@ -215,7 +243,7 @@ static void test_guard_and_bootstrap_failures(void){
     assert(stop_usb()==0 && !storage_started && !registered && !bus_owned);
     assert(unload_dependencies()==0 && unload_mask==REQUIRED_MASK);
 }
-static void test_0302_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
+static void test_0303_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
     int result,status=-1;SceUID boot;
     /* Reproduce the photographed 0300 failure in the Sony module double. */
     fixture();boot=sceKernelLoadModule("flash0:/kd/usbstorboot.prx",0,NULL);
@@ -224,9 +252,9 @@ static void test_0302_omits_pc_activation_and_keeps_mandatory_link_failures_fata
     assert(boot_loads==1 && boot_starts==1 && !start_mask);
     assert(sceKernelUnloadModule(boot)==boot);
 
-    /* 0302 must reach the normal transport without ever loading that PRX,
+    /* 0303 must reach the normal transport without ever loading that PRX,
      * Pcact, NPDRM, EFlash or usbdevice redirection. */
-    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0302u);
+    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0303u);
     assert(start_usb()==0 && activated && storage_started);
     assert(load_mask==REQUIRED_MASK && !boot_loads && !boot_starts && !forbidden_loads);
     assert(stop_usb()==0 && unload_dependencies()==0);
@@ -244,16 +272,18 @@ static void test_sony_registration_and_launcher_revision_remain_required(void){
     fixture();suppress_sony_registration=1;
     assert(start_usb()==-3003 && !activated && !registered && !storage_started);
     assert(!operation_count && stop_usb()==0 && unload_dependencies()==0);
-    assert(PDN_LAUNCH_MAGIC==0x324e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
+    assert(PDN_LAUNCH_MAGIC==0x334e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
     old_launch.magic=0x314e4450u;
+    assert(module_start(sizeof(old_launch),&old_launch)==-1);
+    old_launch.magic=0x324e4450u;
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
 }
 static void test_identification_and_get_are_read_only(void){
     struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
     struct DeviceRequest descriptor={0x81,6,0x2200,1,sizeof(report_descriptor)};
     struct DeviceRequest legacy_set={0x21,9,0x0300,1,32};
-    const uint8_t identity[12]={'N','A','T','3',2,3,7,0,1,0,2,3};
+    const uint8_t identity[12]={'N','A','T','3',3,3,7,0,1,0,3,3};
     uint8_t before[16];unsigned i;
     connected_fixture();memcpy(before,protocol.session,16);
     assert(sizeof(pdn_wire_prefix)==5 && !memcmp(pdn_wire_prefix,"PDK2\x03",5));
@@ -272,6 +302,34 @@ static void test_identification_and_get_are_read_only(void){
     assert(receive_control(0,1,&legacy_set)<0);
     receive_phase(PDN_PHASE_CONTROLLER,1);
     assert(protocol.last_rejection==PDN_ERR_HANDSHAKE && !protocol.sequence && !protocol.pending);
+}
+static void test_ep0_cpu_copy_keeps_command_until_protocol_reads_it(void){
+    struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
+    struct DeviceRequest setup={0x21,9,0x0300,1,PDN_FEATURE_SIZE};
+    uint8_t frame[PDN_FEATURE_SIZE];
+    connected_fixture();model_ep0_cache=1;
+    /* The preceding GET_REPORT remains in memory. An EP0 CPU copy replaces
+     * the cached view only. Invalidating in ctl_done loses HOST_BEGIN and
+     * makes the parser see the old STATUS report instead (regression 0302). */
+    assert(receive_control(0,1,&status)==0);complete(0,0,PDN_FEATURE_SIZE);
+    assert(ctl_memory[5]==PDN_OP_STATUS);
+    begin_session();
+    assert(protocol.sequence==1 && protocol.result==PDN_APPLIED && !discarded_cpu_copies);
+    receive_phase(PDN_PHASE_CONTROLLER,2);assert(apply_phase()==0);
+    assert(protocol.phase==PDN_PHASE_CONTROLLER && protocol.sequence==2 && !discarded_cpu_copies);
+    /* A coherent DMA completion also works: memory and the CPU-visible
+     * view contain the received frame before the completion callback. */
+    command(frame,PDN_PHASE_STORAGE,3);
+    assert(receive_control(0,1,&setup)==0);
+    memcpy(ctl_memory,frame,PDN_FEATURE_SIZE);memcpy(ctl_buffer,frame,PDN_FEATURE_SIZE);
+    complete(0,0,PDN_FEATURE_SIZE);assert(apply_phase()==0);
+    assert(protocol.phase==PDN_PHASE_STORAGE && protocol.sequence==3 && !discarded_cpu_copies);
+    /* Short/error completions still cannot become commands. */
+    command(frame,PDN_PHASE_CONTROLLER,4);
+    assert(receive_control(0,1,&setup)==0);memcpy(ctl_buffer,frame,PDN_FEATURE_SIZE);
+    complete(0,0,PDN_FEATURE_SIZE-1);assert(!protocol.pending && protocol.sequence==3);
+    assert(receive_control(0,1,&setup)==0);memcpy(ctl_buffer,frame,PDN_FEATURE_SIZE);
+    complete(0,-3,PDN_FEATURE_SIZE);assert(!protocol.pending && protocol.sequence==3);
 }
 static void test_begin_ack_and_phase_ack_cancel_old_input_first(void){
     uint8_t frame[PDN_FEATURE_SIZE],status[PDN_FEATURE_SIZE];unsigned before;
@@ -467,14 +525,15 @@ static void test_protocol_replay_malformed_and_terminal_safe(void){
 int main(void){
     test_start_order_and_owned_cleanup();test_borrowed_modules_and_bus_survive();
     test_guard_and_bootstrap_failures();test_begin_ack_and_phase_ack_cancel_old_input_first();
-    test_0302_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
+    test_0303_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
     test_sony_registration_and_launcher_revision_remain_required();
     test_identification_and_get_are_read_only();test_reset_nonce_changes_at_constant_timer();
+    test_ep0_cpu_copy_keeps_command_until_protocol_reads_it();
     test_reconfiguration_and_old_ep0_cannot_change_session();test_stop_waits_for_real_unplug();
     test_held_control_drain_never_acknowledges_old_generation();
     test_input_only_after_claim_and_choice_or_controller();
     test_exit_request_before_and_after_handshake_never_cuts_storage();
     test_interface_one_and_transfer_buffer_ownership();test_progress_requires_valid_current_phase_and_preserves_storage();
     test_protocol_replay_malformed_and_terminal_safe();
-    puts("native-dock 0302: identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
+    puts("native-dock 0303: EP0 cache, identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
 }

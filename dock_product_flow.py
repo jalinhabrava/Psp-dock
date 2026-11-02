@@ -488,7 +488,8 @@ class ProductFlow:
             if self._state["cancel_requested"]:
                 return
             if (self._state["phase"] == "attention" and
-                    self._state["operation"].get("status") == "started"):
+                    self._state["operation"].get("status") == "started" and
+                    self._state["operation"].get("name") != "inventory"):
                 self._commit(cancel_requested=True, purpose="cancel", resume_phase="finalizing")
             elif self._busy:
                 self._commit(cancel_requested=True)
@@ -713,6 +714,13 @@ class ProductFlow:
                 "can_review_saves": bool(phase == "attention" and state["conflicts"]
                                          and self._same(storage=True) and not self._busy),
                 "can_retry": self._can_retry(),
+                "can_cancel": bool(self.can_cancel_entry() and self._same() and
+                                   not self._busy and not state["cancel_requested"] and
+                                   phase != "finalizing" and
+                                   not (phase == "attention" and
+                                        state["operation"].get("status") == "started" and
+                                        state["operation"].get("name") != "inventory")),
+                "can_close_app": phase == "attention" and not self._busy and not self._game_running,
                 "can_close": phase == "safe_to_disconnect" and not self._busy,
                 "operation_active": self._busy, "game_running": self._game_running,
                 "recovery_required": state["recovery_required"],

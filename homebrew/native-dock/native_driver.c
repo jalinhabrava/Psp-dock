@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0302: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0303: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,7 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,2);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,3);
 
 typedef struct {
     const char *path,*name;
@@ -84,7 +84,11 @@ static int pad_done(struct UsbdDeviceReq *r,int a,int b) {
 static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
     int irq;(void)a;(void)b;
     if(ctl_feature_receive && !r->retcode && r->recvsize==(int)PDN_FEATURE_SIZE){
-        sceKernelDcacheInvalidateRange(ctl_buffer,sizeof(ctl_buffer));
+        /* Recv owns this buffer until completion. Prepare its cache before
+         * submission (below), as Sony usbacc does for EP0 OUT; do not
+         * invalidate here. A USBBus CPU copy can leave the received command
+         * dirty in cache, and invalidation would restore the preceding GET
+         * report from memory, silently discarding HOST_BEGIN/SET_PHASE. */
         irq=sceKernelCpuSuspendIntr();
         if(active && connected && !ctl_quiescing && !link_reset_pending &&
            ctl_generation==link_generation){

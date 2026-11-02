@@ -1,4 +1,4 @@
-"""Install 0302 only into a new PSPDockNative folder, from Sony XMB USB.
+"""Install 0303 only into a new PSPDockNative folder, from Sony XMB USB.
 
 No upgrade, firmware execution, USB transition, flash, plugins or drivers.
 Every installation has a persistent PC receipt/journal and a current backup.

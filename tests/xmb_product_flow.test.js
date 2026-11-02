@@ -45,12 +45,12 @@ equal(connection({ ...storage, product_flow: flow('ready') }).canPlay, false,
   'Ready does not fabricate a gamepad');
 equal(connection({ ...stable, demo: true, product_flow: flow('ready') }).canPlay, false);
 const native = { selected_device: 'G:\\', controller_status: { connected: true, mode: 'native_dock', can_play: true,
-  synthetic_storage: false, product_id: 0x01cd, protocol_version: 3, firmware_revision: 0x0302,
+  synthetic_storage: false, product_id: 0x01cd, protocol_version: 3, firmware_revision: 0x0303,
   usb_revision: 0x0100, host_confirmed: true, phase: 2 }, product_flow: flow('ready') };
 equal(connection(native).canPlay, true, 'Verified native Dock can keep its Sony storage enumerated');
 equal(connection(native).nativeController, true);
 for (const changes of [{ product_id: 0x01cc }, { firmware_revision: 0x0207 }, { firmware_revision: 0x0300 },
-  { firmware_revision: 0x0301 }, { firmware_revision: undefined, revision: 0x0302 }, { protocol_version: 2 },
+  { firmware_revision: 0x0301 }, { firmware_revision: 0x0302 }, { firmware_revision: undefined, revision: 0x0303 }, { protocol_version: 2 },
   { protocol_version: undefined }, { host_confirmed: false }, { host_confirmed: undefined },
   { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
   equal(connection({ ...native, controller_status: { ...native.controller_status, ...changes } }).canPlay,
@@ -62,6 +62,16 @@ equal(connection({ ...native, product_flow: { enabled: false } }).canPlay, false
   'A native controller without the coordinated journey is insufficient');
 equal(product({ ...native, product_flow: flow('finalizing', { can_close: true }) }).canClose, false,
   'Finalization never advertises safe disconnect or permits the close button');
+const failedEntry = { ...native, product_flow: flow('attention', {
+  can_cancel: true, can_close_app: true, can_retry: false, operation_active: false, entry_completed: false,
+}) };
+equal(product(failedEntry).canCancel, true, 'Failed read-only entry offers normal disconnect');
+equal(product(failedEntry).canDismiss, true, 'A failed entry always has an app-close action');
+equal(product(failedEntry).canClose, false, 'App close never claims safe hardware removal');
+equal(product({ ...failedEntry, product_flow: { ...failedEntry.product_flow,
+  operation_active: true } }).canCancel, false, 'A running operation cannot be cancelled by an idle-only action');
+equal(product({ ...failedEntry, session: { running:true } }).canDismiss, false,
+  'The close action cannot bypass an active emulator');
 const waitingGameExit = product({ ...native, session: { running: true },
   product_flow: flow('waiting_game_exit', { window_close_requested: true,
     can_choose: true, can_review_saves: true, can_retry: true, can_close: true }) });
@@ -273,6 +283,10 @@ async function inputs() {
   closing.ui = { ...closing.ui, appClosed: false, state: { ...native, product_flow: flow('copying_game') } };
   await closing.closeDockApp();
   equal(closing.calls.length, 1, 'The preconnection close button cannot bypass an active copy');
+  closing.ui.state = failedEntry;
+  await closing.closeDockApp();
+  equal(closing.calls.length, 2, 'Attention can close the app without a safe-to-disconnect claim');
+  equal(closing.calls[1].route, '/api/app/close');
 
   equal(calls.length, 0, 'Rendering/loading the handlers has no mutation');
   runtime.productFlowPress('back');

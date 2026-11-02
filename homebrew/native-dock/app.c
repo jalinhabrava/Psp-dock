@@ -13,7 +13,7 @@
 #include "native_common.h"
 #include "native_ui.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,2);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,3);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;

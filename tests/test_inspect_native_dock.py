@@ -17,7 +17,7 @@ PARENT = {'devinst': 55, 'instance': r'USB\VID_054C&PID_01CD\SERIAL1'}
 OTHER = {'devinst': 66, 'instance': r'USB\VID_054C&PID_01CD\SERIAL2'}
 FRAME = b'\0' + native.FRAME.pack(b'PDK2', 2, 1, 1, 5, b'x' * 16, 0, 0)
 CURRENT_FRAME = (b'\0' + native.FRAME.pack(b'PDK2', 3, 1, 1, 5, b'x' * 16, 0, 0) +
-                 native.EXTENSION.pack(b'NAT3', 0x0302, 7, 0x03020001, 0, 0, 0, 0, 0))
+                 native.EXTENSION.pack(b'NAT3', 0x0303, 7, 0x03030001, 0, 0, 0, 0, 0))
 
 
 class LowLevelFake(inspect.NativeReadOnlyInspector):
@@ -86,7 +86,7 @@ class InspectorTests(unittest.TestCase):
         self.assertEqual(result['revision_status'], 'supported')
         self.assertFalse(result['retired_revision'])
         self.assertFalse(result['writes_authorized'])
-        self.assertEqual(result['firmware_revision'], 0x0302)
+        self.assertEqual(result['firmware_revision'], 0x0303)
         self.assertEqual(result['usb_revision'], 0x0100)
         self.assertEqual(result['protocol_version'], 3)
         self.assertFalse(result['status']['host_confirmed'])

@@ -23,7 +23,7 @@ typedef struct {
 } PdnUiView;
 
 static inline const char *pdn_ui_dependency_name(unsigned dependency) {
-    /* Exact mandatory dependency order for 0302; Boot is not a dependency. */
+    /* Exact mandatory dependency order; Boot is not a dependency. */
     switch(dependency){
         case 1:return "semawm.prx";
         case 2:return "usbstor.prx";

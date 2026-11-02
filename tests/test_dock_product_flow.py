@@ -182,6 +182,41 @@ class ProductFlowTests(unittest.TestCase):
         with self.assertRaises(ProductFlowError):
             self.flow.request_cancel()
 
+    def test_failed_read_only_inventory_can_cancel_without_retrying_handshake(self):
+        def fail(context):
+            raise ValueError('HOST_BEGIN confirmation missing')
+        self.adapter.handlers['inventory'] = fail
+        self.flow.observe(storage())
+        self.flow.advance()
+        self.assertEqual(self.flow.snapshot()['phase'], 'attention')
+        self.assertTrue(self.flow.snapshot()['can_cancel'])
+        self.assertTrue(self.flow.snapshot()['can_close_app'])
+        self.flow.request_cancel()
+        self.assertEqual(self.flow.snapshot()['phase'], 'finalizing')
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory', 'finalize_exit'])
+        self.assertEqual(self.flow.snapshot()['phase'], 'safe_to_disconnect')
+
+    def test_failed_write_is_not_offered_as_unreviewed_cancel(self):
+        self.flow.choose('saves', self.offer())
+        self.adapter.handlers['sync_initial'] = lambda context: (_ for _ in ()).throw(OSError('write interrupted'))
+        self.flow.advance()
+        self.assertFalse(self.flow.snapshot()['can_cancel'])
+        self.assertTrue(self.flow.snapshot()['can_close_app'])
+        self.flow.request_cancel()
+        self.assertEqual(self.flow.snapshot()['phase'], 'attention')
+        self.assertFalse(self.flow.advance())
+        self.assertNotIn('finalize_exit', self.adapter.names())
+
+    def test_failed_entry_disconnected_can_close_app_without_claiming_safe_or_retry(self):
+        self.flow.observe(storage())
+        self.flow.halt('HOST_BEGIN confirmation missing')
+        self.flow.observe(None)
+        state = self.flow.snapshot()
+        self.assertTrue(state['can_close_app'])
+        self.assertFalse(state['can_close'] or state['can_cancel'] or state['can_retry'])
+        self.assertEqual(self.adapter.names(), [])
+
     def test_choice_selects_exact_initial_callback_policy(self):
         for choice in ("saves", "games", "all"):
             with self.subTest(choice=choice):

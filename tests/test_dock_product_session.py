@@ -38,7 +38,7 @@ class FakeTransport:
                 'safe_ready': self.phase == 5, 'controller_available': self.phase in (1, 2) and self.host_confirmed,
                 'phase': self.phase, 'path': 'synthetic-native-hid', 'product_id': 0x01CD,
                 'revision': 0x0100, 'usb_revision': 0x0100, 'protocol_version':3,
-                'firmware_revision':0x0302, 'host_confirmed': self.host_confirmed,
+                'firmware_revision':0x0303, 'host_confirmed': self.host_confirmed,
                 'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
                 'root': str(self.root), 'exit_requested': self.exit_requested}
 
@@ -86,11 +86,16 @@ class FakeTransport:
                 'mode': 'native_dock', 'synthetic_storage': False, 'path': 'synthetic-native-hid',
                 'session': self.session_id, 'phase': self.phase, 'product_id': 0x01CD,
                 'revision': 0x0100, 'usb_revision':0x0100, 'protocol_version':3,
-                'firmware_revision':0x0302, 'host_confirmed':self.host_confirmed,
+                'firmware_revision':0x0303, 'host_confirmed':self.host_confirmed,
                 'reason': 'Synthetic transport for tests'}
 
     def finish_session(self, *, cancel=False):
         self.finishes += 1
+        if cancel and not self.host_confirmed and self.phase == 1:
+            if self.veto:
+                raise ValueError('Synthetic Windows safe-eject veto')
+            self.connected = False
+            return {'verified':True, 'host_eject_accepted':True, 'entry_unclaimed':True}
         if cancel and self.host_confirmed and self.phase in (1, 2):
             self.phase = 4
         if self.phase not in (4, 5):
@@ -199,7 +204,31 @@ class DockProductSessionTests(unittest.TestCase):
             self.offer()
         self.assertEqual(self.transport.begins, 1)
 
-    def test_psp_exit_before_inventory_only_claims_and_ejects_without_copies(self):
+    def test_publishing_native_inventory_does_not_repeat_game_and_rom_scan(self):
+        self.offer()
+        with patch.object(self.dock, 'games', side_effect=AssertionError('duplicate PSP game scan')), \
+             patch.object(self.dock, 'retro_catalog', side_effect=AssertionError('duplicate PSP ROM scan')):
+            view = self.dock.state(cached_catalogs=True)
+        self.assertEqual(view['games'], self.dock.cached_game_results)
+        self.assertEqual(view['retro'], self.dock.cached_retro_results)
+        self.assertFalse(view['can_launch_game'])
+        self.assertEqual(view['product_flow']['phase'], 'choosing')
+
+    def test_native_publication_rebuilds_invalidated_catalogs_instead_of_old_snapshot(self):
+        self.offer()
+        games = list(self.dock.cached_game_results)
+        retro = {'emulators':[], 'roms':[{'availability':'ready', 'core_available':True}]}
+        self.dock.snapshot['retro'] = {'emulators':[], 'roms':[{'availability':'ready', 'core_available':False}]}
+        self.dock.cached_game_results = self.dock.cached_retro_results = None
+        with patch.object(self.dock, 'games', return_value=games) as refresh_games, \
+             patch.object(self.dock, 'retro_catalog', return_value=retro) as refresh_retro:
+            view = self.dock.state(cached_catalogs=True)
+        refresh_games.assert_called_with()
+        refresh_retro.assert_called_with()
+        self.assertEqual(view['games'], games)
+        self.assertTrue(view['retro']['roms'][0]['core_available'])
+
+    def test_psp_exit_before_inventory_ejects_without_claim_or_copies(self):
         original = self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'psp only')
         self.dock.session['pending_return'] = True  # Preserve unrelated recovery metadata.
         self.transport.exit_requested = True
@@ -208,12 +237,27 @@ class DockProductSessionTests(unittest.TestCase):
             self.tick()
         self.assertEqual(self.product.snapshot()['purpose'], 'cancel')
         self.assertEqual(self.product.snapshot()['phase'], 'safe_to_disconnect')
-        self.assertEqual(self.transport.begins, 1)
+        self.assertEqual(self.transport.begins, 0)
         self.assertEqual(self.transport.finishes, 1)
         self.assertEqual(self.transport.roles, [])
         self.assertFalse(self.product.entry_path.exists())
         self.assertEqual(original.read_bytes(), b'psp only')
         self.assertTrue(self.dock.session['pending_return'])
+
+    def test_cancel_after_failed_begin_never_repeats_the_failed_command(self):
+        saved = self.slot(self.psp/'PSP/SAVEDATA', 'SAVE', b'original')
+        with patch.object(self.transport, 'begin_session', side_effect=ValueError('missing HOST_BEGIN ACK')) as begin, \
+             patch('dock.copy_slot', side_effect=AssertionError('cancel must not copy saves')):
+            self.tick()
+            self.assertEqual(self.product.snapshot()['phase'], 'attention')
+            self.assertTrue(self.product.snapshot()['can_cancel'])
+            self.product.request_cancel()
+            self.tick()
+            self.assertEqual(begin.call_count, 1)
+        self.assertEqual(self.product.snapshot()['phase'], 'safe_to_disconnect')
+        self.assertEqual(self.transport.finishes, 1)
+        self.assertFalse(self.product.entry_path.exists())
+        self.assertEqual(saved.read_bytes(), b'original')
 
     def test_psp_exit_drains_current_save_and_never_starts_the_next_copy(self):
         self.slot(self.psp/'PSP/SAVEDATA','SAVE_A',b'first')

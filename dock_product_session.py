@@ -52,6 +52,7 @@ class DockProductSession:
             result['can_choose'] = False
             result['can_retry'] = False
             result['can_review_saves'] = False
+            result['can_cancel'] = False
             if self.observation and self.observation.get('exit_requested'):
                 result.update(phase='waiting_game_exit', blocking=True, can_close=False,
                               message='Has pedido salir desde la PSP. Cierra el emulador normalmente para devolver las partidas.')
@@ -578,9 +579,9 @@ class DockProductSession:
             current = self.transport.current
             if (not current or {key: current[key] for key in ('session_id', 'volume_serial')} != context['identity']):
                 raise ProductFlowError('La conexión cambió antes de cancelar la entrada.')
-            if not current.get('host_confirmed'):
-                self.transport.begin_session(context)
-                self.observation = self.transport.current
+            # Cancelling a failed HOST_BEGIN must not depend on repeating
+            # that handshake. The transport can normally eject an unclaimed
+            # STORAGE session after rechecking the exact PSP/card identity.
         else:
             entry = self._require_entry(context)
             if not entry.get('return_data_verified') or entry.get('return_identity') != context['identity']:

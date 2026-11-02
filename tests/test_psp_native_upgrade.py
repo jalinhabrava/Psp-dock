@@ -1,7 +1,7 @@
 """Verified replacement and interruption recovery on real temporary files.
 
 No hardware discovery: only the four fixture hashes replace the reviewed
-0300/0301 constants, and every identity callback is an explicit test double.
+0300/0301/0302 constants, and every identity callback is an explicit test double.
 """
 import hashlib
 import json
@@ -47,7 +47,7 @@ class NativeUpgradeTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('KEEP ' + relative).encode())
             self.kept[path] = path.read_bytes()
-        self.package = fixture_native_package(self.home / 'package0302')
+        self.package = fixture_native_package(self.home / 'package0303')
         self.new_records = json.loads((self.package / 'manifest.json').read_text())['files']
         snapshot = psp_backup.backup(self.psp, self.home / 'critical', 'critical', SERIAL, USB,
                                      verify_identity=lambda: True, reserve_bytes=0)
@@ -83,7 +83,7 @@ class NativeUpgradeTests(unittest.TestCase):
     def test_plan_is_read_only(self):
         before = {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()}
         result = self.plan()
-        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0302'))
+        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0303'))
         self.assertEqual(result['reference_installation_receipt_sha256'],
                          upgrade._reference_receipt(self.previous_revision))
         self.assertFalse(result['installed']);self.assertFalse(result['autorun'])
@@ -356,32 +356,58 @@ class NativeUpgradeTests(unittest.TestCase):
 
 
 class Native0301UpgradeTests(NativeUpgradeTests):
-    """Repeat interruption and identity gates for the exact current source version."""
+    """Retain interruption and identity gates for the reviewed 0301 source."""
     previous_revision = '0301'
+
+
+class Native0302UpgradeTests(NativeUpgradeTests):
+    """Repeat interruption and identity gates for the exact current source version."""
+    previous_revision = '0302'
 
 
 class Historical0301RollbackTests(unittest.TestCase):
     # Reuse fixture/helpers, without inheriting the modern-upgrade tests.
     previous_revision = '0300'
+    replacement_revision = '0301'
     setUp = NativeUpgradeTests.setUp
     install = NativeUpgradeTests.install
     restore = NativeUpgradeTests.restore
     assert_files = NativeUpgradeTests.assert_files
     assert_kept = NativeUpgradeTests.assert_kept
 
-    def test_old_receipt_0300_to_0301_remains_recoverable(self):
+    def test_old_receipt_remains_recoverable(self):
         self.install()
         record = json.loads(self.receipt.read_text())
-        record['to_revision'] = '0301'
+        record['to_revision'] = self.replacement_revision
         self.receipt.write_text(json.dumps(record))
-        with patch.object(upgrade, 'KNOWN_0301_FILES', self.new_records):
+        with patch.object(upgrade, 'KNOWN_' + self.replacement_revision + '_FILES', self.new_records):
             plan = upgrade.plan_rollback(self.receipt, self.psp, SERIAL, USB)
-            self.assertEqual(plan['revision'], '0300')
+            self.assertEqual(plan['revision'], self.previous_revision)
             restored = self.restore()
         self.assertTrue(restored['restored'])
         self.assert_files(self.target, self.old_records)
         self.assert_files(Path(restored['parked']), self.new_records)
         self.assert_kept()
+
+    def test_historical_receipt_cannot_authorize_unreviewed_replacement_hashes(self):
+        self.install()
+        record = json.loads(self.receipt.read_text())
+        record['to_revision'] = self.replacement_revision
+        self.receipt.write_text(json.dumps(record))
+        with self.assertRaises(ValueError):
+            self.restore()
+        self.assertFalse(self.restore_receipt.exists())
+        self.assert_files(self.target, self.new_records)
+        self.assert_files(self.app_backup / 'files', self.old_records)
+        self.assert_kept()
+
+
+class Historical0300To0302RollbackTests(Historical0301RollbackTests):
+    replacement_revision = '0302'
+
+
+class Historical0301To0302RollbackTests(Historical0300To0302RollbackTests):
+    previous_revision = '0301'
 
 
 if __name__ == '__main__':

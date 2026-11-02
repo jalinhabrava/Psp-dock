@@ -48,7 +48,8 @@ class NativeWindowClose:
         It neither requests a USB phase nor starts any save operation.
         """
         state = self.dock.product_flow.snapshot()
-        if not state['enabled'] or state['phase'] in ('waiting_psp','safe_to_disconnect'):
+        if (lifecycle.reason == 'button' or not state['enabled'] or
+                state['phase'] in ('waiting_psp','safe_to_disconnect')):
             return False
         with self._lock:
             if self._restored_once:

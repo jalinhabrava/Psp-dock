@@ -52,9 +52,9 @@ int sceUsbbdReqCancelAll(struct UsbEndpoint *);
 int sceUsbbdStall(struct UsbEndpoint *);
 static inline int sceKernelCpuSuspendIntr(void){return 0;}
 static inline void sceKernelCpuResumeIntr(int i){(void)i;}
-static inline void sceKernelDcacheInvalidateRange(void *p,size_t n){(void)p;(void)n;}
-static inline void sceKernelDcacheWritebackInvalidateRange(void *p,size_t n){(void)p;(void)n;}
-static inline void sceKernelDcacheWritebackRange(void *p,size_t n){(void)p;(void)n;}
+void sceKernelDcacheInvalidateRange(void *p,size_t n);
+void sceKernelDcacheWritebackInvalidateRange(void *p,size_t n);
+void sceKernelDcacheWritebackRange(void *p,size_t n);
 typedef struct {int modid;} SceModule;
 unsigned sceKernelGetSystemTimeLow(void);
 int sceKernelDelayThread(int);
