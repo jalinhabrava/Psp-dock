@@ -13,7 +13,7 @@
 #include "native_common.h"
 #include "native_ui.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,4);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,6);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;
@@ -218,8 +218,8 @@ int main(void) {
     ui_line(76,UI_WHITE,"Tu PSP, tus juegos y tus partidas en el dock.");
     ui_line(108,UI_MUTED,"Abre PSP Dock en Windows para empezar.");
     ui_line(128,UI_MUTED,"Elige que copiar al comenzar la sesion.");
-    ui_line(168,UI_WHITE,"1. Sal de Conexion USB y desconecta el cable.");
-    ui_line(188,UI_WHITE,"2. Pulsa X; conecta cuando aparezca LISTO.");
+    ui_line(168,UI_WHITE,"1. Sal de Conexion USB del XMB.");
+    ui_line(188,UI_WHITE,"2. Manten el cable conectado y pulsa X.");
     ui_line(236,UI_TEAL,"X  INICIAR                O  VOLVER AL XMB");
     for(;;){
         sceCtrlPeekBufferPositive(&pad,1);

@@ -1,10 +1,11 @@
-"""One bounded restoration of the current Dock window to finish a session.
+"""Finish a native session from the close button or one restored window.
 
 Chrome owns its caption button, so this adapter does not intercept WM_CLOSE
 or subclass another process. The host calls it only after its own observed
 app window disappears. It restores that same localhost UI once, records the
 exit request on the PC, and lets Dock's existing worker perform the normal
-verified return. A second close drains normally and leaves recovery data.
+verified return. The close button queues that same intent while keeping the
+current window and lease alive. A second X drains and leaves recovery data.
 """
 from __future__ import annotations
 
@@ -40,6 +41,34 @@ class NativeWindowClose:
         with self._lock:
             return self._requested and not self._abandoned and not self._complete
 
+    def request(self, *, reason='button', visible=True):
+        """Keep an existing window open while the worker finishes its session.
+
+        No data lock, USB command or copy is performed here. In particular a
+        click during a transfer can queue the exit without waiting for that
+        transfer's lock. A repeated click cannot restart a return or cancel.
+        """
+        state = self.dock.product_flow.snapshot()
+        if not state['enabled'] or state['phase'] in ('waiting_psp','safe_to_disconnect'):
+            return False
+        with self._lock:
+            if self.pending():
+                return True
+            if self._abandoned or self._complete:
+                raise ValueError('El cierre anterior terminó; revisa el estado de la aplicación.')
+            current = self.dock.native_transport.current
+            identity = ({key:current[key] for key in ('session_id','volume_serial')}
+                        if current else dict(self.dock.product_session.entry.get('identity', {})))
+            self._reason, self._identity = reason, identity
+            self._requested = True
+            try:
+                self._record('close_requested')
+            except (OSError, ValueError):
+                self._requested = False
+                raise
+            self._visible = visible
+            return True
+
     def restore_once(self, lifecycle, restore):
         """Return True only when shutdown was deferred for one UI restore.
 
@@ -57,6 +86,7 @@ class NativeWindowClose:
                 return False
             self._restored_once = True
             self._requested = True
+            self._visible = False
             self._reason = lifecycle.reason
             current = self.dock.native_transport.current
             if current:

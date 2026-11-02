@@ -8,8 +8,8 @@
 /* Lab identity, not an allocated production Sony VID/PID. */
 #define PDN_PRODUCT 0x01cdu
 #define PDN_REVISION PDN_FIRMWARE_REVISION
-/* PDN4 rejects a mixed launcher/kernel before starting any worker. */
-#define PDN_LAUNCH_MAGIC 0x344e4450u
+/* PDN6 rejects a mixed launcher/kernel before starting any worker. */
+#define PDN_LAUNCH_MAGIC 0x364e4450u
 #define PDN_DEPENDENCIES 4u
 
 enum PdnStage {
@@ -22,13 +22,14 @@ enum PdnStage {
 };
 enum PdnStopReason {
     PDN_STOP_NONE=0, PDN_STOP_USER=1, PDN_STOP_CABLE=2,
-    PDN_STOP_ERROR=3, PDN_STOP_MODULE=4
+    PDN_STOP_ERROR=3, PDN_STOP_MODULE=4, PDN_STOP_HOST=5
 };
 /* RAM-only diagnostics. These values never authorize a protocol action. */
 enum PdnEp0Drop {
     PDN_EP0_DROP_NONE=0, PDN_EP0_DROP_SUBMIT_GATE=1,
     PDN_EP0_DROP_SUBMIT_ERROR=2, PDN_EP0_DROP_RETCODE=3,
-    PDN_EP0_DROP_SIZE=4, PDN_EP0_DROP_LINK=5, PDN_EP0_DROP_PARSER=6
+    PDN_EP0_DROP_SIZE=4, PDN_EP0_DROP_LINK=5, PDN_EP0_DROP_PARSER=6,
+    PDN_EP0_DROP_ENVELOPE=7, PDN_EP0_DROP_FRAGMENT=8, PDN_EP0_ASSEMBLING=9
 };
 enum PdnEp0Flags {
     PDN_EP0_ACTIVE=1u, PDN_EP0_CONNECTED=2u, PDN_EP0_QUIESCING=4u,

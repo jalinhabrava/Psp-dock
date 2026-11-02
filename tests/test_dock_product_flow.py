@@ -109,6 +109,84 @@ class ProductFlowTests(unittest.TestCase):
         self.assertEqual(self.flow.snapshot()["phase"], "ready")
         self.assertFalse(self.flow.snapshot()["blocking"])
 
+    def test_orphan_native_close_only_offers_explicit_finalization_without_inventory(self):
+        closing = {**storage(), 'storage_ready':False, 'phase':1,
+                   'shutdown_pending':True, 'shutdown_cancel':True, 'exit_requested':True}
+        self.flow.observe(closing)
+        offer = self.flow.snapshot()
+        self.assertEqual(offer['phase'], 'attention')
+        self.assertTrue(offer['can_retry'])
+        self.assertFalse(self.flow.advance())
+        self.assertEqual(self.adapter.names(), [])
+        self.flow.retry(offer['offer_id'])
+        self.assertTrue(self.flow.advance())
+        self.assertEqual(self.adapter.names(), ['finalize_exit'])
+        self.assertEqual(self.adapter.calls[0][1]['purpose'], 'cancel')
+
+    def test_restart_presents_welcome_without_erasing_recovery_or_repeating_work(self):
+        self.offer()
+        self.flow.request_cancel()
+        self.adapter.handlers['finalize_exit'] = lambda ctx: (_ for _ in ()).throw(
+            ProductFlowError('USB terminal not acknowledged'))
+        self.flow.advance()
+        before = self.path.read_bytes()
+        self.flow = self.new_flow()
+        self.assertTrue(self.flow.snapshot()['startup_recovery'])
+        self.assertEqual(self.flow.snapshot()['resume_phase'], 'finalizing')
+        self.assertEqual(self.path.read_bytes(), before)
+        closing = {**storage(), 'storage_ready':False, 'phase':1,
+                   'shutdown_pending':True, 'shutdown_cancel':True, 'exit_requested':True}
+        self.flow.observe(closing)
+        state = self.flow.snapshot()
+        self.assertTrue(state['startup_recovery'] and state['can_retry'])
+        self.assertFalse(self.flow.advance())
+        self.assertEqual(self.adapter.names(), ['inventory','finalize_exit'])
+        # This exact snapshot is what the browser must receive to expose
+        # the finalization Retry; previously resume_phase was omitted.
+        self.assertEqual(json.loads(json.dumps(state))['resume_phase'], 'finalizing')
+        del self.adapter.handlers['finalize_exit']
+        self.flow.retry(state['offer_id'])
+        self.assertFalse(self.flow.snapshot()['startup_recovery'])
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory','finalize_exit','finalize_exit'])
+
+    def test_fresh_start_and_current_failure_are_not_mislabelled_as_old_recovery(self):
+        self.assertFalse(self.flow.snapshot()['startup_recovery'])
+        self.flow.observe(storage())
+        self.flow.halt('current connection failed')
+        self.assertFalse(self.flow.snapshot()['startup_recovery'])
+        restarted = self.new_flow()
+        self.assertTrue(restarted.snapshot()['startup_recovery'])
+        self.assertFalse(restarted.advance())
+
+    def test_native_close_recovery_requires_exact_nonce_and_never_repeats_sync(self):
+        self.offer()
+        self.flow.request_cancel()
+        def blocked(context):
+            raise ProductFlowError('Synthetic pending terminal close')
+        self.adapter.handlers['finalize_exit'] = blocked
+        self.flow.advance()
+        self.flow = self.new_flow()
+        closing = {**storage(), 'storage_ready':False, 'phase':1,
+                   'shutdown_pending':True, 'shutdown_cancel':True, 'exit_requested':True}
+        self.flow.observe({**closing, 'session_id':'another-session'})
+        self.assertFalse(self.flow.snapshot()['can_retry'])
+        self.flow.observe(closing)
+        offer = self.flow.snapshot()
+        self.assertTrue(offer['can_retry'])
+        del self.adapter.handlers['finalize_exit']
+        self.flow.retry(offer['offer_id'])
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory', 'finalize_exit', 'finalize_exit'])
+        self.assertEqual(self.flow.snapshot()['phase'], 'safe_to_disconnect')
+
+    def test_native_close_observation_never_grants_storage_or_controller_permission(self):
+        closing = {**storage(), 'storage_ready':False, 'shutdown_pending':True}
+        for changes in ({'storage_ready':True}, {'controller_ready':True},
+                        {'safe_ready':True}, {'shutdown_cancel':'true'}):
+            with self.subTest(changes=changes), self.assertRaises(ProductFlowError):
+                self.flow.observe({**closing, **changes})
+
     def test_early_psp_exit_skips_inventory_choice_and_all_sync_callbacks(self):
         self.flow.observe({**storage(), 'exit_requested':True})
         self.assertEqual(self.flow.snapshot()['phase'], 'finalizing')

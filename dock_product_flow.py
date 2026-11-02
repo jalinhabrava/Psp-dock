@@ -183,15 +183,24 @@ def _observation(value):
         raise ProductFlowError("Estado de finalización USB inválido.")
     if type(value.get("exit_requested", False)) is not bool:
         raise ProductFlowError("Solicitud de salida de la PSP inválida.")
+    if type(value.get("shutdown_pending", False)) is not bool:
+        raise ProductFlowError("Estado de cierre nativo inválido.")
+    if type(value.get("shutdown_cancel", False)) is not bool:
+        raise ProductFlowError("Motivo de cierre nativo inválido.")
+    if value.get("shutdown_pending") and (value["storage_ready"] or value["controller_ready"] or value.get("safe_ready")):
+        raise ProductFlowError("El cierre pendiente no permite archivos ni mando.")
     phase = value.get("phase")
-    if phase is not None and (type(phase) is not int or phase not in (1, 2, 3, 4, 5)):
+    if phase is not None and (type(phase) is not int or
+            phase not in (1, 2, 3, 4, 5) and not (phase == 255 and value.get('shutdown_pending'))):
         raise ProductFlowError("Fase del transporte PSP inválida.")
-    if not value["storage_ready"] and not value["controller_ready"] and not value.get("safe_ready", False):
+    if not value["storage_ready"] and not value["controller_ready"] and not value.get("safe_ready", False) and not value.get("shutdown_pending", False):
         return None
     return {**{key: value[key] for key in
               ("session_id", "volume_serial", "storage_ready", "controller_ready")},
             "safe_ready": value.get("safe_ready", False), "phase": phase,
-            "exit_requested": value.get("exit_requested", False)}
+            "exit_requested": value.get("exit_requested", False),
+            "shutdown_pending": value.get("shutdown_pending", False),
+            "shutdown_cancel": value.get("shutdown_cancel", False)}
 
 
 def _inventory(value):
@@ -237,6 +246,7 @@ class ProductFlow:
         self._observed = None
         self._wait_since = self._clock()
         self._state = _empty_state()
+        self._startup_recovery = False
         if self.path.exists():
             try:
                 if self.path.stat().st_size > 512 * 1024:
@@ -272,6 +282,10 @@ class ProductFlow:
                         self._state.update(purpose="exit", resume_phase="waiting_storage_return")
                     elif value["cancel_requested"] and not value["entry_completed"]:
                         self._state.update(purpose="cancel", resume_phase="finalizing")
+            # Presentation is separate from recovery authority. A new manual
+            # launch welcomes the user and shows retained work as a notice;
+            # the durable stop and explicit Retry guards remain unchanged.
+            self._startup_recovery = self._state['phase'] == 'attention'
 
     @staticmethod
     def _validate_journal(value):
@@ -315,6 +329,7 @@ class ProductFlow:
 
     def _phase(self, phase, **changes):
         self._commit(phase=phase, role_request_sent=False, **changes)
+        self._startup_recovery = False
 
     def _same(self, *, storage=False, controller=False, allow_new_session=False):
         seen, expected = self._observed, self._state["identity"]
@@ -384,6 +399,15 @@ class ProductFlow:
             if phase == "waiting_psp":
                 if seen is not None:
                     identity = {key: seen[key] for key in ("session_id", "volume_serial")}
+                    if seen.get('shutdown_pending'):
+                        cancelling = seen.get('shutdown_cancel') is True
+                        self._phase('attention',
+                                    attention_reason='Queda un cierre de conexión pendiente. Reintentar comprobará sólo ese cierre.',
+                                    resume_phase='finalizing', identity=identity,
+                                    purpose='cancel' if cancelling else 'exit',
+                                    cancel_requested=cancelling, entry_completed=not cancelling,
+                                    recovery_required=True, offer_id=secrets.token_hex(32))
+                        return
                     initial = ("inventory" if seen["storage_ready"] and seen.get("phase") in (None, 1)
                                else "entering_storage")
                     self._phase(initial, identity=identity, purpose="initial", choice=None,
@@ -512,6 +536,10 @@ class ProductFlow:
     def _can_retry(self):
         if self._state["phase"] != "attention" or self._busy or self._game_running:
             return False
+        if self._observed and self._observed.get("shutdown_pending"):
+            # A released medium cannot be scanned to renew a binding.
+            # Only the exact retained nonce may finish this close.
+            return (self._state["resume_phase"] == "finalizing" and self._same())
         if self._state["recovery_required"]:
             finalizing = (self._state["resume_phase"] == "finalizing" and
                           self._observed and self._observed.get("safe_ready"))
@@ -703,6 +731,8 @@ class ProductFlow:
                 message = "Conexión cerrada. Ya puedes desconectar la PSP."
             return {
                 "enabled": self.enabled, "phase": phase, "purpose": state["purpose"],
+                "startup_recovery": self._startup_recovery and phase == 'attention',
+                "resume_phase": state["resume_phase"],
                 "entry_completed": state["entry_completed"], "cancel_requested": state["cancel_requested"],
                 "blocking": phase != "ready", "message": message,
                 "can_choose": (phase == "choosing" and not self._busy and self._same(storage=True)),

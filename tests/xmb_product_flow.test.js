@@ -50,8 +50,31 @@ const native = { selected_device: 'G:\\', controller_status: { connected: true, 
   usb_revision: 0x0100, host_confirmed: true, phase: 2 }, product_flow: flow('ready') };
 equal(connection(native).canPlay, true, 'Verified native Dock can keep its Sony storage enumerated');
 equal(connection(native).nativeController, true);
+equal(connection({ ...native, controller_status: { ...native.controller_status,
+  firmware_revision: 0x0306, build_id: 0x03060001, capabilities: 15 } }).canPlay,
+  true, '0306 uses its exact identity with the coordinated journey');
+equal(connection({ product_flow: { enabled: false } }).title, 'Bienvenido a PSP Dock');
+const restoredClose = { ...native, product_flow: flow('attention', {
+  startup_recovery: true, purpose: 'cancel', resume_phase: 'finalizing',
+  can_retry: true, recovery_required: true, connection: { phase: 'closing' },
+  attention_reason: 'Retained failed close',
+}) };
+equal(product(restoredClose).title, 'Bienvenido a PSP Dock');
+equal(product(restoredClose).canRetry, true, 'A real restored finalization snapshot exposes Retry');
+equal(product(restoredClose).retryLabel, 'Completar cierre anterior');
+equal(product(restoredClose).canChoose || product(restoredClose).canClose, false);
+equal(product(restoredClose).diagnostics, 'Retained failed close', 'Welcome does not erase recovery evidence');
+equal(product({ ...restoredClose, product_flow: { ...restoredClose.product_flow,
+  startup_recovery: false } }).title, 'Cerrando la conexión con la PSP');
 equal(connection({ ...native, controller_status: { ...native.controller_status, firmware_revision: 0x0304, build_id: 0x03040001 } }).canPlay,
   true, 'The explicitly supported diagnostic firmware keeps the same product journey');
+equal(connection({ ...native, controller_status: { ...native.controller_status,
+  firmware_revision: 0x0305, build_id: 0x03050001, capabilities: 15 } }).canPlay,
+  true, '0305 requires its shutdown capability as well as its exact build');
+equal(connection({ ...native, controller_status: { ...native.controller_status,
+  firmware_revision: 0x0305, build_id: 0x03050001, capabilities: 7 } }).canPlay, false);
+equal(connection({ ...native, controller_status: { ...native.controller_status, capabilities: 15 } }).canPlay,
+  false, 'New capabilities cannot be assigned to an older firmware');
 for (const changes of [{ product_id: 0x01cc }, { firmware_revision: 0x0207 }, { firmware_revision: 0x0300 },
   { firmware_revision: 0x0301 }, { firmware_revision: 0x0302 }, { firmware_revision: 0x0305 }, { firmware_revision: undefined, revision: 0x0303 }, { protocol_version: 2 },
   { protocol_version: undefined }, { host_confirmed: false }, { host_confirmed: undefined },
@@ -142,6 +165,29 @@ equal(product(attention, { busy: true }).canRetry, false);
 equal(product({ ...attention, product_flow: flow('attention', { can_retry: true, offer_id: '' }) }).canRetry, false);
 equal(product({ ...choose, product_flow: flow('choosing', { can_review_saves: true }) }).canReview, false,
   'Copy permission cannot be bypassed by opening conflict resolution before the choice');
+
+for (const purpose of ['exit', 'cancel']) {
+  const closeOnly = { ...native, product_flow: flow('attention', {
+    purpose, resume_phase: 'finalizing', can_retry: true, can_choose: true,
+    can_cancel: true, can_review_saves: true, can_close_app: true,
+    connection: { phase: 'closing', retryable: true },
+  }) };
+  const closingView = product(closeOnly);
+  equal(closingView.canRetry, true, 'An interrupted native close offers only its finalization retry');
+  equal(closingView.canChoose || closingView.canReview || closingView.canCancel || closingView.canDismiss, false);
+  equal(closingView.showRefresh, false, 'The product panel exposes only finalization retry during close');
+  assert.match(closingView.title, /Cerrando la conexión/); ++assertions;
+  equal(connection(closeOnly).kind, 'closing');
+  equal(connection(closeOnly).screen, 'product');
+  equal(connection(closeOnly).canPlay, false, 'Stale native controller facts cannot reopen the menu');
+  equal(connection(closeOnly).canPrepareStorage, false);
+  equal(connection(closeOnly).canRefresh, false, 'Connection refresh is not a second close path');
+  equal(product(closeOnly, { busy: true }).canRetry, false);
+  equal(product(closeOnly, { serviceOffline: true }).canRetry, false);
+  equal(product({ ...closeOnly, product_flow: { ...closeOnly.product_flow, resume_phase: 'waiting_storage_return' } }).canRetry,
+    false, 'A close receipt cannot authorize another save-return callback');
+  equal(product({ ...closeOnly, product_flow: { ...closeOnly.product_flow, purpose: 'initial' } }).canRetry, false);
+}
 
 const connectionState = (phase, fields = {}) => ({
   controller_status: { mode: 'await_native', connected: false, can_play: false },
@@ -272,9 +318,10 @@ async function inputs() {
     ui: { state: blockedConnection, appClosing: false, appClosed: false, appClientId: 'fixture-client' },
     xmbConnectionView: () => connection(closing.ui.state), xmbRender: () => {},
     $: (id) => { if (!closeNodes.has(id)) closeNodes.set(id, {}); return closeNodes.get(id); },
-    request: async (route, body) => { closing.calls.push({ route, body: normalize(body) }); return {}; }, calls: [],
-    clearTimeout: () => {}, window: { close: () => { closing.closed += 1; } }, closed: 0,
-    appHeartbeat: async () => {},
+    request: async (route, body) => { closing.calls.push({ route, body: normalize(body) }); return closing.reply; }, calls: [], reply: {},
+    clearTimeout: () => { closing.cleared += 1; }, cleared: 0,
+    window: { close: () => { closing.closed += 1; } }, closed: 0,
+    appHeartbeat: async () => { closing.heartbeats += 1; }, heartbeats: 0,
   };
   vm.createContext(closing);
   const closeStart = source.indexOf('async function closeDockApp()');
@@ -288,9 +335,24 @@ async function inputs() {
   await closing.closeDockApp();
   equal(closing.calls.length, 1, 'The preconnection close button cannot bypass an active copy');
   closing.ui.state = failedEntry;
+  closing.reply = { close_pending: true,
+    product_flow: { ...failedEntry.product_flow, window_close_requested: true } };
+  const clearedBeforePending = closing.cleared;
   await closing.closeDockApp();
-  equal(closing.calls.length, 2, 'Attention can close the app without a safe-to-disconnect claim');
+  equal(closing.calls.length, 2, 'Attention requests the worker to finish the connection');
   equal(closing.calls[1].route, '/api/app/close');
+  equal(closing.closed, 1, 'A pending native close keeps the same window open');
+  equal(closing.ui.appClosed, false, 'Queued close does not mark the app closed');
+  equal(closing.ui.appClosing, false, 'The response releases the click guard for normal state refresh');
+  equal(closing.cleared, clearedBeforePending, 'Queued close retains the heartbeat timer');
+  equal(closing.heartbeats, 1, 'Heartbeat continues while the worker closes the connection');
+  equal(closing.ui.state.product_flow.window_close_requested, true, 'The response displays closing immediately');
+  equal(product(closing.ui.state).closePending, true, 'The close action is disabled while its request is pending');
+  closing.reply = {};
+  closing.ui.state = { ...native, product_flow: flow('safe_to_disconnect', { can_close: true }) };
+  await closing.closeDockApp();
+  equal(closing.closed, 2, 'Verified completion permits the window to close');
+  equal(closing.ui.appClosed, true);
 
   equal(calls.length, 0, 'Rendering/loading the handlers has no mutation');
   runtime.productFlowPress('back');

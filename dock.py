@@ -595,8 +595,14 @@ class Dock:
             self, persist=lambda record:atomic_json(self.data/'window-close-request.json',record))
         self.snapshot['product_flow'] = self.product_session.snapshot()
 
+    def native_shutdown_pending(self):
+        # Read the durable close state even before the first HID observation.
+        # Cached UI/flow state must never authorize another FAT probe after
+        # the storage-release transaction has started.
+        return bool(getattr(getattr(self, 'native_transport', None), 'shutdown_pending', False))
+
     def devices(self):
-        if self.storage_polling_paused:
+        if self.storage_polling_paused or self.native_shutdown_pending():
             return []
         if self.demo:
             return [{'root': str(self.data / 'sample-psp'), 'label': 'PSP de demostración · archivos sintéticos'}]
@@ -627,7 +633,7 @@ class Dock:
         return 1.0 if state['phase'] in ('ready', 'attention', 'safe_to_disconnect') else 0.25
 
     def root(self):
-        if self.storage_polling_paused:
+        if self.storage_polling_paused or self.native_shutdown_pending():
             return None
         if self.product_flow.enabled:
             # Sony may keep the volume mounted while the native composite
@@ -2158,13 +2164,13 @@ class Dock:
         snapshot never creates a USB role bridge or grants FAT ownership.
         """
         from psp_launcher_input import PSPWinMMReader, idle
-        if self.demo or self.storage_polling_paused:
+        if self.demo or self.storage_polling_paused or self.native_shutdown_pending():
             return idle("El mando PSP HID no está disponible en esta fase.")
         seen = self.snapshot.get('controller_status', {})
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
         from native_dock import (PID as NATIVE_PID, VERSION as NATIVE_VERSION,
-                                 CAPABILITIES as NATIVE_CAPABILITIES, FIRMWARE_BUILDS)
+                                 FIRMWARE_CAPABILITIES, FIRMWARE_BUILDS)
         profiles = {'hid_manual': (0x01CB, 0x0104),
                     'msc_diagnostic': (0x01CC, 0x0207)}
         if self.product_flow.enabled and self.product_flow.snapshot()['phase'] not in ('choosing','ready','attention'):
@@ -2175,7 +2181,7 @@ class Dock:
             valid = (seen.get('product_id') == NATIVE_PID and seen.get('protocol_version') == NATIVE_VERSION
                      and type(firmware) is int and firmware in FIRMWARE_BUILDS
                      and seen.get('build_id') == FIRMWARE_BUILDS[firmware]
-                     and seen.get('capabilities') == NATIVE_CAPABILITIES and seen.get('host_confirmed') is True
+                     and seen.get('capabilities') == FIRMWARE_CAPABILITIES[firmware] and seen.get('host_confirmed') is True
                      and seen.get('synthetic_storage') is False)
             expected = (NATIVE_PID, firmware) if valid else None
         elif expected is not None and (seen.get('product_id'), seen.get('revision')) != expected:
@@ -2396,6 +2402,8 @@ class Dock:
         if selected and selected.get('availability')=='ready':
             source=inside(Path(self.config['library']),selected['local_relative'])
         else:
+            if self.native_shutdown_pending():
+                return None
             attached=self.snapshot.get('selected_device')
             if attached:
                 root=Path(attached)
@@ -2462,7 +2470,7 @@ class Dock:
                         self.error = None
                         product = self.product_flow.snapshot()
                         current = self.native_transport.current
-                        if not current or not current.get('host_confirmed'):
+                        if not current or not current.get('host_confirmed') or current.get('shutdown_pending'):
                             with self.product_session.diagnostics.measure('ui.publish_native_waiting'):
                                 self.snapshot = self.waiting_state(devices, running=running,
                                     controller=self.native_transport.controller_status())
@@ -2778,6 +2786,29 @@ def app_close_blocker(dock, *, settle_finished_game=False):
         dock.lock.release()
 
 
+def request_app_close(dock, lifecycle, client_id, reason):
+    """Queue a native close in the visible UI, or release an idle UI lease."""
+    lifecycle.client_id(client_id)
+    if reason == 'button':
+        # Keep the document alive while the existing worker completes the
+        # verified return/cancel. Releasing the lease here would stop that
+        # worker and leave the PSP connection behind.
+        with lifecycle.lock:
+            if lifecycle.stopping or client_id not in lifecycle.clients:
+                raise ValueError('Esta ventana ya se está cerrando; espera a comprobar el resultado.')
+        if dock.window_close.request(reason=reason, visible=True):
+            return {'ok':True, 'close_pending':True, 'closing':False,
+                    'product_flow':dock.product_session.snapshot(),
+                    'pending_return_preserved':bool(dock.session.get('pending_return'))}
+        blocker = app_close_blocker(dock)
+        if blocker:
+            raise ValueError(blocker)
+    result = lifecycle.release(client_id, reason)
+    result.update(close_pending=False,
+                  pending_return_preserved=bool(dock.session.get('pending_return')))
+    return result
+
+
 def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
           *, ui_lifecycle=False):
     instance_lock = acquire_instance_lock(dock.data)
@@ -2950,16 +2981,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         if not result.get('ignored'):
                             start_watcher()
                         return self.reply(result)
-                    reason = body.get('reason')
-                    # A rejected explicit close leaves the document's lease
-                    # intact. A real pagehide queues a safe drain instead.
-                    if reason == 'button':
-                        blocker = app_close_blocker(dock)
-                        if blocker:
-                            raise ValueError(blocker)
-                    result = ui.release(body.get('client_id'), reason)
-                    result['pending_return_preserved'] = bool(dock.session.get('pending_return'))
-                    return self.reply(result)
+                    return self.reply(request_app_close(
+                        dock, ui, body.get('client_id'), body.get('reason')))
                 if ui is not None and ui.stopping:
                     raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                 if self.path == '/api/cancel-transfer':

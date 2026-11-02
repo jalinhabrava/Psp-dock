@@ -131,7 +131,14 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
     else PDN_UI_TEXT(interface_label,"%u",(unsigned)s->hid_interface);
 
     /* Initial phase STORAGE is a transport condition, never a host claim. */
-    if(fault){
+    if(s->stop_reason==PDN_STOP_HOST && !s->safe_to_unload &&
+       s->stage!=PDN_STAGE_ERROR && !s->cleanup_error){
+        PDN_UI_TEXT(heading,"Cerrando PSP Dock");
+        PDN_UI_TEXT(context,"Windows ha solicitado el cierre de USB.");
+        PDN_UI_TEXT(detail,"Espera a que termine la conexion.");
+        PDN_UI_TEXT(action,"Volver al XMB aparecera cuando sea posible.");
+        PDN_UI_TEXT(footer,"Puedes mantener el cable conectado.");
+    }else if(fault){
         v.warning=1;
         PDN_UI_TEXT(heading,"%s",s->error_stage<=PDN_STAGE_ACTIVATE?
             "Arranque detenido":"Error en la conexion");
@@ -141,7 +148,7 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         else PDN_UI_TEXT(detail,"Consulta los codigos de diagnostico.");
         if(may_have_usb && !s->safe_to_unload){
             PDN_UI_TEXT(action,"No desconectes hasta el aviso de Windows.");
-            PDN_UI_TEXT(footer_note,"Finaliza y expulsa la PSP desde Windows.");
+            PDN_UI_TEXT(footer_note,"Cierra PSP Dock en Windows para finalizar.");
         }else{
             PDN_UI_TEXT(action,"%s",s->error_stage<=PDN_STAGE_ACTIVATE?
                 "No se ha iniciado una sesion de PSP Dock.":"Espera a que se confirme el cierre.");
@@ -175,9 +182,9 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         PDN_UI_TEXT(context,"%s",s->host_session_seen?
             "Revisa el estado de tu sesion en Windows.":"Windows no ha iniciado la sincronizacion.");
         if(s->usb_state&PDN_UI_USB_CABLE_CONNECTED){
-            PDN_UI_TEXT(detail,"1. Expulsa la PSP desde Windows.");
-            PDN_UI_TEXT(action,"2. Cuando Windows lo permita, retira el cable.");
-            PDN_UI_TEXT(footer,"Puedes cerrar PSP Dock en Windows.");
+            PDN_UI_TEXT(detail,"Cierra PSP Dock en Windows.");
+            PDN_UI_TEXT(action,"Windows cerrara la conexion USB.");
+            PDN_UI_TEXT(footer,"Manten el cable conectado.");
         }else{
             PDN_UI_TEXT(detail,"Preparando el regreso al XMB.");
             PDN_UI_TEXT(action,"Espera al aviso para pulsar O.");
@@ -202,7 +209,7 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         PDN_UI_TEXT(heading,"Finalizando la conexion");
         PDN_UI_TEXT(context,"El trabajo de PSP Dock ha terminado.");
         PDN_UI_TEXT(detail,"Windows esta preparando la expulsion.");
-        PDN_UI_TEXT(action,"Retira USB solo cuando Windows lo indique.");
+        PDN_UI_TEXT(action,"Espera al aviso para volver al XMB.");
     }else if(s->phase==PDN_PHASE_COPYING || s->phase==PDN_PHASE_EXIT_SYNC){
         PDN_UI_TEXT(heading,"%s",s->phase==PDN_PHASE_COPYING?
             "Copiando el juego":"Sincronizando partidas");

@@ -14,6 +14,8 @@ from ctypes import wintypes as W
 import os
 from pathlib import Path
 import re
+import secrets
+import binascii
 import struct
 import subprocess
 import threading
@@ -23,18 +25,26 @@ from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError, VID
 from psp_usb import PspStorage, identify, _volume_serial
 
 PID = 0x01CD
-REVISION = 0x0304  # Firmware version, never inferred from Sony bcdDevice.
-FIRMWARE_BUILDS = {0x0303: 0x03030001, 0x0304: 0x03040001}
+REVISION = 0x0306  # Firmware version, never inferred from Sony bcdDevice.
+FIRMWARE_BUILDS = {0x0303: 0x03030001, 0x0304: 0x03040001,
+                   0x0305: 0x03050001, 0x0306: 0x03060001}
+FIRMWARE_CAPABILITIES = {0x0303: 0x0007, 0x0304: 0x0007, 0x0305: 0x000F, 0x0306: 0x000F}
+CAP_HOST_SHUTDOWN = 8
 RETIRED_REVISIONS = frozenset({0x0300, 0x0301, 0x0302})
-USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304})
+USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304, 0x0305, 0x0306})
 MAGIC, VERSION = b'PDK2', 3
 STATUS, SET_PHASE, HOST_BEGIN, HOST_PROGRESS = 1, 2, 3, 4
+HOST_SHUTDOWN = 5
 STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR = 1, 2, 3, 4, 5, 255
 CONNECTED, PENDING, SONY_STORAGE, EXIT_REQUESTED, HOST_CONFIRMED = 1, 2, 4, 8, 16
+SHUTDOWN_REQUESTED = 32
 FRAME = struct.Struct('<4sBBBB16sIi')
 EXTENSION = struct.Struct('<4sHHIBBHQQ')
-EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', 0x0007, FIRMWARE_BUILDS[REVISION]
-REPORT_BYTES = 65
+EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', FIRMWARE_CAPABILITIES[REVISION], FIRMWARE_BUILDS[REVISION]
+CORE_REPORT_BYTES = 65  # Windows report ID byte + unchanged 64-byte PDK2 core.
+REPORT_BYTES = CORE_REPORT_BYTES
+FIRMWARE_REPORT_BYTES = {revision: CORE_REPORT_BYTES for revision in FIRMWARE_BUILDS}
+FRAGMENT_REVISION = 0x0306
 WAITING, INVENTORY, CHOOSING, SYNC_IN, COPY_GAME, CONTROL_ACTIVITY, SYNC_OUT, SAFE_ACTIVITY = range(8)
 UNKNOWN, BYTES, FILES = 0, 1, 2
 PHASE_ACTIVITIES = {STORAGE: (INVENTORY, CHOOSING, SYNC_IN),
@@ -73,6 +83,8 @@ class NativeStatus:
     unit: int = UNKNOWN
     completed: int = 0
     total: int = 0
+    shutdown_requested: bool = False
+    transport_word: int = 0
 
 
 def _progress_valid(phase, activity, unit, completed, total, *, command=False):
@@ -90,7 +102,7 @@ def _progress_valid(phase, activity, unit, completed, total, *, command=False):
 def _validate_identity(protocol_version, firmware_revision, capabilities, build_id):
     identity = (protocol_version, firmware_revision, capabilities, build_id)
     if (any(type(value) is not int for value in identity) or
-            protocol_version != VERSION or capabilities != CAPABILITIES or
+            protocol_version != VERSION or capabilities != FIRMWARE_CAPABILITIES.get(firmware_revision) or
             FIRMWARE_BUILDS.get(firmware_revision) != build_id):
         raise NativeDockError('Protocolo, firmware, capacidades o compilación nativa no verificados.',
                               message='Esta versión de PSP Dock necesita actualizarse.',
@@ -104,28 +116,36 @@ def _validate_status_identity(status):
 
 
 def decode_status(report: bytes) -> NativeStatus:
-    if not isinstance(report, bytes) or len(report) != REPORT_BYTES or report[0] != 0:
+    if (not isinstance(report, bytes) or len(report) not in (CORE_REPORT_BYTES, REPORT_BYTES)
+            or report[0] != 0):
         raise NativeDockError('Informe PDK2 incompleto o con otro identificador.')
     magic, version, op, phase, flags, session, seq, result = FRAME.unpack(report[1:33])
     if (magic, version, op) != (MAGIC, VERSION, STATUS):
         raise NativeDockError('El dispositivo no ofrece el protocolo PDK2 esperado.')
     if phase not in (0, STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR):
         raise NativeDockError('Fase PDK2 desconocida.')
-    if flags & ~31 or not any(session):
+    if flags & ~63 or not any(session):
         raise NativeDockError('Sesión o indicadores PDK2 inválidos.')
     pending = bool(flags & PENDING)
     if ((pending and (seq == 0 or result != 1)) or
             (not pending and seq == 0 and result != 0) or
             (not pending and seq > 0 and result not in (2,) and result >= 0)):
         raise NativeDockError('Confirmación PDK2 incoherente.')
-    ext_magic, firmware, capabilities, build, activity, unit, reserved, done, total = EXTENSION.unpack(report[33:])
-    if ext_magic != EXT_MAGIC or reserved:
+    ext_magic, firmware, capabilities, build, activity, unit, reserved, done, total = EXTENSION.unpack(report[33:65])
+    if ext_magic != EXT_MAGIC or (reserved and firmware != FRAGMENT_REVISION):
         raise NativeDockError('Extensión de identidad nativa inválida.')
+    if firmware == FRAGMENT_REVISION and (reserved & 15) > 9:
+        raise NativeDockError('Diagnóstico de transporte nativo inválido.')
     status = NativeStatus(session.hex(), phase, seq, result, bool(flags & CONNECTED),
                           pending, bool(flags & SONY_STORAGE), bool(flags & EXIT_REQUESTED),
                           bool(flags & HOST_CONFIRMED), version, firmware, capabilities, build,
-                          activity, unit, done, total)
+                          activity, unit, done, total, bool(flags & SHUTDOWN_REQUESTED), reserved)
     _validate_status_identity(status)
+    if len(report) != FIRMWARE_REPORT_BYTES[firmware]:
+        raise NativeDockError('El tamaño USB no corresponde al firmware verificado.')
+    if status.shutdown_requested and (not status.capabilities & CAP_HOST_SHUTDOWN or
+            status.pending or status.phase != SAFE or status.sequence == 0 or status.result != 2):
+        raise NativeDockError('Confirmación terminal de PSP Dock incoherente.')
     if status.host_confirmed:
         if phase != ERROR:
             _progress_valid(phase, activity, unit, done, total)
@@ -137,7 +157,8 @@ def decode_status(report: bytes) -> NativeStatus:
 def encode_command(session: str, sequence: int, phase: int, op: int, *,
                    activity=WAITING, unit=UNKNOWN, completed=0, total=0,
                    firmware_revision=REVISION, build_id=BUILD_ID) -> bytes:
-    _validate_identity(VERSION, firmware_revision, CAPABILITIES, build_id)
+    capabilities = FIRMWARE_CAPABILITIES.get(firmware_revision)
+    _validate_identity(VERSION, firmware_revision, capabilities, build_id)
     try:
         nonce = bytes.fromhex(session)
     except (ValueError, TypeError) as exc:
@@ -148,17 +169,20 @@ def encode_command(session: str, sequence: int, phase: int, op: int, *,
         raise NativeDockError('Secuencia PDK2 fuera de rango.')
     if type(phase) is not int or phase not in (STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE):
         raise NativeDockError('No se puede solicitar esta fase del Dock.')
-    if type(op) is not int or op not in (SET_PHASE, HOST_BEGIN, HOST_PROGRESS):
+    if type(op) is not int or op not in (SET_PHASE, HOST_BEGIN, HOST_PROGRESS, HOST_SHUTDOWN):
         raise NativeDockError('Operación de PSP Dock desconocida.')
     if op == HOST_BEGIN and phase != STORAGE:
         raise NativeDockError('El inicio de sesión requiere almacenamiento de entrada.')
+    if op == HOST_SHUTDOWN and (phase != SAFE or not capabilities & CAP_HOST_SHUTDOWN):
+        raise NativeDockError('Esta identidad no permite el cierre confirmado con cable conectado.')
     if op == HOST_PROGRESS:
         _progress_valid(phase, activity, unit, completed, total, command=True)
     elif (activity, unit, completed, total) != (WAITING, UNKNOWN, 0, 0):
         raise NativeDockError('La orden no admite progreso adjunto.')
-    return (b'\0' + FRAME.pack(MAGIC, VERSION, op, phase, 0, nonce, sequence, 0) +
-            EXTENSION.pack(EXT_MAGIC, firmware_revision, CAPABILITIES, build_id,
+    core = (b'\0' + FRAME.pack(MAGIC, VERSION, op, phase, 0, nonce, sequence, 0) +
+            EXTENSION.pack(EXT_MAGIC, firmware_revision, capabilities, build_id,
                            activity, unit, 0, completed, total))
+    return core
 
 
 def encode_phase(session: str, sequence: int, phase: int) -> bytes:
@@ -173,6 +197,9 @@ class NativeHid(_WindowsHid):
         # set and write-open methods are deliberately not used here.
         super().__init__()
         self.expected_product, self.expected_path = PID, HID_PATH
+        self._report_lengths = {}
+        self.hid.HidD_SetOutputReport.argtypes = [W.HANDLE, C.c_void_p, W.ULONG]
+        self.hid.HidD_SetOutputReport.restype = W.BOOLEAN
 
     @contextmanager
     def open(self, path: str, write: bool = False):
@@ -194,29 +221,89 @@ class NativeHid(_WindowsHid):
             try:
                 caps = HIDP_CAPS()
                 if (self.hid.HidP_GetCaps(data, C.byref(caps)) != 0x00110000 or
-                    (caps.UsagePage, caps.Usage, caps.FeatureReportByteLength,
-                     caps.InputReportByteLength, caps.OutputReportByteLength) != (1, 4, REPORT_BYTES, 9, 5)):
+                    caps.FeatureReportByteLength not in (CORE_REPORT_BYTES, REPORT_BYTES) or
+                    (caps.UsagePage, caps.Usage,
+                     caps.InputReportByteLength, caps.OutputReportByteLength) != (1, 4, 9, 5)):
                     raise NativeDockError('Descriptor del mando nativo distinto del esperado.',
                                           message='Esta versión de PSP Dock necesita actualizarse.',
                                           hint='Instala la versión de PSP Dock incluida con esta app de Windows.')
+                if not hasattr(self, '_report_lengths'):
+                    self._report_lengths = {}
+                self._report_lengths[handle] = int(caps.FeatureReportByteLength)
             finally:
                 self.hid.HidD_FreePreparsedData(data)
             yield handle
         finally:
+            getattr(self, '_report_lengths', {}).pop(handle, None)
             self.kernel.CloseHandle(handle)
 
     def get(self, handle) -> NativeStatus:
-        buf = C.create_string_buffer(REPORT_BYTES)
+        length = getattr(self, '_report_lengths', {}).get(handle)
+        if length not in (CORE_REPORT_BYTES, REPORT_BYTES):
+            raise NativeDockError('El handle HID no conserva un descriptor de tamaño verificado.')
+        buf = C.create_string_buffer(length)
         if not self.hid.HidD_GetFeature(handle, buf, len(buf)):
             raise NativeDockError(str(self._failure('Leer fase PDK2')))
         return decode_status(buf.raw)
 
     def set(self, handle, report: bytes) -> None:
-        if len(report) != REPORT_BYTES or report[0] != 0 or report[1:5] != MAGIC:
+        if (not isinstance(report, bytes) or len(report) not in (CORE_REPORT_BYTES, REPORT_BYTES) or
+                len(report) != getattr(self, '_report_lengths', {}).get(handle) or
+                report[0] != 0 or report[1:5] != MAGIC):
             raise NativeDockError('Orden PDK2 inválida.')
+        extension = EXTENSION.unpack(report[33:65])
+        _validate_identity(report[5], extension[1], extension[2], extension[3])
+        if len(report) != FIRMWARE_REPORT_BYTES[extension[1]]:
+            raise NativeDockError('La orden no usa el transporte exacto de esta versión.')
+        _, _, operation, phase, flags, session, sequence, result = FRAME.unpack(report[1:33])
+        if (extension[0] != EXT_MAGIC or extension[6] or flags or result or
+                report != encode_command(session.hex(), sequence, phase, operation,
+                    activity=extension[4], unit=extension[5], completed=extension[7], total=extension[8],
+                    firmware_revision=extension[1], build_id=extension[3])):
+            raise NativeDockError('La orden no conserva el formato completo del protocolo.')
+        if extension[1] == FRAGMENT_REVISION:
+            token = secrets.randbelow(256)
+            payload = report[1:]
+            for index in range(32):
+                chunk = bytes((0, 0xc0 | index, token)) + payload[index*2:index*2+2]
+                buf = C.create_string_buffer(chunk, 5)
+                if not self.hid.HidD_SetOutputReport(handle, buf, 5):
+                    raise NativeDockError(
+                        f'Entrega de orden incompleta en fragmento {index + 1}/32; '
+                        'se comprobará su estado antes de cualquier reintento.')
+            checksum = binascii.crc_hqx(payload, 0xffff)
+            commit = bytes((0, 0xe0, token, checksum & 255, checksum >> 8))
+            buf = C.create_string_buffer(commit, 5)
+            if not self.hid.HidD_SetOutputReport(handle, buf, 5):
+                raise NativeDockError('Confirmación de entrega incierta; se comprobará el estado de la orden.')
+            return
         buf = C.create_string_buffer(report, len(report))
         if not self.hid.HidD_SetFeature(handle, buf, len(buf)):
             raise NativeDockError('Entrega de fase incierta; se debe comprobar el estado antes de reintentar.')
+
+    def transport_diagnostic(self, handle, status: NativeStatus) -> dict:
+        """Read RAM diagnostics in 0306's two previously reserved status bytes.
+
+        Windows exposes GetFeature, not GetOutputReport. Keeping this on the
+        already working Feature GET avoids changing the controller input or
+        any descriptor length. Command reserved bytes must still be zero.
+        """
+        _validate_status_identity(status)
+        if status.firmware_revision != 0x0306:
+            return {}
+        current = self.get(handle)
+        if (current.session != status.session or
+                _validate_status_identity(current) != _validate_status_identity(status)):
+            raise NativeDockError('La identidad cambió al leer el diagnóstico USB.')
+        word = current.transport_word
+        drop, received = word & 15, (word >> 4) & 127
+        result = (word >> 11) & 31
+        if result & 16:
+            result -= 32
+        value = None if result == -16 else result
+        return {'available': True, 'drop_reason': drop, 'received_bytes': received,
+                'completion_result': 0 if drop == 6 else value,
+                'parser_result': value if drop == 6 else None}
 
 
 def probe_native(*, api_factory=NativeHid) -> dict | None:
@@ -260,6 +347,8 @@ def request_command(path: str, session: str, phase: int, op: int, *,
     A timeout is uncertainty, never permission to replay the request. A
     subsequent explicit action first reads the actual phase/sequence again.
     """
+    if op == HOST_SHUTDOWN:
+        raise NativeDockError('El cierre terminal requiere primero la expulsión verificada del medio.')
     fields = {'activity': activity, 'unit': unit, 'completed': completed, 'total': total}
     encode_command(session, 1, phase, op, **fields)  # Validate before opening HID.
     api = api_factory()
@@ -331,11 +420,22 @@ def request_command(path: str, session: str, phase: int, op: int, *,
                 f'pendiente {int(last_observed.pending)}, fase {last_observed.phase}, '
                 f'Windows confirmado {int(last_observed.host_confirmed)}. '
                 'No se repite automáticamente la orden.')
+            transport = {}
+            if hasattr(api, 'transport_diagnostic'):
+                try:
+                    transport = api.transport_diagnostic(handle, last_observed)
+                except (OSError, RuntimeError, ValueError) as exc:
+                    transport = {'available': False, 'error': str(exc)}
+            if transport.get('available') is True:
+                error_text += (f" USB: recibidos {transport['received_bytes']}, "
+                    f"resultado {transport['completion_result']}, descarte {transport['drop_reason']}, "
+                    f"intérprete {transport['parser_result']}.")
             raise NativeDockError(error_text,
                 message=f'La PSP no confirmó {action}.',
                 hint='Pulsa Reintentar para comprobar la conexión de nuevo, o cierra PSP Dock.',
                 details={'operation': operation, 'sequence': sequence, 'requested_phase': phase,
-                         'before': asdict(before), 'last_observed': asdict(last_observed)})
+                         'before': asdict(before), 'last_observed': asdict(last_observed),
+                         'transport': transport})
 
 
 def request_phase(path: str, session: str, phase: int, **options) -> dict:
@@ -413,7 +513,8 @@ class NativeDockTransport:
                  parent_of=composite_parent, serial_of=_volume_serial,
                  change_phase=request_phase, begin=request_begin,
                  progress=request_progress, eject=eject_bound_parent,
-                 diagnostics=None):
+                 diagnostics=None, shutdown_path=None, shutdown=None):
+        from native_shutdown import NativeShutdown
         self._probe, self._identify, self._parent = probe, identify_storage, parent_of
         self._serial, self._change_phase, self._eject = serial_of, change_phase, eject
         self._begin, self._progress = begin, progress
@@ -423,6 +524,7 @@ class NativeDockTransport:
         self._parent_node = None
         self._commands = threading.RLock()
         self._finished = None
+        self._shutdown = shutdown if shutdown is not None else NativeShutdown(shutdown_path)
         self._connection = self._connection_value('waiting', 'Conecta tu PSP y abre PSP Dock en la consola.')
 
     @staticmethod
@@ -444,6 +546,14 @@ class NativeDockTransport:
     @property
     def current(self):
         return dict(self._link) if self._link else None
+
+    @property
+    def shutdown_pending(self):
+        # Available before the first USB tick, including crash recovery.
+        return self._shutdown.pending
+
+    def retire_completed_shutdown(self):
+        self._shutdown.retire_completed()
 
     def _bind(self, device, roots, *, fresh=False):
         status = device['status']
@@ -493,6 +603,8 @@ class NativeDockTransport:
             'protocol_version': status['protocol_version'], 'firmware_revision': status['firmware_revision'],
             'capabilities': status['capabilities'], 'build_id': status['build_id'],
             'host_confirmed': status['host_confirmed'],
+            'sequence': status['sequence'], 'result': status['result'],
+            'pending': status['pending'], 'shutdown_requested': status.get('shutdown_requested', False),
             'activity': status['activity'], 'unit': status['unit'],
             'completed': status['completed'], 'total': status['total'],
             'usb_parent': parent[1], 'root': storage.drive,
@@ -503,6 +615,12 @@ class NativeDockTransport:
 
     def observe(self, devices: list[dict]) -> dict | None:
         try:
+            if self._shutdown.pending:
+                closing = self._shutdown.observation(probe=self._probe, parent_of=self._parent)
+                if closing is not None:
+                    self._link = closing
+                    self._connection = self._connection_value('closing', 'Terminando la conexión con la PSP.')
+                    return dict(closing)
             self._connection = self._connection_value('identifying', 'Buscando PSP Dock.')
             device = self._probe()
             if device is None:
@@ -519,6 +637,8 @@ class NativeDockTransport:
             raise
 
     def _fresh(self, root=None):
+        if self._shutdown.pending:
+            raise NativeDockError('La tarjeta está en proceso de salida; sólo se permite terminar el cierre.')
         old, storage = self._link, self._storage
         if old is None or storage is None:
             raise NativeDockError('No hay una sesión nativa verificada.')
@@ -590,6 +710,8 @@ class NativeDockTransport:
     def set_progress(self, context, activity, *, unit=UNKNOWN, completed=0, total=0):
         """Display-only command; it cannot grant file or controller permission."""
         with self._commands:
+            if self._shutdown.pending:
+                raise NativeDockError('El cierre terminal no admite más órdenes de progreso.')
             current = self._assert_context(context)
             if not current['host_confirmed']:
                 raise NativeDockError('El progreso requiere una sesión ya confirmada.')
@@ -637,6 +759,12 @@ class NativeDockTransport:
 
     def finish_session(self, *, cancel=False) -> dict:
         with self._commands:
+            if self._shutdown.pending:
+                try:
+                    self._finished = self._shutdown.finish(parent_of=self._parent)
+                finally:
+                    self._link = self._shutdown.current
+                return dict(self._finished)
             current = self._fresh()
             unclaimed = cancel and not current['host_confirmed']
             if unclaimed:
@@ -654,7 +782,15 @@ class NativeDockTransport:
                 raise NativeDockError('La salida requiere completar la sincronización de vuelta.')
             if not unclaimed and current['phase'] != SAFE:
                 self.set_phase(SAFE)
+                current = self._link
             storage, parent = self._storage, self._parent_node
+            if current['capabilities'] & CAP_HOST_SHUTDOWN:
+                self._shutdown.prepare(current, storage, cancel=cancel)
+                try:
+                    self._finished = self._shutdown.finish(parent_of=self._parent)
+                finally:
+                    self._link = self._shutdown.current
+                return dict(self._finished)
             result = self._eject(storage, parent)
             if not result.get('host_eject_accepted'):
                 raise NativeDockError('Windows mantiene la PSP en uso: ' + str(result.get('veto_name') or result.get('configret')))

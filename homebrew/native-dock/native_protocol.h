@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only
  * PDK2/v3 is a session-bound UI/input protocol. It grants no filesystem
- * ownership, safe-eject proof, raw-disk access or permission to cut storage.
+ * ownership, safe-eject proof or raw-disk access. HOST_SHUTDOWN is sent
+ * only after Windows verifies and records media release for this session.
  * Payload: <4sBBBB16sIi4sHHIBBHQQ>, 64 bytes, LE, no report ID here.
  */
 #ifndef PSPDOCK_NATIVE_PROTOCOL_H
@@ -9,23 +10,27 @@
 #include <string.h>
 
 #define PDN_FEATURE_SIZE 64u
+#define PDN_TRANSFER_SIZE PDN_FEATURE_SIZE
 #define PDN_SESSION_SIZE 16u
 #define PDN_VERSION 3u
-#define PDN_FIRMWARE_REVISION 0x0304u
-#define PDN_BUILD_ID 0x03040001u
+#define PDN_FIRMWARE_REVISION 0x0306u
+#define PDN_BUILD_ID 0x03060001u
 #define PDN_CAP_NATIVE_STORAGE 1u
 #define PDN_CAP_HOST_BEGIN 2u
 #define PDN_CAP_HOST_PROGRESS 4u
-#define PDN_CAPABILITIES 7u
+#define PDN_CAP_HOST_SHUTDOWN 8u
+#define PDN_CAPABILITIES 15u
 #define PDN_OP_STATUS 1u
 #define PDN_OP_SET_PHASE 2u
 #define PDN_OP_HOST_BEGIN 3u
 #define PDN_OP_HOST_PROGRESS 4u
+#define PDN_OP_HOST_SHUTDOWN 5u
 #define PDN_FLAG_CONNECTED 1u
 #define PDN_FLAG_PENDING 2u
 #define PDN_FLAG_SONY_STORAGE 4u
 #define PDN_FLAG_EXIT_REQUESTED 8u
 #define PDN_FLAG_HOST_CONFIRMED 16u
+#define PDN_FLAG_SHUTDOWN_REQUESTED 32u
 
 /* Keep the actual wire prefix in an auditable ELF symbol. A compiler may
  * encode a short memcpy/memcmp literal only as instruction immediates;
@@ -50,10 +55,16 @@ static const uint8_t pdn_identity[12] __attribute__((used)) = {
  * Header, feature size, input/output size, opcodes, supported flags, and
  * claim/progress policy agree with the wire encoder and C regressions.
  */
-static const uint8_t pdn_protocol_abi[16] __attribute__((used)) = {
-    'P','D','N','A',PDN_VERSION,PDN_FEATURE_SIZE,8,4,
+static const uint8_t pdn_protocol_abi[17] __attribute__((used)) = {
+    'P','D','N','A',PDN_VERSION,PDN_TRANSFER_SIZE,8,4,
     PDN_OP_STATUS,PDN_OP_SET_PHASE,PDN_OP_HOST_BEGIN,PDN_OP_HOST_PROGRESS,
-    31,1,1,0 /* flags, mandatory claim, progress support, USB-as-build */
+    63,1,1,0, /* flags, mandatory work claim, progress, USB-as-build */
+    PDN_OP_HOST_SHUTDOWN /* terminal host release; not an input/work claim */
+};
+/* Exact command transport for 0306: 32 ordered reports, 2 core bytes/report.
+ * Status GET keeps the already observed 64-byte Feature layout. */
+static const uint8_t pdn_transport_abi[10] __attribute__((used)) = {
+    'P','D','F','4',32,2,0xc0,64,0xe0,16 /* final CRC16-CCITT commit */
 };
 
 enum PdnPhase {
@@ -78,7 +89,7 @@ enum PdnResult {
 typedef struct {
     uint8_t session[PDN_SESSION_SIZE];
     uint8_t phase,target,pending,host_confirmed;
-    uint8_t activity,progress_unit;
+    uint8_t activity,progress_unit,shutdown_requested;
     uint64_t completed,total;
     uint32_t sequence;
     int32_t result;
@@ -110,7 +121,7 @@ static inline int pdn_protocol_init(PdnProtocol *p,const uint8_t session[16]) {
     return 0;
 }
 static inline int pdn_protocol_accepts_input(const PdnProtocol *p) {
-    return p->host_confirmed && !p->pending &&
+    return p->host_confirmed && !p->pending && !p->shutdown_requested &&
         (p->phase==PDN_PHASE_CONTROLLER ||
          (p->phase==PDN_PHASE_STORAGE && p->activity==PDN_ACTIVITY_CHOOSING));
 }
@@ -158,7 +169,7 @@ static inline int pdn_reject(PdnProtocol *p,int32_t code) {
 static inline int pdn_protocol_receive(PdnProtocol *p,const uint8_t *in,unsigned size) {
     uint32_t seq;uint8_t target,op;unsigned i;
     if(size!=PDN_FEATURE_SIZE || memcmp(in,pdn_wire_prefix,sizeof(pdn_wire_prefix)) ||
-       in[5]<PDN_OP_SET_PHASE || in[5]>PDN_OP_HOST_PROGRESS ||
+       in[5]<PDN_OP_SET_PHASE || in[5]>PDN_OP_HOST_SHUTDOWN ||
        in[7] || pdn_read32(in+28) || memcmp(in+32,pdn_identity,sizeof(pdn_identity)) ||
        in[46] || in[47])return pdn_reject(p,PDN_ERR_FRAME);
     if(memcmp(in+8,p->session,16))return pdn_reject(p,PDN_ERR_SESSION);
@@ -168,12 +179,18 @@ static inline int pdn_protocol_receive(PdnProtocol *p,const uint8_t *in,unsigned
         return pdn_reject(p,PDN_ERR_SEQUENCE);
     }
     if(p->pending)return pdn_reject(p,PDN_ERR_BUSY);
+    if(p->shutdown_requested)return pdn_reject(p,PDN_ERR_TRANSITION);
     if(p->sequence==UINT32_MAX || !seq || seq!=p->sequence+1u)
         return pdn_reject(p,PDN_ERR_SEQUENCE);
     if(op!=PDN_OP_HOST_PROGRESS){
         for(i=44;i<PDN_FEATURE_SIZE;i++)if(in[i])return pdn_reject(p,PDN_ERR_FRAME);
     }
-    if(op==PDN_OP_HOST_BEGIN){
+    if(op==PDN_OP_HOST_SHUTDOWN){
+        if(target!=PDN_PHASE_SAFE ||
+           !((p->phase==PDN_PHASE_STORAGE && !p->host_confirmed) ||
+             (p->phase==PDN_PHASE_SAFE && p->host_confirmed) ||
+             p->phase==PDN_PHASE_ERROR))return pdn_reject(p,PDN_ERR_TRANSITION);
+    }else if(op==PDN_OP_HOST_BEGIN){
         if(p->host_confirmed || p->phase!=PDN_PHASE_STORAGE || target!=PDN_PHASE_STORAGE)
             return pdn_reject(p,PDN_ERR_HANDSHAKE);
     }else{
@@ -189,6 +206,8 @@ static inline int pdn_protocol_receive(PdnProtocol *p,const uint8_t *in,unsigned
 }
 /* Worker calls only after EP0 completion and old input drain. No operation
  * here starts/stops Sony storage, touches FAT, clears exit, or ejects USB.
+ * Applying HOST_SHUTDOWN latches terminal host authorization; the worker
+ * owns the subsequent shutdown and its independent cleanup checks.
  */
 static inline int pdn_protocol_apply(PdnProtocol *p) {
     uint8_t op;
@@ -200,6 +219,10 @@ static inline int pdn_protocol_apply(PdnProtocol *p) {
     }else{
         if(op==PDN_OP_HOST_BEGIN)p->host_confirmed=1;
         p->phase=p->target;p->activity=pdn_activity_for_phase(p->phase);
+        if(op==PDN_OP_HOST_SHUTDOWN){
+            p->shutdown_requested=1;
+            if(!p->host_confirmed)p->activity=PDN_ACTIVITY_WAITING;
+        }
         p->progress_unit=PDN_UNIT_UNKNOWN;p->completed=p->total=0;
     }
     p->pending=0;p->result=PDN_APPLIED;return 1;
@@ -208,6 +231,9 @@ static inline void pdn_protocol_fail_pending(PdnProtocol *p,int32_t error) {
     if(p->pending){p->pending=0;p->result=error;}
 }
 static inline void pdn_protocol_invalidate_link(PdnProtocol *p) {
+    /* A completed terminal authorization survives detach until the worker
+     * stops. A merely queued command still fails with its old generation. */
+    if(p->shutdown_requested)return;
     pdn_protocol_fail_pending(p,PDN_ERR_LINK);
     p->host_confirmed=0;p->activity=PDN_ACTIVITY_WAITING;
     p->progress_unit=PDN_UNIT_UNKNOWN;p->completed=p->total=0;
@@ -219,7 +245,8 @@ static inline void pdn_protocol_status(const PdnProtocol *p,uint8_t out[PDN_FEAT
     out[7]=(uint8_t)((connected?PDN_FLAG_CONNECTED:0u)|
         (p->pending?PDN_FLAG_PENDING:0u)|(storage?PDN_FLAG_SONY_STORAGE:0u)|
         (exit_requested?PDN_FLAG_EXIT_REQUESTED:0u)|
-        (p->host_confirmed?PDN_FLAG_HOST_CONFIRMED:0u));
+        (p->host_confirmed?PDN_FLAG_HOST_CONFIRMED:0u)|
+        (p->shutdown_requested?PDN_FLAG_SHUTDOWN_REQUESTED:0u));
     memcpy(out+8,p->session,16);pdn_write32(out+24,p->sequence);
     pdn_write32(out+28,(uint32_t)p->result);memcpy(out+32,pdn_identity,sizeof(pdn_identity));
     out[44]=p->activity;out[45]=p->progress_unit;

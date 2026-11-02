@@ -20,6 +20,7 @@ import subprocess
 
 from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError
 from native_dock import (PID, REVISION, VERSION, FIRMWARE_BUILDS, USB_REVISIONS, REPORT_BYTES,
+                         CORE_REPORT_BYTES, FIRMWARE_REPORT_BYTES,
                          RETIRED_REVISIONS, HID_PATH, USB_PARENT, FRAME,
                          decode_status, hid_instance)
 from psp_usb import identify
@@ -105,24 +106,25 @@ class NativeReadOnlyInspector(_WindowsHid):
                 }
             finally:
                 self.hid.HidD_FreePreparsedData(data)
-            result['descriptor_matches'] = result['caps'] == {
-                'usage_page': 1, 'usage': 4, 'input_bytes': 9,
-                'output_bytes': 5, 'feature_bytes': REPORT_BYTES,
-            }
             feature_bytes = result['caps']['feature_bytes']
-            if feature_bytes in (33, REPORT_BYTES):
+            result['descriptor_matches'] = feature_bytes in (CORE_REPORT_BYTES, REPORT_BYTES) and result['caps'] == {
+                'usage_page': 1, 'usage': 4, 'input_bytes': 9,
+                'output_bytes': 5, 'feature_bytes': feature_bytes,
+            }
+            if feature_bytes in (33, CORE_REPORT_BYTES, REPORT_BYTES):
                 buffer = C.create_string_buffer(feature_bytes)
                 if self.hid.HidD_GetFeature(handle, buffer, len(buffer)):
                     result['feature_hex'] = buffer.raw.hex()
                     try:
-                        result['status'] = (asdict(decode_status(buffer.raw)) if feature_bytes == REPORT_BYTES
+                        result['status'] = (asdict(decode_status(buffer.raw)) if feature_bytes != 33
                                             else _legacy_observation(buffer.raw))
                         result['pdk2_valid'] = True
                         result['protocol_version'] = result['status']['protocol_version']
                         result['firmware_revision'] = result['status']['firmware_revision']
                         result['supported_revision'] = bool(
                             result['descriptor_matches'] and attrs['revision'] in USB_REVISIONS and
-                            result['protocol_version'] == VERSION and result['firmware_revision'] in FIRMWARE_BUILDS)
+                            result['protocol_version'] == VERSION and result['firmware_revision'] in FIRMWARE_BUILDS and
+                            FIRMWARE_REPORT_BYTES[result['firmware_revision']] == feature_bytes)
                         if result['supported_revision']:
                             result['revision_status'] = 'supported'
                             result['retired_revision'] = False

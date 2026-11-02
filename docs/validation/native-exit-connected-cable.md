@@ -1,5 +1,17 @@
 # Cierre de PSP Dock con el cable conectado
 
+## Resultado 0305 y candidato 0306
+
+0305 se ejecutó y no confirmó ni el inicio ni la orden terminal; la liberación del medio sí quedó verificada. [0306](native-0306-short-reports.md) conserva esa liberación y cambia la entrega de órdenes a fragmentos pequeños con commit CRC16. Está preparada y probada por software; su instalación y validación física siguen pendientes. No tratar las notas anteriores de implementación como éxito en la consola.
+
+## Actualización 0305, 2 de noviembre de 2026
+
+La liberación por LOCK/DISMOUNT/EJECT_MEDIA ya se comprobó en la PSP real,
+conservando HID. El cierre terminal y su recuperación están implementados en
+0305; el firmware compila y está auditado. Falta su prueba física completa.
+Véase [evidencia y validación 0305](native-0305-ep0-close.md). Las secciones
+siguientes conservan el diagnóstico previo a esta implementación.
+
 ## Requisito de David, 2 de noviembre de 2026
 
 Cerrar PSP Dock en Windows debe terminar las operaciones pendientes, devolver

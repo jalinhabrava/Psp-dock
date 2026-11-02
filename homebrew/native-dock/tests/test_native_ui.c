@@ -56,10 +56,32 @@ static void test_ep0_raw_rows_are_bounded_and_offset_labelled(void) {
     pdn_ui_ep0_hex(output.line,&sample,UINT32_MAX);assert(!output.line[0]);
     for(i=0;i<sizeof(output.guard);i++)assert(output.guard[i]==0xa5);
 }
+static void test_host_release_closes_without_claim_or_premature_xmb(void){
+    PdnSharedStatus s=initial();PdnUiView v;
+    s.stage=PDN_STAGE_CONNECTED;s.phase=PDN_PHASE_SAFE;
+    s.sony_storage_started=1;s.usb_state=0x222;s.stop_reason=PDN_STOP_HOST;
+    v=pdn_ui_present(&s,0);
+    assert(!strcmp(v.heading,"Cerrando PSP Dock") && !v.exit_hint[0]);
+    assert(!strstr(v.detail,"Expulsa") && !strstr(v.action,"retira"));
+    assert(!v.progress_visible);no_active_instructions(&v);
+    v=pdn_ui_present(&s,1);assert(!v.exit_hint[0]); /* Latch alone is insufficient. */
+    s.stage=PDN_STAGE_STOPPING;s.error=-55;s.error_stage=PDN_STAGE_CONNECTED;
+    v=pdn_ui_present(&s,0);assert(!strcmp(v.heading,"Cerrando PSP Dock"));
+    assert(!v.exit_hint[0]);no_active_instructions(&v);
+    s.stage=PDN_STAGE_ERROR;s.error=-710;
+    v=pdn_ui_present(&s,1);assert(v.warning && !v.exit_hint[0]);
+    no_active_instructions(&v);
+    s.stage=PDN_STAGE_STOPPED;s.error=0;s.safe_to_unload=1;s.sony_storage_started=0;
+    v=pdn_ui_present(&s,0);assert(!v.exit_hint[0]);
+    v=pdn_ui_present(&s,1);
+    assert(strstr(v.exit_hint,"volver al XMB") && !v.warning);
+    assert(!s.host_confirmed && !s.host_session_seen);no_active_instructions(&v);
+}
 int main(void) {
     PdnSharedStatus s=initial();PdnUiView v;
     test_ep0_snapshot_keeps_complete_raw_evidence();
     test_ep0_raw_rows_are_bounded_and_offset_labelled();
+    test_host_release_closes_without_claim_or_premature_xmb();
     /* Exact failing 0300 photo: a stale STORAGE phase cannot claim a session.
      * Index 5 is preserved but no longer mislabelled as a 0302 dependency. */
     s.stage=255;s.error=(int32_t)0x8002013cu;s.error_stage=3;s.dependency=5;
@@ -115,8 +137,8 @@ int main(void) {
     /* Mere connected USB/descriptor reads must never advertise real work. */
     s.usb_state=0x222;s.exit_requested=1;s.stage=PDN_STAGE_WAIT_UNPLUG;
     v=pdn_ui_present(&s,0);assert(!strcmp(v.heading,"Conexion cancelada"));
-    assert(strstr(v.context,"no ha iniciado"));assert(strstr(v.detail,"Expulsa la PSP"));
-    assert(strstr(v.action,"retira el cable"));assert(!v.exit_hint[0]);
+    assert(strstr(v.context,"no ha iniciado"));assert(strstr(v.detail,"Cierra PSP Dock"));
+    assert(strstr(v.action,"Windows cerrara"));assert(!v.exit_hint[0]);
     assert(!v.progress_visible);no_active_instructions(&v);
     s.host_session_seen=1;v=pdn_ui_present(&s,0);
     assert(!strcmp(v.heading,"Conexion interrumpida") && !strstr(v.context,"no ha iniciado"));
@@ -159,13 +181,13 @@ int main(void) {
     s.phase=PDN_PHASE_EXIT_SYNC;s.activity=PDN_ACTIVITY_SYNC_OUT;v=pdn_ui_present(&s,0);
     assert(!strcmp(v.heading,"Sincronizando partidas"));no_active_instructions(&v);
     s.phase=PDN_PHASE_SAFE;s.activity=PDN_ACTIVITY_SAFE;v=pdn_ui_present(&s,0);
-    assert(strstr(v.action,"solo cuando Windows"));assert(!v.exit_hint[0]);
+    assert(strstr(v.action,"aviso para volver al XMB"));assert(!v.exit_hint[0]);
     assert(!v.progress_visible);no_active_instructions(&v);
     s.phase=PDN_PHASE_CONTROLLER;s.activity=PDN_ACTIVITY_CONTROLLER;v=pdn_ui_present(&s,0);
     assert(!strcmp(v.heading,"Salida solicitada"));assert(!v.progress_visible);no_active_instructions(&v);
     s.phase=PDN_PHASE_ERROR;s.error=0;v=pdn_ui_present(&s,0);
     assert(v.warning);assert(!v.exit_hint[0]);no_active_instructions(&v);
 
-    puts("Native 0304 UI: RAM snapshot, raw EP0, host confirmation, progress, errors and close gate PASS");
+    puts("Native 0306 UI: RAM snapshot, raw EP0, host confirmation, progress, errors and close gate PASS");
     return 0;
 }

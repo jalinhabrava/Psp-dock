@@ -30,7 +30,8 @@ class DockProductSession:
         self.api = sys.modules[type(dock).__module__]
         self.diagnostics = ConnectionDiagnostics(persist=lambda value:self.api.atomic_json(
             dock.data/'connection-timing.json', value))
-        self.transport = transport or NativeDockTransport(diagnostics=self.diagnostics)
+        self.transport = transport or NativeDockTransport(
+            diagnostics=self.diagnostics, shutdown_path=dock.data/'native-close.json')
         self.observation = None
         self._callback_state = threading.local()
         self._progress_lock = threading.Lock()
@@ -48,6 +49,8 @@ class DockProductSession:
         # A crashed native session remains visible and blocked even before
         # its matching PSP is connected again. An old completed one does not.
         self.flow.enabled = self.flow.snapshot()['phase'] != 'waiting_psp'
+        if not self.flow.enabled and hasattr(self.transport, 'retire_completed_shutdown'):
+            self.transport.retire_completed_shutdown()
 
     def snapshot(self):
         result = self.flow.snapshot()

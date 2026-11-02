@@ -33,9 +33,14 @@ typedef struct {unsigned Buttons;uint8_t Lx,Ly;} SceCtrlData;
 struct UsbEndpoint {int endpnum,unk1,unk2;};
 struct DeviceRequest {uint8_t bmRequestType,bRequest;uint16_t wValue,wIndex,wLength;};
 struct UsbdDeviceReq {
-    struct UsbEndpoint *endp;void *data;int size;
+    /* Field order follows PSPSDK usb/pspusbbus.h. Keep the completion
+     * pointer typed so the host test can call it; host pointers may be
+     * wider than the PSP ABI. In particular, unkc is an input to USBBus,
+     * and recvsize precedes retcode in the real request structure. */
+    struct UsbEndpoint *endp;void *data;int size,unkc;
     int (*func)(struct UsbdDeviceReq *,int,int);
-    int retcode,recvsize;
+    int recvsize,retcode,unk1c;
+    void *arg,*link;
 };
 struct UsbDriver {
     const char *name;int endpoints;struct UsbEndpoint *endp;void *intp;
@@ -71,11 +76,11 @@ SceUID sceKernelLoadModule(const char *,int,void *);
 int sceKernelStartModule(SceUID,SceSize,void *,int *,void *);
 int sceKernelStopModule(SceUID,SceSize,void *,int *,void *);
 int sceKernelUnloadModule(SceUID);
-static inline int sceCtrlPeekBufferPositive(SceCtrlData *p,int n){(void)p;(void)n;return 0;}
+int sceCtrlPeekBufferPositive(SceCtrlData *,int);
 static inline int sceCtrlSetSamplingCycle(int x){return x;}
 static inline int sceCtrlSetSamplingMode(int x){return x;}
 static inline int sceKernelWaitSema(int a,int b,void *c){(void)a;(void)b;(void)c;return 0;}
-static inline int sceKernelSignalSema(int a,int b){(void)a;(void)b;return 0;}
+int sceKernelSignalSema(int,int);
 static inline int sceKernelCreateSema(const char *s,int a,int b,int c,void *p){(void)s;(void)a;(void)b;(void)c;(void)p;return 1;}
 static inline int sceKernelCreateThread(const char *s,int(*f)(SceSize,void *),int p,int n,int a,void *o){(void)s;(void)f;(void)p;(void)n;(void)a;(void)o;return 1;}
 static inline int sceKernelStartThread(int t,int a,void *p){(void)t;(void)a;(void)p;return 0;}

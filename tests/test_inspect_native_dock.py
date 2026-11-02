@@ -109,17 +109,20 @@ class InspectorTests(unittest.TestCase):
         with self.assertRaises(inspect.InspectionError):
             api.set(42, b'\0' * 33)
 
-    def test_0304_diagnostic_firmware_remains_strictly_read_only(self):
-        frame = (CURRENT_FRAME[:33] +
-                 native.EXTENSION.pack(b'NAT3', 0x0304, 7, 0x03040001, 0, 0, 0, 0, 0))
-        api = LowLevelFake(revision=0x0100, feature_bytes=65, frame=frame)
-        result = api.inspect(PATH)
-        self.assertTrue(result['supported_revision'])
-        self.assertEqual(result['firmware_revision'], 0x0304)
-        self.assertEqual(result['status']['build_id'], 0x03040001)
-        self.assertFalse(result['writes_authorized'])
-        self.assertFalse(result['can_change_phase'])
-        self.assertEqual(next(args for name,args in api.calls if name == 'open')[1], 0)
+    def test_0304_and_0305_firmware_remain_strictly_read_only(self):
+        for revision, capabilities, build in ((0x0304, 7, 0x03040001), (0x0305, 15, 0x03050001)):
+            with self.subTest(revision=revision):
+                frame = (CURRENT_FRAME[:33] +
+                         native.EXTENSION.pack(b'NAT3', revision, capabilities, build, 0, 0, 0, 0, 0))
+                api = LowLevelFake(revision=0x0100, feature_bytes=65, frame=frame)
+                result = api.inspect(PATH)
+                self.assertTrue(result['supported_revision'])
+                self.assertEqual(result['firmware_revision'], revision)
+                self.assertEqual(result['status']['build_id'], build)
+                self.assertEqual(result['status']['capabilities'], capabilities)
+                self.assertFalse(result['writes_authorized'])
+                self.assertFalse(result['can_change_phase'])
+                self.assertEqual(next(args for name,args in api.calls if name == 'open')[1], 0)
 
     def test_0301_is_retired_and_a_sony_revision_alone_never_becomes_supported(self):
         old = LowLevelFake(revision=0x0301).inspect(PATH)

@@ -1,4 +1,4 @@
-"""Audit 0304's actual MIPS ELF and USER PBP; never opens USB or a PSP.
+"""Audit 0306's actual MIPS ELF and USER PBP; never opens USB or a PSP.
 
 The default device descriptor chosen by Sony's composed USB bus is a hardware
 question. This audit proves our descriptor and imports, not that composition
@@ -91,11 +91,46 @@ def pbp_title(raw: bytes) -> str:
     return titles[0]
 
 
+def _compiled_protocol(elf) -> tuple[bytes, dict]:
+    """Derive the host contract from the exact compiled protocol symbols."""
+    # A short literal can become instruction immediates under MIPS -O2.
+    # Inspect the symbols used by encoder AND validator, not arbitrary substrings.
+    wire_prefix = elf.data("pdn_wire_prefix", 5)
+    require(elf.symbols["pdn_wire_prefix"][1] == 5, "Compiled wire prefix symbol has the wrong width")
+    require(wire_prefix == b"PDK2\x03", "Compiled wire prefix must be exactly PDK2/v3")
+    identity = elf.data("pdn_identity", 12)
+    require(elf.symbols["pdn_identity"][1] == 12, "Compiled firmware identity symbol has the wrong width")
+    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0306, 0x000F, 0x03060001),
+            "Compiled firmware identity differs from reviewed PDK2/v3 build")
+    _, firmware_revision, capabilities, build_id = struct.unpack("<4sHHI", identity)
+    protocol_abi = elf.data("pdn_protocol_abi", 17)
+    require(elf.symbols["pdn_protocol_abi"][1] == 17, "Compiled protocol policy symbol has the wrong width")
+    require(protocol_abi == bytes.fromhex("50444e4103400804010203043f01010005"),
+            "Compiled protocol policy differs from explicit host/progress/shutdown contract")
+    require(protocol_abi[4] == wire_prefix[4], "Wire version differs from compiled protocol ABI")
+    transport_abi = elf.data("pdn_transport_abi", 10)
+    require(elf.symbols["pdn_transport_abi"][1] == 10 and
+            transport_abi == b"PDF4" + bytes((32, 2, 0xc0, 64, 0xe0, 16)),
+            "Fragmented Output4 command contract or CRC16 commit differs")
+    return protocol_abi, {
+        "revision": f"{firmware_revision:04X}",
+        "protocol": wire_prefix[:4].decode("ascii") + "/v" + str(wire_prefix[4]),
+        "firmware_identity_in_protocol": True,
+        "host_begin_required": bool(protocol_abi[13]),
+        "host_progress_supported": bool(protocol_abi[14]),
+        "host_shutdown_supported": bool(capabilities & 0x0008 and protocol_abi[12] & 0x20
+                                        and protocol_abi[16] == 5),
+        "usb_revision_is_firmware_revision": bool(protocol_abi[15]),
+        "firmware_build_id": f"{build_id:08X}", "protocol_capabilities": f"{capabilities:04X}",
+        "command_transport": "output4-fragments-crc16",
+    }
+
+
 def audit(raw: bytes) -> dict:
     elf = MipsElf(raw)
     require(elf.module_attributes() & 0x1000, "Native USB controller must be kernel PRX")
     module_info = elf.section_bytes(elf.section_names[".rodata.sceModuleInfo"])
-    require(module_info[2:4] == b"\x04\x03", "Expected kernel module version 3.4")
+    require(module_info[2:4] == b"\x06\x03", "Expected kernel module version 3.6")
     required_modules = (
         ("flash0:/kd/semawm.prx", "sceSemawm"),
         ("flash0:/kd/usbstor.prx", "sceUSB_Stor_Driver"),
@@ -106,10 +141,10 @@ def audit(raw: bytes) -> dict:
     for index, expected in enumerate(required_modules):
         path, name, uid, owned, started = struct.unpack_from("<IIiII", dependencies, index * 20)
         require((_cstring_at(elf, path), _cstring_at(elf, name)) == expected,
-                "Native dependency order/name differs from reviewed 0304 bootstrap")
+                "Native dependency order/name differs from reviewed 0306 bootstrap")
         require((uid, owned, started) == (-1, 0, 0), "Dependency ownership must start empty")
     for forbidden_path in (b"usbstorboot.prx", b"pcact.prx", b"npdrm.prx", b"usbstoreflash.prx", b"usbdevice.prx"):
-        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0304: " + forbidden_path.decode())
+        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0306: " + forbidden_path.decode())
     require(elf.data("pdn_interface", 12) == struct.pack("<iii", -1, 0, 1),
             "HID must request one automatically assigned interface")
     require(elf.data("pdn_endpoints", 24) == struct.pack("<6I", 0, 0, 0, 1, 0, 0),
@@ -117,8 +152,8 @@ def audit(raw: bytes) -> dict:
     for speed, interval in (("hi", 6), ("full", 4)):
         device = elf.data("pdn_device_" + speed, 20)
         require(device[:8] == b"\x12\x01\x00\x02\0\0\0\x40", "Invalid USB 2.0 device/EP0")
-        require(struct.unpack_from("<H", device, 12)[0] == 0x0304 and device[17] == 1,
-                "Wrong 0304 descriptor revision/configuration")
+        require(struct.unpack_from("<H", device, 12)[0] == 0x0306 and device[17] == 1,
+                "Wrong 0306 descriptor revision/configuration")
         interfaces, endpoints = "pdn_interfaces_" + speed, "pdn_endpoint_" + speed
         settings, config_name = "pdn_settings_" + speed, "pdn_configdesc_" + speed
         require(elf.data(settings, 12) == struct.pack("<3I", elf.address(interfaces), 0, 1),
@@ -155,37 +190,18 @@ def audit(raw: bytes) -> dict:
                  "sceUsbbdReqCancelAll", "sceKernelLoadModule", "sceKernelStartModule",
                  "sceKernelStopModule", "sceKernelUnloadModule", "sceKernelFindModuleByName"):
         elf.address(name)
-    # A short literal can become instruction immediates under MIPS -O2.
-    # Inspect the exact compiled symbol used by encoder AND validator,
-    # rather than treating arbitrary code/data byte substrings as proof.
-    wire_prefix = elf.data("pdn_wire_prefix", 5)
-    require(elf.symbols["pdn_wire_prefix"][1] == 5, "Compiled wire prefix symbol has the wrong width")
-    require(wire_prefix == b"PDK2\x03", "Compiled wire prefix must be exactly PDK2/v3")
-    identity = elf.data("pdn_identity", 12)
-    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0304, 0x0007, 0x03040001),
-            "Compiled firmware identity differs from reviewed PDK2/v3 build")
-    _, firmware_revision, capabilities, build_id = struct.unpack("<4sHHI", identity)
-    protocol_abi = elf.data("pdn_protocol_abi", 16)
-    require(protocol_abi == b"PDNA" + bytes((3, 64, 8, 4, 1, 2, 3, 4, 31, 1, 1, 0)),
-            "Compiled protocol policy differs from explicit host/progress contract")
-    require(protocol_abi[4] == wire_prefix[4], "Wire version differs from compiled protocol ABI")
+    protocol_abi, protocol_policy = _compiled_protocol(elf)
     report_sizes = hid_report_sizes(report)
     require(report_sizes == {"input": 8, "output": 4, "feature": 64},
             "Compiled HID report sizes disagree with PDK2/v3 identity")
     require(protocol_abi[5:8] == bytes((report_sizes["feature"], report_sizes["input"], report_sizes["output"])),
             "Descriptor and compiled ABI sizes disagree")
     return {
-        "revision": f"{firmware_revision:04X}", "elf_machine": "MIPS", "kernel_module_verified": True,
+        **protocol_policy, "elf_machine": "MIPS", "kernel_module_verified": True,
         "mandatory_modules": [path for path, _ in required_modules], "optional_bootstrap_modules": [],
         "function_descriptors_verified": True, "hid_function_interfaces": 1,
         "hid_input_bytes": report_sizes["input"], "hid_output_bytes": report_sizes["output"],
         "hid_feature_bytes": report_sizes["feature"],
-        "protocol": wire_prefix[:4].decode("ascii") + "/v" + str(wire_prefix[4]),
-        "firmware_identity_in_protocol": True,
-        "host_begin_required": bool(protocol_abi[13]),
-        "host_progress_supported": bool(protocol_abi[14]),
-        "usb_revision_is_firmware_revision": bool(protocol_abi[15]),
-        "firmware_build_id": f"{build_id:08X}", "protocol_capabilities": f"{capabilities:04X}",
         "storage_backend": "native Sony USBStor_Driver", "kernel_filesystem_imports": [],
         "early_sony_boot_imports": [], "expected_pid": "01CD",
         "wire_identity_verified": False, "sony_composition_physically_verified": False,
@@ -211,7 +227,7 @@ def main() -> None:
     require(pbp_title(pbp) == "PSP Dock", "XMB title must be exactly PSP Dock")
     user_elf = MipsElf(args.user_elf.read_bytes())
     user_info = user_elf.section_bytes(user_elf.section_names[".rodata.sceModuleInfo"])
-    require(user_info[2:4] == b"\x04\x03", "Expected USER launcher module version 3.4")
+    require(user_info[2:4] == b"\x06\x03", "Expected USER launcher module version 3.6")
     result["xmb_title"] = "PSP Dock"
     result["pbp_sha256"] = hashlib.sha256(pbp).hexdigest()
     rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"
