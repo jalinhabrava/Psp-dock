@@ -1,0 +1,157 @@
+"""One bounded restoration of the current Dock window to finish a session.
+
+Chrome owns its caption button, so this adapter does not intercept WM_CLOSE
+or subclass another process. The host calls it only after its own observed
+app window disappears. It restores that same localhost UI once, records the
+exit request on the PC, and lets Dock's existing worker perform the normal
+verified return. A second close drains normally and leaves recovery data.
+"""
+from __future__ import annotations
+
+import threading
+
+
+class NativeWindowClose:
+    def __init__(self, dock, *, persist):
+        self.dock = dock
+        self.persist = persist
+        self._lock = threading.RLock()
+        self._restored_once = False
+        self._requested = False
+        self._visible = False
+        self._abandoned = False
+        self._complete = False
+        self._status = ''
+        self._reason = ''
+        self._identity = {}
+
+    def _record(self, status):
+        if status == self._status:
+            return
+        self.persist({
+            'schema':'pspdock-window-close-v1', 'status':status,
+            'reason':self._reason, 'identity':dict(self._identity),
+            'restore_attempts':int(self._restored_once),
+            'exit_requested':self._requested, 'recovery_preserved':not self._complete,
+        })
+        self._status = status
+
+    def pending(self):
+        with self._lock:
+            return self._requested and not self._abandoned and not self._complete
+
+    def restore_once(self, lifecycle, restore):
+        """Return True only when shutdown was deferred for one UI restore.
+
+        This runs without Dock's data lock so a copying worker cannot leave
+        the user looking at an empty desktop until a long transfer finishes.
+        It neither requests a USB phase nor starts any save operation.
+        """
+        state = self.dock.product_flow.snapshot()
+        if not state['enabled'] or state['phase'] in ('waiting_psp','safe_to_disconnect'):
+            return False
+        with self._lock:
+            if self._restored_once:
+                self.abandon('second_window_close')
+                return False
+            self._restored_once = True
+            self._requested = True
+            self._reason = lifecycle.reason
+            current = self.dock.native_transport.current
+            if current:
+                self._identity = {key:current[key] for key in ('session_id','volume_serial')}
+            else:
+                self._identity = dict(self.dock.product_session.entry.get('identity', {}))
+            try:
+                # Durable intent is required before restoring or asking the
+                # normal worker to finish the session.
+                self._record('restoring_window')
+                lifecycle.defer_for_window_restore()
+                if restore() is False:
+                    raise OSError('No se pudo restaurar la ventana de PSP Dock.')
+            except (OSError, ValueError) as exc:
+                self._abandoned = True
+                self._reason = str(exc)
+                try:
+                    self._record('restore_failed')
+                except OSError:
+                    pass
+                lifecycle.cancel_window_restore()
+                return False
+            return True
+
+    def confirm_visible(self, *, clients):
+        """Require both the host HWND observation and a new UI heartbeat."""
+        with self._lock:
+            if self.pending() and not self._visible and clients > 0:
+                self._record('window_restored')
+                self._visible = True
+
+    def abandon(self, reason):
+        """Second X / failed restoration: never authorize another operation."""
+        with self._lock:
+            if not self._requested or self._complete or self._abandoned:
+                return
+            self._abandoned = True
+            self._reason = reason
+            try:
+                self._record('forced_closed')
+            except OSError:
+                # Existing product/session journals still retain every
+                # unfinished operation. A journal error cannot restart one.
+                pass
+
+    def advance(self):
+        """Called only by Dock's existing worker, while holding its data lock."""
+        with self._lock:
+            if not self.pending() or not self._visible:
+                return False
+            if self.dock.running():
+                self._record('waiting_for_emulator')
+                return False
+            state = self.dock.product_flow.snapshot()
+            phase = state['phase']
+            if phase == 'choosing':
+                # Closing before making the initial selection means no new
+                # game/save import. Inventory has still completed first.
+                self.dock.product_session.choose('none', state['offer_id'])
+                self._record('preparing_exit')
+                return True
+            if phase == 'ready':
+                self.dock.request_exit()
+                self._record('return_requested')
+                return True
+            if phase == 'safe_to_disconnect':
+                self._complete = True
+                self._record('verified_closed')
+                return False
+            if phase == 'attention':
+                self._record('review_required')
+            return False
+
+    def decorate(self, flow):
+        """Presentation facts only: no I/O, USB requests or process polling."""
+        with self._lock:
+            result = dict(flow)
+            pending = self.pending()
+            message = ''
+            if pending:
+                waiting_game = bool(self.dock.recovery_required or
+                                    self.dock.session.get('running') or self.dock.process is not None)
+                if waiting_game:
+                    message = ('Has pedido salir. Cierra el emulador normalmente para devolver las partidas.'
+                               if not self.dock.recovery_required else
+                               'Has pedido salir. Comprueba que el emulador anterior está cerrado y revisa la recuperación antes de devolver las partidas.')
+                    result.update(phase='waiting_game_exit', blocking=True,
+                                  can_choose=False, can_review_saves=False,
+                                  can_retry=False, can_close=False, message=message)
+                else:
+                    message = ('Has pedido salir. Revisa lo pendiente; la ventana se cerrará cuando las partidas estén verificadas y la PSP expulsada.'
+                               if flow['phase']=='attention' else
+                               'Has pedido salir. El Dock terminará la operación y devolverá las partidas antes de cerrar.')
+                    result['can_choose'] = False
+                    if flow['phase'] == 'ready':
+                        result.update(phase='waiting_storage_return', blocking=True,
+                                      can_review_saves=False, can_retry=False, can_close=False)
+            result.update(window_close_requested=pending, window_close_message=message)
+            return result

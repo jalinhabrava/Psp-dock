@@ -15,7 +15,7 @@ from ctypes import wintypes as W
 from dataclasses import dataclass, asdict
 import os
 
-from bridge_hid import VID, PID, MSC_TEST_PID
+from bridge_hid import VID, PID, MSC_TEST_PID, NATIVE_PID
 from hid_winmm_buttons import (
     JOYCAPSW, JOYINFOEX, JoyProbeError, decode_joyinfo,
     matching_joystick_capabilities,
@@ -87,7 +87,7 @@ class PSPWinMMReader:
     """One short host-only joystick snapshot; safe under concurrent HTTP GETs."""
 
     def __init__(self, *, expected_product: int = PID):
-        if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID):
+        if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID, NATIVE_PID):
             raise JoyProbeError('PID PSP Dock no reconocido.')
         self.expected_product = expected_product
 

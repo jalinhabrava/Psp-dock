@@ -75,6 +75,28 @@ class UiLifecycle:
             return {'clients': len(self.clients), 'connected_once': self.ever_connected,
                     'closing': self.stopping, 'reason': self.reason}
 
+    def defer_for_window_restore(self):
+        """Rearm a bounded startup lease for the same service's restored UI.
+
+        Caller must already have observed its native app window disappear
+        and have a native session to finish. Old document tombstones stay
+        intact; a late heartbeat cannot stand in for the restored window.
+        """
+        with self.lock:
+            if not self.stopping or self.clients:
+                raise ValueError('El cierre de esta ventana todavía no está confirmado.')
+            self.started = self.now()
+            self.ever_connected = False
+            self.native_seen = False
+            self.closed_at = None
+            self.reason = ''
+            self.stopping = False
+
+    def cancel_window_restore(self):
+        with self.lock:
+            self.reason = 'window_restore_failed'
+            self.stopping = True
+
     def should_stop(self, native_visible=None):
         """Commit shutdown only after reload grace / real window disappearance.
 

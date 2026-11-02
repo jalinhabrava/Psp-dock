@@ -1,5 +1,34 @@
 # PSP Dock · prototipo para Windows
 
+## Sesión de producto 0300: entrada, mando, copia y salida
+
+Esta rama integra el flujo completo pedido el 2 de noviembre: **Sincronizando
+PSP**, inventario de juegos/ROMs/partidas, elección **Todo / Partidas y estados /
+Sólo juegos / Sin copiar ahora**, modo mando y copia puntual con navegación
+bloqueada. Cerrar un juego vuelve al menú sin cambiar de fase. **Salir del Dock**
+devuelve sólo los guardados modificados durante la sesión; los juegos permanecen
+en el PC. Los conflictos requieren una elección explícita.
+
+La variante **PSP Dock - Memory Stick + Mando 0300** usa Sony USBSTOR junto con
+el HID PDK2 y se instala en `PSP/GAME/PSPDockNative`. El paquete conserva el
+nombre, thumbnail y fondos aprobados. La 0207 se mantiene como referencia
+física validada del disco sintético. **0300 está compilada e instalada, pero
+su composición USB y el ciclo completo requieren todavía la prueba física.**
+
+Los estados instantáneos sin compatibilidad verificada se conservan en su
+dispositivo. La continuidad con emuladores de Windows incluye únicamente los
+formatos de guardado reconocidos; no se presenta la copia de seguridad de un
+estado como una conversión entre emuladores.
+
+La app sigue siendo de apertura manual, sin servicios ni autoarranque.
+La primera X durante una sesión nativa restaura una sola ventana para completar
+la salida y mostrar cualquier conflicto; una segunda X conserva la recuperación
+y drena únicamente el trabajo admitido. **Puedes desconectar** requiere tanto
+copias verificadas como expulsión aceptada por Windows.
+
+[Flujo y límites](docs/FLUJO-PRODUCTO.md) ·
+[Verificación de esta integración](docs/validation/product-session-0300.json).
+
 ## Inicio en Windows: abrir la app y conectar la PSP
 
 El flujo elegido por David es **manual en Windows**:
@@ -7,7 +36,8 @@ El flujo elegido por David es **manual en Windows**:
 1. Abre `Iniciar-PSP-Dock.cmd` (o el acceso PSP Dock).
 2. La ventana muestra **Conecta tu PSP**.
 3. Abre PSP Dock en la consola y conecta el cable USB.
-4. Cuando se verifica el mando Dock, aparece el menú automáticamente.
+4. Con 0300 aparece **Sincronizando PSP**, eliges qué preparar y después entras
+   al menú. Los modos anteriores conservan su entrada al menú ya comprobada.
 
 La detección pertenece a la aplicación abierta. No se instala un servicio,
 un monitor al iniciar sesión ni una tarea que abra la app con Windows cerrado.
@@ -25,7 +55,7 @@ explícito a la preparación anterior; no inicia juegos ni cambia el modo USB.
 
 Detalles y estado de verificación: [inicio manual](docs/ARRANQUE-HID-AUTOMATICO.md).
 
-**Windows comprobado:** apertura real, segunda apertura sobre la misma ventana,
+**Flujo manual anterior comprobado:** apertura real, segunda apertura sobre la misma ventana,
 cierre con la X en 4,172 s, proceso terminado, bloqueo liberado y sesión
 idéntica por SHA-256. El acceso **PSP Dock** del escritorio lleva el thumbnail
 aprobado como icono y abre esta versión sin consola adicional. El instalador

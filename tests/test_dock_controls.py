@@ -53,13 +53,19 @@ class LauncherControlsTests(unittest.TestCase):
         dock = Dock(self.home / "dock-data")
         self.assertEqual(dock.controller_status(True)["mode"], "usb_storage")
         if __import__("os").name == "nt":
-            with patch("ppsspp_hid_session.validate_hid_only",
+            identity = {'session': 'ab' * 16, 'path': 'synthetic',
+                        'mode': 'hid_manual', 'can_play': True,
+                        'product_id': 0x01CB, 'revision': 0x0104,
+                        'synthetic_storage': False}
+            with patch('psp_dock_identity.probe_dock', return_value=identity), \
+                 patch("ppsspp_hid_session.validate_hid_only",
                        return_value={"session": "ab" * 16, "path": "synthetic"}):
                 report = dock.controller_status(False)
                 self.assertEqual(report["mode"], "hid_manual")
                 self.assertTrue(report["connected"])
                 self.assertIn("no es prueba", report["reason"])
-            with patch("ppsspp_hid_session.validate_hid_only",
+            with patch('psp_dock_identity.probe_dock', return_value=identity), \
+                 patch("ppsspp_hid_session.validate_hid_only",
                        side_effect=ValueError("HID not present")):
                 self.assertEqual(dock.controller_status(False)["mode"], "await_hid")
 

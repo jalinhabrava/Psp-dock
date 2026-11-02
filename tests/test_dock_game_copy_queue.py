@@ -26,7 +26,8 @@ class DeferredXmbGameCopyTests(unittest.TestCase):
         self.game=self.games[0]
         self.assertEqual(self.game['availability'],'missing')
         self.dock.session['prepared_volume']=volume_identity(self.psp)
-        self.dock.snapshot={'controller_status':{'connected':True,'mode':'hid_manual'},
+        self.dock.snapshot={'controller_status':{'connected':True,'mode':'hid_manual',
+                                                 'can_play':True},
                             'selected_device':None}
 
     def tearDown(self):

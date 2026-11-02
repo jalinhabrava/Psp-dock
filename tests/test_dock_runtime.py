@@ -11,6 +11,15 @@ from dock import Dock
 @unittest.skipUnless(os.name == "nt", "Windows-only official PPSSPP runtime")
 class RuntimePrewarmingTests(unittest.TestCase):
     def setUp(self):
+        # The launcher now classifies the Dock before its second PDK1 check.
+        # This fixture is deliberately independent of any connected PSP.
+        identity = {'session': 'a' * 32, 'path': 'FAKE_ONLY',
+                    'mode': 'hid_manual', 'can_play': True,
+                    'product_id': 0x01CB, 'revision': 0x0104,
+                    'synthetic_storage': False}
+        self.identity_patch = patch('psp_dock_identity.probe_dock', return_value=identity)
+        self.identity_patch.start()
+        self.addCleanup(self.identity_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         self.psp = self.home / "psp-fixture"
