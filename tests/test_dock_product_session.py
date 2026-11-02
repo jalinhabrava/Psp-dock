@@ -24,33 +24,57 @@ class FakeTransport:
         self.veto = False
         self.roles = []
         self.finishes = 0
+        self.begins = 0
+        self.host_confirmed = False
+        self.progress = []
+        self.connection = {'phase':'waiting', 'message':'Synthetic waiting', 'hint':'', 'diagnostics':'', 'retryable':False}
 
     @property
     def current(self):
         if not self.connected:
             return None
         return {'session_id': self.session_id, 'volume_serial': self.serial,
-                'storage_ready': self.phase in (1, 3, 4), 'controller_ready': self.phase == 2,
-                'safe_ready': self.phase == 5, 'controller_available': self.phase in (1, 2),
+                'storage_ready': self.phase in (1, 3, 4), 'controller_ready': self.phase == 2 and self.host_confirmed,
+                'safe_ready': self.phase == 5, 'controller_available': self.phase in (1, 2) and self.host_confirmed,
                 'phase': self.phase, 'path': 'synthetic-native-hid', 'product_id': 0x01CD,
-                'revision': 0x0301, 'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
+                'revision': 0x0100, 'usb_revision': 0x0100, 'protocol_version':3,
+                'firmware_revision':0x0302, 'host_confirmed': self.host_confirmed,
+                'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
                 'root': str(self.root), 'exit_requested': self.exit_requested}
 
     def observe(self, devices):
+        self.connection.update(phase='verified' if self.connected else 'waiting')
         return self.current
 
+    def connection_status(self):
+        return dict(self.connection)
+
+    def connection_error(self, exc):
+        self.connection.update(phase='blocked', message='Synthetic connection failed', diagnostics=str(exc))
+
+    def begin_session(self, context):
+        if context['identity'] != {'session_id': self.session_id, 'volume_serial': self.serial} or self.phase != 1:
+            raise ValueError('Synthetic handshake mismatch')
+        self.begins += 1
+        self.host_confirmed = True
+        return {'accepted':True}
+
+    def set_progress(self, context, activity, **fields):
+        self.progress.append({'activity':activity, **fields})
+        return {'accepted':True, 'exit_requested':self.exit_requested}
+
     def assert_storage(self, root):
-        if not self.connected or self.phase not in (1, 3, 4) or Path(root) != self.root:
+        if not self.connected or not self.host_confirmed or self.phase not in (1, 3, 4) or Path(root) != self.root:
             raise ValueError('Synthetic storage identity/phase mismatch')
         return SimpleNamespace(volume_serial=self.serial)
 
     def assert_controller(self, expected_session=None):
-        if not self.connected or self.phase != 2 or expected_session not in (None, self.session_id):
+        if not self.connected or not self.host_confirmed or self.phase != 2 or expected_session not in (None, self.session_id):
             raise ValueError('Synthetic controller identity/phase mismatch')
         return self.current
 
     def request_role(self, context):
-        if context['identity'] != {'session_id': self.session_id, 'volume_serial': self.serial}:
+        if not self.host_confirmed or context['identity'] != {'session_id': self.session_id, 'volume_serial': self.serial}:
             raise ValueError('Synthetic role identity mismatch')
         self.roles.append((context['role'], context['purpose']))
         self.phase = 2 if context['role'] == 'controller' else {
@@ -58,13 +82,17 @@ class FakeTransport:
         return {'accepted': True}
 
     def controller_status(self):
-        return {'connected': self.connected and self.phase in (1, 2), 'can_play': self.phase == 2,
+        return {'connected': self.connected and self.phase in (1, 2) and self.host_confirmed, 'can_play': self.phase == 2 and self.host_confirmed,
                 'mode': 'native_dock', 'synthetic_storage': False, 'path': 'synthetic-native-hid',
                 'session': self.session_id, 'phase': self.phase, 'product_id': 0x01CD,
-                'revision': 0x0301, 'reason': 'Synthetic transport for tests'}
+                'revision': 0x0100, 'usb_revision':0x0100, 'protocol_version':3,
+                'firmware_revision':0x0302, 'host_confirmed':self.host_confirmed,
+                'reason': 'Synthetic transport for tests'}
 
-    def finish_session(self):
+    def finish_session(self, *, cancel=False):
         self.finishes += 1
+        if cancel and self.host_confirmed and self.phase in (1, 2):
+            self.phase = 4
         if self.phase not in (4, 5):
             raise ValueError('Synthetic finish in wrong phase')
         self.phase = 5
@@ -87,7 +115,10 @@ class DockProductSessionTests(unittest.TestCase):
         (self.psp/'ISO').mkdir()
         (self.psp/'ISO/Game.iso').write_bytes(b'synthetic game content')
         self.dock = app.Dock(self.home/'data')
-        self.dock.settings({'psp_root':str(self.psp)})
+        # Ignore a real bundled PPSSPP in the checkout. These tests exercise
+        # session/file orchestration; launch cases supply their own fake exe.
+        # Persist this choice so recovery fixtures inherit the same isolation.
+        self.dock.settings({'psp_root':str(self.psp), 'emulator':''})
         self.transport = FakeTransport(self.psp)
         self.product = DockProductSession(self.dock, self.transport)
         self.dock.product_session = self.product
@@ -151,6 +182,137 @@ class DockProductSessionTests(unittest.TestCase):
             if self.product.snapshot()['phase'] in ('safe_to_disconnect','attention'):
                 return self.product.snapshot()
         self.fail(str(self.product.snapshot()))
+
+    def test_handshake_is_journaled_before_it_runs_and_snapshot_never_claims(self):
+        for _ in range(3):
+            self.product.snapshot()
+        self.assertEqual(self.transport.begins, 0)
+        begin = self.transport.begin_session
+        def checked(context):
+            journal = app.read_json(self.product.flow.path, {})
+            self.assertEqual(journal['operation']['name'], 'inventory')
+            self.assertEqual(journal['operation']['status'], 'started')
+            self.assertEqual(journal['operation']['id'], context['operation_id'])
+            self.assertFalse(self.product.entry_path.exists())
+            return begin(context)
+        with patch.object(self.transport, 'begin_session', side_effect=checked):
+            self.offer()
+        self.assertEqual(self.transport.begins, 1)
+
+    def test_psp_exit_before_inventory_only_claims_and_ejects_without_copies(self):
+        original = self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'psp only')
+        self.dock.session['pending_return'] = True  # Preserve unrelated recovery metadata.
+        self.transport.exit_requested = True
+        with patch('dock.copy_slot', side_effect=AssertionError('unexpected save write')), \
+             patch.object(self.dock, 'transfer', side_effect=AssertionError('unexpected game copy')):
+            self.tick()
+        self.assertEqual(self.product.snapshot()['purpose'], 'cancel')
+        self.assertEqual(self.product.snapshot()['phase'], 'safe_to_disconnect')
+        self.assertEqual(self.transport.begins, 1)
+        self.assertEqual(self.transport.finishes, 1)
+        self.assertEqual(self.transport.roles, [])
+        self.assertFalse(self.product.entry_path.exists())
+        self.assertEqual(original.read_bytes(), b'psp only')
+        self.assertTrue(self.dock.session['pending_return'])
+
+    def test_psp_exit_drains_current_save_and_never_starts_the_next_copy(self):
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE_A',b'first')
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE_B',b'second')
+        self.product.choose('saves', self.offer())
+        copy = app.copy_slot
+        copied = []
+        def finish_then_exit(*args, **kwargs):
+            result = copy(*args, **kwargs)
+            copied.append(args[1])
+            self.transport.exit_requested = True
+            return result
+        with patch('dock.copy_slot', side_effect=finish_then_exit):
+            self.tick()
+        self.assertEqual(len(copied), 1)
+        self.assertTrue((copied[0]/'DATA.BIN').is_file())
+        self.assertEqual(len(list(self.pc_saves.glob('*/DATA.BIN'))), 1)
+        self.assertEqual(self.product.snapshot()['phase'], 'finalizing')
+        self.assertEqual(self.product.snapshot()['purpose'], 'cancel')
+        with patch('dock.copy_slot', side_effect=AssertionError('copy replayed on cancel')):
+            self.tick()
+        self.assertEqual(self.product.snapshot()['phase'], 'safe_to_disconnect')
+        self.assertEqual(len(list((self.psp/'PSP/SAVEDATA').glob('*/DATA.BIN'))), 2)
+
+    def test_runtime_and_enumeration_timeout_are_published_without_killing_worker(self):
+        for error in (RuntimeError('HID enumeration failed'), app.subprocess.TimeoutExpired('CIM', 30)):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(self.transport, 'observe', side_effect=error):
+                self.watch_once()
+            view = self.product.snapshot()
+            self.assertEqual(view['connection']['phase'], 'blocked')
+            self.assertIn(str(error), view['connection']['diagnostics'])
+            self.assertFalse(self.dock.snapshot['scanning'])
+            self.assertEqual(self.transport.begins, 0)
+        self.watch_once()
+        self.assertEqual(self.product.snapshot()['phase'], 'choosing')
+
+    def test_psp_exit_with_open_emulator_shows_waiting_and_never_starts_sync(self):
+        self.ready('none')
+        process = Mock()
+        process.poll.return_value = None
+        self.dock.process = process
+        self.dock.session.update(running=True, pending_return=True)
+        self.product.flow.set_game_running(True)
+        self.transport.exit_requested = True
+        before = list(self.transport.roles)
+        self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'], 'waiting_game_exit')
+        self.assertIn('Cierra el emulador', self.product.snapshot()['message'])
+        self.assertEqual(self.transport.roles, before)
+        self.assertEqual(self.transport.finishes, 0)
+        process.terminate.assert_not_called()
+        process.kill.assert_not_called()
+
+    def test_inventory_and_verified_save_progress_are_live_and_use_real_totals(self):
+        self.retro_fixture()
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE_A',b'first')
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE_B',b'second')
+        views = []
+        progress = self.transport.set_progress
+        def capture(context, activity, **fields):
+            view = self.product.snapshot()
+            value = view['progress']
+            self.assertTrue(value['active'])
+            self.assertEqual(value['operation_id'], context['operation_id'])
+            views.append(dict(value))
+            return progress(context, activity, **fields)
+        with patch.object(self.transport, 'set_progress', side_effect=capture):
+            self.offer()
+            self.product.choose('saves', self.product.snapshot()['offer_id'])
+            self.tick()
+        inventory = [row for row in views if row['stage'] == 'inventory']
+        self.assertTrue(any(row['completed'] > 0 for row in inventory))
+        self.assertTrue(all(row['mode'] == 'indeterminate' and row['total'] is None for row in inventory))
+        saved = [row for row in views if row['stage'] == 'saves' and row['mode'] == 'determinate']
+        self.assertTrue(saved)
+        self.assertTrue(any(row['completed'] == row['total'] == 3 for row in saved))
+        self.assertEqual((self.pc_saves/'SAVE_A/DATA.BIN').read_bytes(), b'first')
+        self.assertEqual((self.pc_saves/'SAVE_B/DATA.BIN').read_bytes(), b'second')
+
+    def test_game_byte_progress_is_bound_to_operation_and_verification_has_no_fake_percent(self):
+        self.dock.transfer_status.update(active=True, copied_bytes=99, total_bytes=100)
+        self.assertEqual(self.product.snapshot()['progress'], {'active': False})
+        self.product.choose('games', self.offer())
+        views = []
+        publish = self.product.publish_progress
+        def capture(*args, **kwargs):
+            result = publish(*args, **kwargs)
+            views.append(self.product.snapshot()['progress'])
+            return result
+        with patch.object(self.product, 'publish_progress', side_effect=capture):
+            self.tick()
+        byte_rows = [r for r in views if r.get('stage') == 'games' and r.get('mode') == 'determinate']
+        self.assertTrue(byte_rows)
+        expected = (self.psp/'ISO/Game.iso').stat().st_size
+        self.assertTrue(all(row['total'] == expected for row in byte_rows))
+        self.assertTrue(any(row['completed'] == expected for row in byte_rows))
+        self.assertTrue(all(r['total'] is None for r in views if r.get('stage') == 'verifying'))
+        self.assertEqual(len({r['operation_id'] for r in views}), 1)
 
     def test_initial_none_inventories_without_copying_games_or_partidas(self):
         psp_file = self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'psp version')
@@ -315,14 +477,15 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertEqual(self.dock.config,before)
         self.assertFalse((self.home/'new-library').exists())
 
-    def test_launcher_input_requires_current_native_revision(self):
+    def test_launcher_input_requires_firmware_and_handshake_independent_of_sony_usb_revision(self):
         self.ready('none')
         with patch('psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
             self.assertTrue(self.dock.psp_launcher_input()['connected'])
             reader.assert_called_once_with(expected_product=0x01CD)
-            for revision in (0x0300, 0x0302):
-                self.dock.snapshot['controller_status']['revision'] = revision
+            original = dict(self.dock.snapshot['controller_status'])
+            for changes in ({'firmware_revision':0x0301}, {'protocol_version':2}, {'host_confirmed':False}):
+                self.dock.snapshot['controller_status'] = {**original, **changes}
                 self.assertFalse(self.dock.psp_launcher_input()['connected'])
             self.assertEqual(reader.call_count, 1)
 
@@ -542,12 +705,28 @@ class DockProductSessionTests(unittest.TestCase):
         self.tick()
         self.transport.connected=True
         self.transport.phase=1
+        self.transport.session_id='22' * 16
+        self.transport.host_confirmed=False
         self.tick()
         self.assertEqual(self.product.snapshot()['purpose'],'exit')
         self.assertEqual(self.product.entry['pc'],baseline)
+        self.assertTrue(self.product.snapshot()['recovery_required'])
+        self.assertTrue(self.product.snapshot()['can_retry'])
+        self.assertEqual(self.transport.begins, 1)
+        self.assertEqual(psp_file.read_bytes(), b'old')
         self.product.retry(self.product.snapshot()['offer_id'])
-        for _ in range(4):self.tick()
+        begin = self.transport.begin_session
+        def recovery_begin(context):
+            journal = app.read_json(self.product.flow.path, {})
+            self.assertEqual(journal['operation']['name'], 'request_role')
+            self.assertEqual(journal['operation']['status'], 'started')
+            self.assertEqual(journal['purpose'], 'exit')
+            self.assertEqual(self.product.entry['pc'], baseline)
+            return begin(context)
+        with patch.object(self.transport, 'begin_session', side_effect=recovery_begin):
+            for _ in range(4):self.tick()
         self.assertEqual(self.product.snapshot()['phase'],'safe_to_disconnect')
+        self.assertEqual(self.transport.begins, 2)
         self.assertEqual(psp_file.read_bytes(),b'new session progress')
         self.assertEqual(self.product.entry['pc'],baseline)
 

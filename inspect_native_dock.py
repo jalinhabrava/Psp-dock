@@ -3,7 +3,7 @@
 This diagnostic never authorizes storage writes or phase commands. It keeps
 NativeHid/probe_native unchanged: an observed revision is not a supported
 revision. Win32 opens have desired access zero; the only HID transaction is
-GET_FEATURE for a 33-byte descriptor. No background process is installed.
+GET_FEATURE for a supported observation size. No background process is installed.
 """
 from __future__ import annotations
 
@@ -19,13 +19,34 @@ from pathlib import Path
 import subprocess
 
 from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError
-from native_dock import (PID, REVISION, RETIRED_REVISIONS, HID_PATH, USB_PARENT,
+from native_dock import (PID, REVISION, VERSION, USB_REVISIONS, REPORT_BYTES,
+                         RETIRED_REVISIONS, HID_PATH, USB_PARENT, FRAME,
                          decode_status, hid_instance)
 from psp_usb import identify
 
 
 class InspectionError(ValueError):
     pass
+
+
+def _legacy_observation(report):
+    """Decode the retired 32-byte frame for diagnostics, never authorization."""
+    if len(report) != 33 or report[0] != 0:
+        raise InspectionError('Informe retirado incompleto.')
+    magic, version, op, phase, flags, nonce, sequence, result = FRAME.unpack(report[1:])
+    if (magic, version, op) != (b'PDK2', 2, 1) or flags & ~15 or not any(nonce):
+        raise InspectionError('El informe observado no es un estado PDK2 retirado válido.')
+    if phase not in (0, 1, 2, 3, 4, 5, 255):
+        raise InspectionError('Fase desconocida en el informe retirado.')
+    pending = bool(flags & 2)
+    if ((pending and (sequence == 0 or result != 1)) or
+            (not pending and sequence == 0 and result != 0) or
+            (not pending and sequence > 0 and result >= 0 and result != 2)):
+        raise InspectionError('Confirmación incoherente en el informe retirado.')
+    return {'session': nonce.hex(), 'phase': phase, 'sequence': sequence, 'result': result,
+            'connected': bool(flags & 1), 'pending': pending, 'sony_storage': bool(flags & 4),
+            'exit_requested': bool(flags & 8), 'host_confirmed': False,
+            'protocol_version': 2, 'firmware_revision': None}
 
 
 class NativeReadOnlyInspector(_WindowsHid):
@@ -63,10 +84,10 @@ class NativeReadOnlyInspector(_WindowsHid):
             attrs = self.attributes(handle)
             result.update(attrs)
             result['revision_hex'] = f"{attrs['revision']:04X}"
-            result['supported_revision'] = attrs['revision'] == REVISION
+            result['usb_revision'] = attrs['revision']
+            result['usb_revision_hex'] = result['revision_hex']
             result['retired_revision'] = attrs['revision'] in RETIRED_REVISIONS
-            result['revision_status'] = ('supported' if result['supported_revision'] else
-                                         'retired' if result['retired_revision'] else 'unknown')
+            result['revision_status'] = 'retired' if result['retired_revision'] else 'unknown'
             data = C.c_void_p()
             if not self.hid.HidD_GetPreparsedData(handle, C.byref(data)):
                 result['errors'].append(str(self._failure('Leer descriptor HID observado')))
@@ -86,21 +107,33 @@ class NativeReadOnlyInspector(_WindowsHid):
                 self.hid.HidD_FreePreparsedData(data)
             result['descriptor_matches'] = result['caps'] == {
                 'usage_page': 1, 'usage': 4, 'input_bytes': 9,
-                'output_bytes': 5, 'feature_bytes': 33,
+                'output_bytes': 5, 'feature_bytes': REPORT_BYTES,
             }
-            if result['caps']['feature_bytes'] == 33:
-                buffer = C.create_string_buffer(33)
+            feature_bytes = result['caps']['feature_bytes']
+            if feature_bytes in (33, REPORT_BYTES):
+                buffer = C.create_string_buffer(feature_bytes)
                 if self.hid.HidD_GetFeature(handle, buffer, len(buffer)):
                     result['feature_hex'] = buffer.raw.hex()
                     try:
-                        result['status'] = asdict(decode_status(buffer.raw))
+                        result['status'] = (asdict(decode_status(buffer.raw)) if feature_bytes == REPORT_BYTES
+                                            else _legacy_observation(buffer.raw))
                         result['pdk2_valid'] = True
+                        result['protocol_version'] = result['status']['protocol_version']
+                        result['firmware_revision'] = result['status']['firmware_revision']
+                        result['supported_revision'] = bool(
+                            result['descriptor_matches'] and attrs['revision'] in USB_REVISIONS and
+                            result['protocol_version'] == VERSION and result['firmware_revision'] == REVISION)
+                        if result['supported_revision']:
+                            result['revision_status'] = 'supported'
+                            result['retired_revision'] = False
+                        elif feature_bytes == 33:
+                            result['revision_status'] = 'retired' if result['retired_revision'] else 'retired_protocol'
                     except ValueError as exc:
                         result['errors'].append(str(exc))
                 else:
                     result['errors'].append(str(self._failure('Leer estado PDK2')))
             else:
-                result['errors'].append('No se consulta PDK2: el informe Feature no mide 33 bytes.')
+                result['errors'].append('No se consulta el protocolo: el tamaño Feature no es uno de los observables.')
         return result
 
 
@@ -148,6 +181,8 @@ def inspect_native(*, api_factory=NativeReadOnlyInspector, storage_roots=None,
         'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         'read_only': True, 'writes_authorized': False, 'can_change_phase': False,
         'required_revision_hex': f'{REVISION:04X}', 'devices': [],
+        'required_firmware_revision_hex': f'{REVISION:04X}', 'required_protocol_version': VERSION,
+        'accepted_usb_revision_hex': [f'{revision:04X}' for revision in sorted(USB_REVISIONS)],
         'retired_revision_hex': [f'{revision:04X}' for revision in sorted(RETIRED_REVISIONS)],
         'storage_candidates': [], 'errors': [],
     }

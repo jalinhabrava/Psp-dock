@@ -7,9 +7,9 @@
 #define PDN_DRIVER_NAME "PSPDockNativeHID"
 /* Lab identity, not an allocated production Sony VID/PID. */
 #define PDN_PRODUCT 0x01cdu
-#define PDN_REVISION 0x0301u
-/* PDN1 rejects a mixed 0300 launcher/kernel before starting any worker. */
-#define PDN_LAUNCH_MAGIC 0x314e4450u
+#define PDN_REVISION PDN_FIRMWARE_REVISION
+/* PDN2 rejects a mixed launcher/kernel before starting any worker. */
+#define PDN_LAUNCH_MAGIC 0x324e4450u
 #define PDN_DEPENDENCIES 4u
 
 enum PdnStage {
@@ -39,6 +39,10 @@ typedef struct {
     volatile uint32_t stop_reason,attach_count,detach_count,usb_state,link_generation;
     volatile int32_t bus_before,storage_before,storage_after;
     volatile uint32_t sony_storage_started,exit_requested;
+    volatile uint32_t presentation_generation;
+    volatile uint32_t host_confirmed,host_session_seen,activity,progress_unit;
+    volatile uint32_t diagnostic_visible;
+    volatile uint64_t completed,total;
 } PdnSharedStatus;
 typedef struct {
     uint32_t magic,size;

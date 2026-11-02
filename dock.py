@@ -749,7 +749,7 @@ class Dock:
             old = ({r['relative']: r for r in self.last_roms}
                    if serial == self.retro_volume else {})
             found = emulator_inventory(root)
-            for rom in found['roms']:
+            for index, rom in enumerate(found['roms'], 1):
                 source = inside(root, rom['relative'])
                 local = inside(library, rom['relative'])
                 if local.is_file() and local.stat().st_size == rom['size']:
@@ -758,6 +758,7 @@ class Dock:
                       old[rom['relative']].get('size') == rom['size'] and
                       old[rom['relative']].get('modified_ns') == rom['modified_ns']):
                     rom['signature'] = old[rom['relative']].get('signature')
+                self.product_session.inventory_progress('Comprobando ROMs de la PSP.', index, rom['title'])
             if volume_identity(root) != serial or any(
                 (lambda stat: stat.st_size != rom['size'] or stat.st_mtime_ns != rom['modified_ns'])(
                     inside(root, rom['relative']).stat()) for rom in found['roms']
@@ -776,7 +777,7 @@ class Dock:
                 # PSP USB scan or the /api/state HTTP thread.
                 self.start_retro_install(automatic=True)
         roms = []
-        for rom in self.last_roms:
+        for index, rom in enumerate(self.last_roms, 1):
             local = inside(library, rom['relative'])
             status = 'missing'
             if local.exists():
@@ -786,6 +787,7 @@ class Dock:
                         self.hash(local) == rom['signature']):
                     status = 'ready'
             core = retroarch_core(self.config['retroarch'],rom['system'])
+            self.product_session.inventory_progress('Comparando ROMs con el ordenador.', index, rom['title'])
             roms.append({**{k:v for k,v in rom.items() if k!='signature'},
                          'availability':status,'local_relative':rom['relative'],
                          'windows_emulator':'RetroArch · ' + SYSTEMS[rom['system']][1].replace('_libretro.dll',''),
@@ -1076,7 +1078,7 @@ class Dock:
                            volume_serial=identity)
         return True
 
-    def sync(self, resolution=None):
+    def sync(self, resolution=None, *, progress=None, before_action=None):
         if self.product_flow.enabled and self.product_flow.snapshot()['purpose']=='exit':
             if resolution is None:
                 raise ValueError('La devolución se ejecuta desde Salir del Dock; revisa los conflictos pendientes.')
@@ -1123,7 +1125,11 @@ class Dock:
             src, dst = (inside(b, slot), inside(a, slot)) if choice == 'pc' else (inside(a, slot), inside(b, slot))
             actions = [{'slot': slot, 'direction': 'to_psp' if choice == 'pc' else 'to_pc',
                         'source_hash': tree_signature(src), 'target_hash': tree_signature(dst)}]
-        for action in actions:
+        if progress:
+            progress(0, len(actions), None)
+        for index, action in enumerate(actions, 1):
+            if before_action:
+                before_action()
             slot = action['slot']
             src_root, dst_root = (a, b) if action['direction'] == 'to_pc' else (b, a)
             src, dst = inside(src_root, slot), inside(dst_root, slot)
@@ -1131,6 +1137,8 @@ class Dock:
                       action['source_hash'], action['target_hash'])
             baseline[slot] = action['source_hash']
             atomic_json(baseline_file, baseline)
+            if progress:
+                progress(index, len(actions), slot)
         # Identical initial saves also establish a common ancestor.
         x, y = slots(a), slots(b)
         for slot in x.keys() & y.keys():
@@ -1177,6 +1185,7 @@ class Dock:
             }
         try:
             for i, g in enumerate(selected, 1):
+                self.product_session.operation_checkpoint()
                 if self.transfer_cancel.is_set():
                     raise TransferCancelled('Transferencia cancelada antes de iniciar el siguiente juego.')
                 self._update_transfer(phase='copying', title=g['title'], game_index=i)
@@ -1237,6 +1246,7 @@ class Dock:
                               title='',error='')
         try:
             for index, rom in enumerate(selected,1):
+                self.product_session.operation_checkpoint()
                 if self.transfer_cancel.is_set():
                     raise TransferCancelled('Copia de ROMs cancelada.')
                 self._update_transfer(phase='copying',game_index=index,title=rom['title'])
@@ -1269,6 +1279,8 @@ class Dock:
     def _update_transfer(self, **changes):
         with self.transfer_state_lock:
             self.transfer_status.update(changes)
+            current = dict(self.transfer_status)
+        self.product_session.transfer_progress_changed(current)
 
     def _update_transfer_delta(self, bytes_written):
         with self.transfer_state_lock:
@@ -1276,6 +1288,8 @@ class Dock:
                 self.transfer_status['total_bytes'],
                 self.transfer_status['copied_bytes'] + bytes_written,
             )
+            current = dict(self.transfer_status)
+        self.product_session.transfer_progress_changed(current)
 
     def transfer_progress(self):
         with self.transfer_state_lock:
@@ -2129,14 +2143,19 @@ class Dock:
         seen = self.snapshot.get('controller_status', {})
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
-        from native_dock import PID as NATIVE_PID, REVISION as NATIVE_REVISION
+        from native_dock import PID as NATIVE_PID, REVISION as NATIVE_REVISION, VERSION as NATIVE_VERSION
         profiles = {'hid_manual': (0x01CB, 0x0104),
-                    'msc_diagnostic': (0x01CC, 0x0207),
-                    'native_dock': (NATIVE_PID, NATIVE_REVISION)}
+                    'msc_diagnostic': (0x01CC, 0x0207)}
         if self.product_flow.enabled and self.product_flow.snapshot()['phase'] not in ('choosing','ready','attention'):
             return idle('La navegación está bloqueada mientras se prepara o copia el contenido.')
         expected = profiles.get(seen.get('mode'))
-        if expected is None or (seen.get('product_id'), seen.get('revision')) != expected:
+        if seen.get('mode') == 'native_dock':
+            valid = (seen.get('product_id') == NATIVE_PID and seen.get('protocol_version') == NATIVE_VERSION
+                     and seen.get('firmware_revision') == NATIVE_REVISION and seen.get('host_confirmed') is True)
+            expected = (NATIVE_PID, NATIVE_REVISION) if valid else None
+        elif expected is not None and (seen.get('product_id'), seen.get('revision')) != expected:
+            expected = None
+        if expected is None:
             return idle("La identidad del mando no corresponde a un modo Dock admitido.")
         try:
             return PSPWinMMReader(expected_product=expected[0]).read()
@@ -2492,7 +2511,10 @@ class Dock:
                             self.events.record('sony_hid_seen',evidence='pc_observed',
                                                mode='hid_manual')
                         self.last_hid_present = hid_now
-                except (OSError, ValueError) as e:
+                except Exception as e:
+                    # Report adapter errors and timeouts without killing the
+                    # only worker. A failed operation is never replayed here.
+                    self.native_transport.connection_error(e)
                     self.error = str(e)
                     self.snapshot = {**self.snapshot,'error':self.error,'scanning':False,
                                      'controller_status':{
@@ -2500,7 +2522,7 @@ class Dock:
                                          'synthetic_storage':False,
                                          'reason':'No se pudo actualizar la conexión de la PSP.'},
                                      'can_launch_game':False,'connection_state':'waiting_psp',
-                                     'session':{**self.session,'running':self.running()}}
+                                     'session':{**self.session,'running':bool(self.session.get('running'))}}
             if open_on_attach and self.on_connected:
                 # Browser opening is best-effort after the read-only audit,
                 # outside Dock's lock. It never activates the USB controller.

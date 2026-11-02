@@ -45,13 +45,19 @@ equal(connection({ ...storage, product_flow: flow('ready') }).canPlay, false,
   'Ready does not fabricate a gamepad');
 equal(connection({ ...stable, demo: true, product_flow: flow('ready') }).canPlay, false);
 const native = { selected_device: 'G:\\', controller_status: { connected: true, mode: 'native_dock', can_play: true,
-  synthetic_storage: false, product_id: 0x01cd, revision: 0x0301, phase: 2 }, product_flow: flow('ready') };
+  synthetic_storage: false, product_id: 0x01cd, protocol_version: 3, firmware_revision: 0x0302,
+  usb_revision: 0x0100, host_confirmed: true, phase: 2 }, product_flow: flow('ready') };
 equal(connection(native).canPlay, true, 'Verified native Dock can keep its Sony storage enumerated');
 equal(connection(native).nativeController, true);
-for (const changes of [{ product_id: 0x01cc }, { revision: 0x0207 }, { revision: 0x0300 }, { revision: 0x0302 }, { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
+for (const changes of [{ product_id: 0x01cc }, { firmware_revision: 0x0207 }, { firmware_revision: 0x0300 },
+  { firmware_revision: 0x0301 }, { firmware_revision: undefined, revision: 0x0302 }, { protocol_version: 2 },
+  { protocol_version: undefined }, { host_confirmed: false }, { host_confirmed: undefined },
+  { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
   equal(connection({ ...native, controller_status: { ...native.controller_status, ...changes } }).canPlay,
     false, 'Native identity, controller phase and host eligibility must all agree');
 }
+equal(connection({ ...native, controller_status: { ...native.controller_status, usb_revision: 0x0302 } }).canPlay,
+  true, 'The separately verified USB descriptor revision is not the product firmware revision');
 equal(connection({ ...native, product_flow: { enabled: false } }).canPlay, false,
   'A native controller without the coordinated journey is insufficient');
 equal(product({ ...native, product_flow: flow('finalizing', { can_close: true }) }).canClose, false,
@@ -123,16 +129,88 @@ equal(product({ ...attention, product_flow: flow('attention', { can_retry: true,
 equal(product({ ...choose, product_flow: flow('choosing', { can_review_saves: true }) }).canReview, false,
   'Copy permission cannot be bypassed by opening conflict resolution before the choice');
 
-let measured = product({ ...storage, product_flow: flow('copying_game'),
-  transfer_status: { active: true, copied_bytes: 25, total_bytes: 100, title: 'A game' } });
+const connectionState = (phase, fields = {}) => ({
+  controller_status: { mode: 'await_native', connected: false, can_play: false },
+  product_flow: { enabled: false, phase: 'waiting_psp', connection: { phase, ...fields } },
+});
+for (const phase of ['identifying', 'waiting_storage', 'blocked']) {
+  const state = connectionState(phase, { message: 'Estamos comprobando la conexión.', hint: 'Mantén la PSP conectada.' });
+  const waiting = connection(state);
+  equal(waiting.screen, 'waiting', phase + ' has a visible connection screen before a verified session');
+  equal(waiting.kind, phase);
+  equal(waiting.canPlay, false);
+  equal(waiting.product.enabled, false, 'Presentation cannot create a session');
+  equal(waiting.canPrepareStorage, false, 'A partial native connection never falls into manual storage setup');
+  equal(waiting.showSteps, false, 'An already detected PSP is not told to connect again');
+  equal(waiting.working, phase !== 'blocked');
+  assert.doesNotMatch(waiting.title + waiting.detail, /Sincronizando|0302|PDK2|HID/); ++assertions;
+}
+const blockedConnection = connectionState('blocked', {
+  message: 'No se ha podido reconocer esta versión de PSP Dock.',
+  hint: 'Actualiza PSP Dock en la consola y vuelve a abrirla.',
+  diagnostics: 'descriptor 0100, firmware 0301; PDK2 rejected', retryable: true,
+});
+equal(connection(blockedConnection).detail, blockedConnection.product_flow.connection.message);
+equal(connection(blockedConnection).hint, blockedConnection.product_flow.connection.hint);
+equal(connection(blockedConnection).diagnostics, blockedConnection.product_flow.connection.diagnostics);
+equal(connection(blockedConnection).canRefresh, true);
+assert.doesNotMatch(connection(blockedConnection).title + connection(blockedConnection).detail + connection(blockedConnection).hint,
+  /0100|0301|PDK2/); ++assertions;
+const legacyFailure = connection({ controller_status: { mode: 'await_hid', connected: false }, error: 'USB 0100 != 0301' });
+equal(legacyFailure.kind, 'blocked', 'A discovery failure cannot disappear into the hidden legacy model');
+equal(legacyFailure.diagnostics, 'USB 0100 != 0301');
+assert.doesNotMatch(legacyFailure.detail, /0100|0301/); ++assertions;
+equal(connection({ ...storage, product_flow: { enabled: false, connection: { phase: 'waiting' } } },
+  { storageSetupRequested: true }).canPrepareStorage, true, 'No native device preserves the existing manual storage route');
+const interruptedReady = { ...native, product_flow: flow('ready', { connection: { phase: 'blocked', message: 'Se perdió la conexión.' } }) };
+equal(connection(interruptedReady).screen, 'product', 'A blocked link cannot expose a stale ready menu');
+equal(connection(interruptedReady).canPlay, false);
+equal(product(interruptedReady).blocking, true);
+equal(product({ ...choose, product_flow: flow('choosing', { connection: { phase: 'blocked' } }) }).canChoose,
+  false, 'A stale choice cannot write through a rejected connection');
+const attentionDetail = product({ ...storage, product_flow: flow('attention', {
+  can_review_saves: true, attention_reason: 'WinError 123; C:\\private\\slot.dat' }) });
+assert.doesNotMatch(attentionDetail.message, /WinError|private|123/); ++assertions;
+assert.match(attentionDetail.message, /guardados.*elección/); ++assertions;
+assert.match(attentionDetail.diagnostics, /WinError 123/); ++assertions;
+const canceled = product({ ...storage, product_flow: flow('safe_to_disconnect', { purpose: 'cancel', can_close: true }) });
+assert.match(canceled.message, /Conexión cerrada/); ++assertions;
+assert.doesNotMatch(canceled.message + canceled.kicker, /guardados.*comprobados|sincronización terminada/i); ++assertions;
+
+const measuredProgress = (stage, overrides = {}) => ({ active: true, operation_id: 'measured-operation', stage,
+  mode: 'determinate', unit: 'bytes', completed: 25, total: 100, label: 'Copiando el juego', current_item: 'A game', ...overrides });
+let measured = product({ ...storage, product_flow: flow('copying_game', { progress: measuredProgress('games') }) });
 equal(measured.showProgress, true);
 equal(measured.progress.total, 100);
-equal(measured.progress.copied, 25);
-measured = product({ ...storage, product_flow: flow('copying_game'),
-  transfer_status: { active: true, copied_bytes: 300, total_bytes: 100 } });
-equal(measured.progress.copied, 100, 'Inconsistent totals cannot render >100 percent');
-equal(product({ ...storage, product_flow: flow('copying_game') }).showProgress, false,
-  'No invented transfer progress without an active measured operation');
+equal(measured.progress.completed, 25);
+equal(measured.progress.percent, 25);
+measured = product({ ...storage, product_flow: flow('copying_game', { progress: measuredProgress('games', { completed: 300 }) }) });
+equal(measured.progress.completed, 100, 'Inconsistent totals cannot render >100 percent');
+for (const fields of [{ total: null }, { total: 0 }, { total: -1 }, { total: '100' }, { total: Infinity },
+  { completed: -1 }, { unit: 'guessed' }, { mode: 'indeterminate' }, { active: false }, { operation_id: '' },
+  { stage: 'finalizing' }]) {
+  measured = product({ ...storage, product_flow: flow('copying_game', { progress: measuredProgress('games', fields) }) });
+  equal(measured.progress.determinate, false, 'Unknown, stale or inactive totals never produce a percentage');
+  equal(measured.progress.percent, null);
+}
+const pendingMeasure = product({ ...storage, product_flow: flow('copying_game'),
+  transfer_status: { active: true, total_bytes: 100, copied_bytes: 100 } });
+equal(pendingMeasure.showProgress, true, 'A working phase remains visibly indeterminate before measurements arrive');
+equal(pendingMeasure.progress.determinate, false, 'An unrelated legacy transfer cannot provide the session percentage');
+for (const phase of ['syncing_in', 'syncing_out']) {
+  measured = product({ ...storage, product_flow: flow(phase, { progress: measuredProgress('saves', {
+    unit: 'items', completed: 2, total: 7, label: 'Comprobando guardados' }) }) });
+  equal(measured.progress.determinate, true, phase + ' can report verified saves from a real plan');
+  equal(measured.progress.completed, 2);
+  equal(measured.progress.total, 7);
+}
+measured = product({ ...storage, product_flow: flow('copying_game', { progress: measuredProgress('verifying', {
+  mode: 'indeterminate', total: null, label: 'Verificando la copia' }) }) });
+equal(measured.progress.percent, null, 'Verification never inherits 100% from the preceding byte copy');
+equal(measured.progress.label, 'Verificando la copia');
+equal(product({ ...storage, product_flow: flow('finalizing') }).showProgress, true);
+equal(product({ ...storage, product_flow: flow('finalizing') }).progress.determinate, false);
+equal(product({ ...storage, product_flow: flow('inventory') }).showProgress, true);
 equal(product({ ...storage, product_flow: flow('inventory') }).working, true);
 equal(product({ ...storage, product_flow: flow('choosing', { counts: { psp_games: -2, pc_games: '100' } }) }).counts.psp, null);
 equal(product({ ...storage, product_flow: flow('choosing', { counts: { psp_games: -2, pc_games: '100' } }) }).counts.pc, null);
@@ -175,6 +253,27 @@ vm.createContext(runtime);
 vm.runInContext(source.slice(start, end), runtime);
 
 async function inputs() {
+  const closeNodes = new Map();
+  const closing = {
+    ui: { state: blockedConnection, appClosing: false, appClosed: false, appClientId: 'fixture-client' },
+    xmbConnectionView: () => connection(closing.ui.state), xmbRender: () => {},
+    $: (id) => { if (!closeNodes.has(id)) closeNodes.set(id, {}); return closeNodes.get(id); },
+    request: async (route, body) => { closing.calls.push({ route, body: normalize(body) }); return {}; }, calls: [],
+    clearTimeout: () => {}, window: { close: () => { closing.closed += 1; } }, closed: 0,
+    appHeartbeat: async () => {},
+  };
+  vm.createContext(closing);
+  const closeStart = source.indexOf('async function closeDockApp()');
+  vm.runInContext(source.slice(closeStart, source.indexOf('function appPageLeaving()', closeStart)), closing);
+  await closing.closeDockApp();
+  assert.deepEqual(closing.calls, [{ route: '/api/app/close', body: { client_id: 'fixture-client', reason: 'button' } }]); ++assertions;
+  equal(closing.closed, 1, 'Closing before a verified session closes the window normally');
+  await closing.closeDockApp();
+  equal(closing.calls.length, 1, 'Repeated close cannot start another operation');
+  closing.ui = { ...closing.ui, appClosed: false, state: { ...native, product_flow: flow('copying_game') } };
+  await closing.closeDockApp();
+  equal(closing.calls.length, 1, 'The preconnection close button cannot bypass an active copy');
+
   equal(calls.length, 0, 'Rendering/loading the handlers has no mutation');
   runtime.productFlowPress('back');
   equal(calls.length, 0, 'Circle only focuses the explicit no-copy choice');

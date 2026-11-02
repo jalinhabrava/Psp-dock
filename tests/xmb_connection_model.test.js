@@ -214,7 +214,8 @@ async function lifetimeTests() {
   equal(context.ui.appClosing, false);
   equal(context.closedWindows, 0);
   equal(context.$('dock-connect-error').hidden, false);
-  equal(context.$('dock-connect-error').textContent, 'La copia sigue activa.');
+  equal(context.$('dock-connect-error').textContent, 'No se pudo cerrar la aplicación. Puedes intentarlo de nuevo.');
+  equal(context.ui.connectionRequestError, 'La copia sigue activa.', 'The exact rejection remains available to the diagnostic details');
   equal(context.calls[1].route, '/api/app/heartbeat', 'Lease resumes after a rejected close');
 
   context = windowScope();

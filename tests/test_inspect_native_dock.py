@@ -16,6 +16,8 @@ PATH = r'\\?\hid#vid_054c&pid_01cd&mi_01#7&cafe&0&0000#{guid}'
 PARENT = {'devinst': 55, 'instance': r'USB\VID_054C&PID_01CD\SERIAL1'}
 OTHER = {'devinst': 66, 'instance': r'USB\VID_054C&PID_01CD\SERIAL2'}
 FRAME = b'\0' + native.FRAME.pack(b'PDK2', 2, 1, 1, 5, b'x' * 16, 0, 0)
+CURRENT_FRAME = (b'\0' + native.FRAME.pack(b'PDK2', 3, 1, 1, 5, b'x' * 16, 0, 0) +
+                 native.EXTENSION.pack(b'NAT3', 0x0302, 7, 0x03020001, 0, 0, 0, 0, 0))
 
 
 class LowLevelFake(inspect.NativeReadOnlyInspector):
@@ -67,7 +69,7 @@ class InspectorTests(unittest.TestCase):
         result = api.inspect(PATH)
         self.assertEqual(result['revision_hex'], '0100')
         self.assertFalse(result['supported_revision'])
-        self.assertEqual(result['revision_status'], 'unknown')
+        self.assertEqual(result['revision_status'], 'retired_protocol')
         self.assertFalse(result['retired_revision'])
         self.assertTrue(result['pdk2_valid'])
         self.assertFalse(result['writes_authorized'])
@@ -78,12 +80,16 @@ class InspectorTests(unittest.TestCase):
         self.assertEqual(api.calls[-1], ('close', 42))
 
     def test_supported_revision_does_not_authorize_mutations(self):
-        api = LowLevelFake(revision=0x0301)
+        api = LowLevelFake(revision=0x0100, feature_bytes=65, frame=CURRENT_FRAME)
         result = api.inspect(PATH)
         self.assertTrue(result['supported_revision'])
         self.assertEqual(result['revision_status'], 'supported')
         self.assertFalse(result['retired_revision'])
         self.assertFalse(result['writes_authorized'])
+        self.assertEqual(result['firmware_revision'], 0x0302)
+        self.assertEqual(result['usb_revision'], 0x0100)
+        self.assertEqual(result['protocol_version'], 3)
+        self.assertFalse(result['status']['host_confirmed'])
         with self.assertRaises(inspect.InspectionError):
             with api.open(PATH, write=True):
                 self.fail('write handle opened')
@@ -102,6 +108,22 @@ class InspectorTests(unittest.TestCase):
         self.assertEqual(next(args for name, args in api.calls if name == 'open')[1], 0)
         with self.assertRaises(inspect.InspectionError):
             api.set(42, b'\0' * 33)
+
+    def test_0301_is_retired_and_a_sony_revision_alone_never_becomes_supported(self):
+        old = LowLevelFake(revision=0x0301).inspect(PATH)
+        self.assertTrue(old['retired_revision'])
+        self.assertFalse(old['supported_revision'])
+        actual_old = LowLevelFake(revision=0x0100).inspect(PATH)
+        self.assertEqual(actual_old['revision_status'], 'retired_protocol')
+        self.assertIsNone(actual_old['firmware_revision'])
+        self.assertFalse(actual_old['supported_revision'])
+        self.assertFalse(actual_old['writes_authorized'])
+
+    def test_unknown_usb_envelope_does_not_authorize_valid_new_firmware(self):
+        result = LowLevelFake(revision=0x9999, feature_bytes=65, frame=CURRENT_FRAME).inspect(PATH)
+        self.assertTrue(result['pdk2_valid'])
+        self.assertFalse(result['supported_revision'])
+        self.assertFalse(result['writes_authorized'])
 
     def test_caps_mismatch_is_reported_without_wrong_feature_request(self):
         api = LowLevelFake(feature_bytes=129)

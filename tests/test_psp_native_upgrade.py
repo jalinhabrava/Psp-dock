@@ -1,7 +1,7 @@
 """Verified replacement and interruption recovery on real temporary files.
 
 No hardware discovery: only the four fixture hashes replace the reviewed
-0300 constants, and every identity callback is an explicit test double.
+0300/0301 constants, and every identity callback is an explicit test double.
 """
 import hashlib
 import json
@@ -23,6 +23,8 @@ USB = r'USB\VID_054C&PID_02D2\NATIVE-UPGRADE-TEST'
 
 
 class NativeUpgradeTests(unittest.TestCase):
+    previous_revision = '0300'
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -30,12 +32,12 @@ class NativeUpgradeTests(unittest.TestCase):
         self.psp = self.home / 'psp'
         self.target = self.psp / REMOTE_FOLDER
         self.target.mkdir(parents=True)
-        self.old = {name: ('RETIRED 0300 FIXTURE ' + name).encode() for name in FILES}
+        self.old = {name: ('RETIRED ' + self.previous_revision + ' FIXTURE ' + name).encode() for name in FILES}
         self.old_records = {name: {'size': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
                             for name, raw in self.old.items()}
         for name, raw in self.old.items():
             (self.target / name).write_bytes(raw)
-        self.pin = patch.object(upgrade, 'KNOWN_0300_FILES', self.old_records)
+        self.pin = patch.object(upgrade, 'KNOWN_' + self.previous_revision + '_FILES', self.old_records)
         self.pin.start();self.addCleanup(self.pin.stop)
         self.kept = {}
         for relative in ('PSP/GAME/PSPDock/EBOOT.PBP', 'PSP/GAME/PSPDockStorageTest/EBOOT.PBP',
@@ -45,13 +47,13 @@ class NativeUpgradeTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('KEEP ' + relative).encode())
             self.kept[path] = path.read_bytes()
-        self.package = fixture_native_package(self.home / 'package0301')
+        self.package = fixture_native_package(self.home / 'package0302')
         self.new_records = json.loads((self.package / 'manifest.json').read_text())['files']
         snapshot = psp_backup.backup(self.psp, self.home / 'critical', 'critical', SERIAL, USB,
                                      verify_identity=lambda: True, reserve_bytes=0)
         self.snapshot = Path(snapshot['directory'])
         self.receipt = self.home / 'evidence' / 'upgrade.json'
-        self.app_backup = self.home / 'application-backup0300'
+        self.app_backup = self.home / ('application-backup' + self.previous_revision)
         self.restore_receipt = self.home / 'evidence' / 'restore.json'
 
     def plan(self, serial=SERIAL, usb=USB):
@@ -81,7 +83,9 @@ class NativeUpgradeTests(unittest.TestCase):
     def test_plan_is_read_only(self):
         before = {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()}
         result = self.plan()
-        self.assertEqual((result['from_revision'], result['to_revision']), ('0300', '0301'))
+        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0302'))
+        self.assertEqual(result['reference_installation_receipt_sha256'],
+                         upgrade._reference_receipt(self.previous_revision))
         self.assertFalse(result['installed']);self.assertFalse(result['autorun'])
         self.assertEqual(before, {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()})
         self.assertFalse(self.receipt.exists());self.assertFalse(self.app_backup.exists())
@@ -349,6 +353,35 @@ class NativeUpgradeTests(unittest.TestCase):
             restore.assert_not_called()
             self.assertEqual(upgrade.main(back + ['--restore', '--receipt', str(self.restore_receipt)]), 0)
             restore.assert_called_once()
+
+
+class Native0301UpgradeTests(NativeUpgradeTests):
+    """Repeat interruption and identity gates for the exact current source version."""
+    previous_revision = '0301'
+
+
+class Historical0301RollbackTests(unittest.TestCase):
+    # Reuse fixture/helpers, without inheriting the modern-upgrade tests.
+    previous_revision = '0300'
+    setUp = NativeUpgradeTests.setUp
+    install = NativeUpgradeTests.install
+    restore = NativeUpgradeTests.restore
+    assert_files = NativeUpgradeTests.assert_files
+    assert_kept = NativeUpgradeTests.assert_kept
+
+    def test_old_receipt_0300_to_0301_remains_recoverable(self):
+        self.install()
+        record = json.loads(self.receipt.read_text())
+        record['to_revision'] = '0301'
+        self.receipt.write_text(json.dumps(record))
+        with patch.object(upgrade, 'KNOWN_0301_FILES', self.new_records):
+            plan = upgrade.plan_rollback(self.receipt, self.psp, SERIAL, USB)
+            self.assertEqual(plan['revision'], '0300')
+            restored = self.restore()
+        self.assertTrue(restored['restored'])
+        self.assert_files(self.target, self.old_records)
+        self.assert_files(Path(restored['parked']), self.new_records)
+        self.assert_kept()
 
 
 if __name__ == '__main__':

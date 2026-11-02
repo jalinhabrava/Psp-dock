@@ -1,0 +1,269 @@
+{
+  "schema": "pspdock-native-product-validation-v1",
+  "revision": "0302",
+  "product_name": "PSP Dock",
+  "date_utc": "2026-11-02",
+  "source_base": "44d502b16f692cb17415900797b48d6d9389ef26",
+  "previous_observation": {
+    "firmware_revision": "0301",
+    "observed_usb": {
+      "vid": "054C",
+      "pid": "01CD",
+      "bcd_device": "0100",
+      "hid_interface": "MI_01",
+      "storage_interface": "MI_00",
+      "windows_report_sizes": [
+        9,
+        5,
+        33
+      ]
+    },
+    "same_physical_usb_parent": true,
+    "memory_stick_mounted": true,
+    "pdk2_version": 2,
+    "phase": "storage",
+    "sequence": 0,
+    "exit_requested": true,
+    "host_rejection": "Revisión nativa no verificada: 0x100",
+    "app_synchronization_started": false,
+    "read_only_inspector": true,
+    "normal_windows_eject": {
+      "accepted": true,
+      "utc": "2026-11-02T12:39:28.083386+00:00",
+      "configret": 0,
+      "veto_type": 0
+    },
+    "observation_sha256": "16573473daf742e2afa686a9daf5ceaf995f92c651f156e17990da0c68e49358",
+    "release_sha256": "c1e7c9fb42b9dddb073e09d9dc51a454311a2183c5083e72d7d1475c9d77fece"
+  },
+  "protocol": {
+    "version": "PDK2/v3",
+    "extension": "NAT3",
+    "firmware_revision": "0302",
+    "build_id": "03020001",
+    "capabilities": "0007",
+    "usb_bcd_device_allowed_only_with_native_identity": [
+      "0100",
+      "0302"
+    ],
+    "windows_report_sizes": [
+      9,
+      5,
+      65
+    ],
+    "host_begin_required": true,
+    "read_only_observation_never_claims": true,
+    "normal_windows_eject_required": true,
+    "acknowledgement_is_not_eject_proof": true,
+    "compiled_wire_prefix_symbol": "pdn_wire_prefix (5 bytes: PDK2/v3)"
+  },
+  "changes": [
+    "Windows connection diagnostics are visible before a product session can start; user messages and technical details are separate.",
+    "PSP only announces synchronization after host confirmation. Normal UI uses PSP Dock; NOTE toggles diagnostics.",
+    "Real progress for inventory, entry copy, on-demand copy, verification and exit; unknown totals remain indeterminate.",
+    "Exit before the first controller session cancels entry without starting new save/game copies; admitted copies finish verification.",
+    "Reconnect of the same card requires explicit recovery and a journaled host claim for the new session without replacing save baselines.",
+    "Windows remains manually opened; no persistent service, startup monitor or scheduled USB launcher.",
+    "Native XMB artwork uses a dedicated title plate without a transport subtitle; historical diagnostic assets remain unchanged."
+  ],
+  "software_validation": {
+    "c_driver_normal": "pass",
+    "c_driver_address_undefined_sanitizers": "pass",
+    "c_product_ui": "pass",
+    "python_to_compiled_c_to_python_wire": "pass, including counters above 4 GiB",
+    "psp_gcc_warnings_as_errors": "pass",
+    "kernel_user_pbp_audit": "pass",
+    "windows_python_primary": {
+      "tests": 182,
+      "result": "pass",
+      "hardware_access_disabled": true
+    },
+    "windows_session_fixture_recheck": {
+      "tests": 46,
+      "result": "pass",
+      "note": "Fixture emulator selection isolated from the developer's real PPSSPP bundle."
+    },
+    "windows_retirement": {
+      "tests": 22,
+      "result": "pass",
+      "note": "21 original cases passed; final remaining case passed after normalizing fixture paths to POSIX for a platform-independent comparison."
+    },
+    "javascript": {
+      "product_assertions": 250,
+      "connection_assertions": 152,
+      "result": "pass"
+    },
+    "browser_fixture_preview": {
+      "views": 15,
+      "result": "pass",
+      "javascript_errors": 0,
+      "unexpected_mutations": 0,
+      "physical_psp_test": false,
+      "live_backend_used": false
+    },
+    "windows_mirror_source_comparison": {
+      "files": 60,
+      "mismatches": 0,
+      "manifest_sha256": "50c3f921d7ea0470cf2df5db9dfd6dd2e63d19cdec930f3fc2a402aa516aa1ec",
+      "post_build_format_change": {
+        "path": "homebrew/native-dock/native_report_descriptor.h",
+        "change": "Removed one empty trailing line to satisfy git diff --check. No source token or compiled behavior changed."
+      },
+      "final_descriptor_sha256": "80a733e848bd3868a8c8feb17b2bd12d79e96dba5c371819a267e15c57df8457"
+    }
+  },
+  "package": {
+    "path": "data/native-dock-0302-package",
+    "manifest_sha256": "296dffaebb05ffce9bf4168050a3b65a64129c58c9e0c3d1cb4bd87b8e674dcd",
+    "compiled_audit_sha256": "2408ab51c083b2672af477f349707cb4235099ee386b4ad26fa01e2431cf6e79",
+    "files": {
+      "EBOOT.PBP": {
+        "sha256": "dccf5b82e2f92edbd217eb37232302ab4d31d475ff0cf7f61a006f481a0e6398",
+        "size": 310817
+      },
+      "docknative.prx": {
+        "sha256": "61f0791fa8e2235bdbe1ffd66c7fd1329a627a04c5c1b93f7b5edc3cb103c559",
+        "size": 22338
+      },
+      "LICENSE-FuSa-GPL-3.0.txt": {
+        "sha256": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
+        "size": 35823
+      },
+      "LICENSE-DejaVu.txt": {
+        "sha256": "3011f92125603da8baa900d59a6ee3cb981d6bbf0fa0c3d9767690aa92c8439c",
+        "size": 2510
+      }
+    },
+    "xmb": {
+      "title": "PSP Dock",
+      "embedded": true,
+      "artwork": {
+        "ICON0.PNG": {
+          "sha256": "8056770888b1aa6c02996cd83414edea50d478794ad5da4152337fc3e1c2ce18",
+          "size": 9179,
+          "width": 144,
+          "height": 80
+        },
+        "PIC0.PNG": {
+          "sha256": "a5132db0c0dbf1370836b03ad50bd23e5b975ecdead9b000a2efc21784e707ca",
+          "size": 41210,
+          "width": 310,
+          "height": 180
+        },
+        "PIC1.PNG": {
+          "sha256": "718e6e1435a685404dab0da2fdcd796c439918aad3d394d5ee434279c3de2dda",
+          "size": 80294,
+          "width": 480,
+          "height": 272
+        }
+      }
+    }
+  },
+  "installation": {
+    "from_revision": "0301",
+    "to_revision": "0302",
+    "installed": true,
+    "verified_utc": "2026-11-02T13:14:30.117391+00:00",
+    "folder": "PSP/GAME/PSPDockNative",
+    "files": 4,
+    "bytes": 371488,
+    "receipt_path": "data/native-dock-0302-evidence/upgrade.json",
+    "receipt_sha256": "1e177541788009d7ba640d73066f053804d1e88a2def23dab9afb30458c7b67e",
+    "previous_app_pc_backup": "PSP-Dock-Backups/native-app-0301-before-0302",
+    "critical_backup_revalidated": true,
+    "previous_application_parked_outside_game": true,
+    "firmware_launched_by_installer": false
+  },
+  "hardware_acceptance": {
+    "firmware_0302_executed": false,
+    "native_identity_over_wire_verified": false,
+    "real_product_inventory_selection_controller_copy_exit_verified": false,
+    "next_step": "Windows app is open and waiting. Resolve the normal Windows eject veto before disconnecting, then launch the single PSP Dock app on PSP and verify the new handshake and complete product flow.",
+    "unsupported_cross_emulator_savestates_are_not_converted": true
+  },
+  "retirement": {
+    "retired": true,
+    "verified_utc": "2026-11-02T13:22:12.828893+00:00",
+    "folders": [
+      "PSP/GAME/PSPDock",
+      "PSP/GAME/PSPDockStorageTest"
+    ],
+    "files": 8,
+    "bytes": 580608,
+    "backup_verified": true,
+    "backup": "PSP-Dock-Backups/retired-dock-apps-20261102",
+    "receipt_path": "data/native-dock-0302-evidence/retirement.json",
+    "receipt_sha256": "76733b0394a44643e3a51166aea0288c50269c053a4767075418a737944f711d",
+    "current_application_verified": true,
+    "remaining_dock_folders": [
+      "PSPDockNative"
+    ],
+    "other_game_folders_after": 15,
+    "old_native_rollback_copies_outside_game_preserved": true
+  },
+  "connection_preparation": {
+    "native_app_not_launched": true,
+    "first_xmb_eject": {
+      "accepted": false,
+      "configret": 23,
+      "veto_type": 3,
+      "veto_owner": "Windows SearchIndexer.exe",
+      "forced_removal": false
+    },
+    "final_xmb_eject": {
+      "accepted": false,
+      "attempts": 4,
+      "utc": "2026-11-02T13:37:28.406021+00:00",
+      "configret": 23,
+      "veto_type": 3,
+      "veto_owner": "Windows SearchIndexer.exe",
+      "forced_removal": false,
+      "evidence": "data/native-dock-0302-evidence/eject-final-normal.json"
+    },
+    "shell_normal_eject": {
+      "requested": true,
+      "utc": "2026-11-02T13:29:06.454768+00:00",
+      "volume_accessible_after": false,
+      "volume_recheck": {
+        "drive": "G:",
+        "available": false,
+        "winerror": 21
+      },
+      "physical_parent_eject_accepted": false,
+      "evidence": "data/native-dock-0302-evidence/shell-eject.json"
+    },
+    "temporary_service_release": {
+      "attempted": true,
+      "completed": false,
+      "reason": "Stop-Service WMPNetworkSvc was denied before any service stopped.",
+      "changed_services": [],
+      "before": {
+        "WSearch": "Running",
+        "WMPNetworkSvc": "Running"
+      },
+      "after": {
+        "WSearch": "Running",
+        "WMPNetworkSvc": "Running"
+      },
+      "persistent_configuration_changed": false,
+      "evidence": "data/native-dock-0302-evidence/eject-services-restored.json"
+    },
+    "windows_app": {
+      "opened_manually": true,
+      "utc": "2026-11-02T13:38:07.583895+00:00",
+      "product": "psp-dock",
+      "demo": false,
+      "port": 54781,
+      "ui_lifecycle": true,
+      "ui_clients": 1,
+      "ui_connected_once": true,
+      "closing": false,
+      "matching_visible_windows": 1,
+      "title": "PSP Dock",
+      "phase": "waiting_psp",
+      "message": "Conecta tu PSP y abre PSP Dock en la consola.",
+      "resident_service_installed": false,
+      "evidence": "data/native-dock-0302-evidence/windows-ready.json"
+    }
+  }
+}

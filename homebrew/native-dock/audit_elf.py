@@ -1,4 +1,4 @@
-"""Audit 0301's actual MIPS ELF and USER PBP; never opens USB or a PSP.
+"""Audit 0302's actual MIPS ELF and USER PBP; never opens USB or a PSP.
 
 The default device descriptor chosen by Sony's composed USB bus is a hardware
 question. This audit proves our descriptor and imports, not that composition
@@ -32,11 +32,70 @@ def _cstring_at(elf, address: int) -> str:
     return data.split(b"\0", 1)[0].decode("ascii", "strict")
 
 
+def hid_report_sizes(report: bytes) -> dict:
+    """Count the actual compiled HID fields; no report IDs or long items."""
+    position = report_size = report_count = 0
+    bits = {"input": 0, "output": 0, "feature": 0}
+    stack = []
+    while position < len(report):
+        prefix = report[position]
+        position += 1
+        require(prefix != 0xfe, "Long HID items are outside this reviewed descriptor")
+        length = (0, 1, 2, 4)[prefix & 3]
+        require(position + length <= len(report), "Truncated HID item")
+        value = int.from_bytes(report[position:position+length], "little")
+        position += length
+        item_type, tag = (prefix >> 2) & 3, prefix >> 4
+        if item_type == 1:
+            if tag == 7:
+                report_size = value
+            elif tag == 9:
+                report_count = value
+            elif tag == 8:
+                raise ValueError("Native reports must keep report ID zero")
+            elif tag == 10:
+                stack.append((report_size, report_count))
+            elif tag == 11:
+                require(bool(stack), "Invalid HID global stack")
+                report_size, report_count = stack.pop()
+        elif item_type == 0 and tag in (8, 9, 11):
+            require(report_size > 0 and report_count > 0, "Empty HID field")
+            bits[{8: "input", 9: "output", 11: "feature"}[tag]] += report_size * report_count
+    require(not stack and all(n % 8 == 0 for n in bits.values()), "Unbalanced/unaligned HID reports")
+    return {name: count // 8 for name, count in bits.items()}
+
+
+def pbp_title(raw: bytes) -> str:
+    """Read PARAM.SFO's TITLE, not an incidental byte string in the ELF."""
+    require(len(raw) >= 40 and raw[:4] == b"\0PBP", "Invalid PBP header")
+    begin, end = struct.unpack_from("<II", raw, 8)
+    require(40 <= begin <= end <= len(raw), "Invalid PARAM.SFO bounds")
+    sfo = raw[begin:end]
+    require(len(sfo) >= 20 and sfo[:4] == b"\0PSF", "Invalid PARAM.SFO")
+    keys, data, count = struct.unpack_from("<III", sfo, 8)
+    require(count <= 128 and 20 + 16 * count <= keys <= data <= len(sfo), "Invalid SFO table")
+    titles = []
+    for index in range(count):
+        key_offset, fmt, length, capacity, offset = struct.unpack_from("<HHIII", sfo, 20 + 16 * index)
+        require(keys + key_offset < data, "SFO key outside table")
+        key_tail = sfo[keys+key_offset:data]
+        require(b"\0" in key_tail, "Unterminated SFO key")
+        if key_tail.split(b"\0", 1)[0] != b"TITLE":
+            continue
+        require(fmt == 0x0204 and 0 < length <= capacity and data + offset + capacity <= len(sfo),
+                "Invalid SFO TITLE entry")
+        value = sfo[data+offset:data+offset+length]
+        require(value[-1:] == b"\0" and b"\0" not in value[:-1], "Invalid SFO TITLE text")
+        titles.append(value[:-1].decode("utf-8", "strict"))
+    require(len(titles) == 1, "SFO needs exactly one TITLE")
+    return titles[0]
+
+
 def audit(raw: bytes) -> dict:
     elf = MipsElf(raw)
     require(elf.module_attributes() & 0x1000, "Native USB controller must be kernel PRX")
     module_info = elf.section_bytes(elf.section_names[".rodata.sceModuleInfo"])
-    require(module_info[2:4] == b"\x01\x03", "Expected kernel module version 3.1")
+    require(module_info[2:4] == b"\x02\x03", "Expected kernel module version 3.2")
     required_modules = (
         ("flash0:/kd/semawm.prx", "sceSemawm"),
         ("flash0:/kd/usbstor.prx", "sceUSB_Stor_Driver"),
@@ -47,10 +106,10 @@ def audit(raw: bytes) -> dict:
     for index, expected in enumerate(required_modules):
         path, name, uid, owned, started = struct.unpack_from("<IIiII", dependencies, index * 20)
         require((_cstring_at(elf, path), _cstring_at(elf, name)) == expected,
-                "Native dependency order/name differs from reviewed 0301 bootstrap")
+                "Native dependency order/name differs from reviewed 0302 bootstrap")
         require((uid, owned, started) == (-1, 0, 0), "Dependency ownership must start empty")
     for forbidden_path in (b"usbstorboot.prx", b"pcact.prx", b"npdrm.prx", b"usbstoreflash.prx", b"usbdevice.prx"):
-        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0301: " + forbidden_path.decode())
+        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0302: " + forbidden_path.decode())
     require(elf.data("pdn_interface", 12) == struct.pack("<iii", -1, 0, 1),
             "HID must request one automatically assigned interface")
     require(elf.data("pdn_endpoints", 24) == struct.pack("<6I", 0, 0, 0, 1, 0, 0),
@@ -58,8 +117,8 @@ def audit(raw: bytes) -> dict:
     for speed, interval in (("hi", 6), ("full", 4)):
         device = elf.data("pdn_device_" + speed, 20)
         require(device[:8] == b"\x12\x01\x00\x02\0\0\0\x40", "Invalid USB 2.0 device/EP0")
-        require(struct.unpack_from("<H", device, 12)[0] == 0x0301 and device[17] == 1,
-                "Wrong 0301 descriptor revision/configuration")
+        require(struct.unpack_from("<H", device, 12)[0] == 0x0302 and device[17] == 1,
+                "Wrong 0302 descriptor revision/configuration")
         interfaces, endpoints = "pdn_interfaces_" + speed, "pdn_endpoint_" + speed
         settings, config_name = "pdn_settings_" + speed, "pdn_configdesc_" + speed
         require(elf.data(settings, 12) == struct.pack("<3I", elf.address(interfaces), 0, 1),
@@ -84,7 +143,7 @@ def audit(raw: bytes) -> dict:
         for name in (interfaces, endpoints, "pdn_device_" + speed):
             require(elf.address(name) % 64 == 0, "Descriptor cache alignment missing: " + name)
     report = elf.data("report_descriptor", elf.symbols["report_descriptor"][1])
-    require(report.endswith(b"\x75\x08\x95\x20\xb1\x02\xc0"), "Expected 32-byte FEATURE")
+    require(report.endswith(b"\x75\x08\x95\x40\xb1\x02\xc0"), "Expected 64-byte native FEATURE")
     hid = elf.data("pdn_hid_descriptor", 9)
     require(hid[:7] == bytes((9, 0x21, 0x10, 1, 0, 1, 0x22)) and
             struct.unpack_from("<H", hid, 7)[0] == len(report), "HID report length mismatch")
@@ -96,12 +155,37 @@ def audit(raw: bytes) -> dict:
                  "sceUsbbdReqCancelAll", "sceKernelLoadModule", "sceKernelStartModule",
                  "sceKernelStopModule", "sceKernelUnloadModule", "sceKernelFindModuleByName"):
         elf.address(name)
-    require(b"PDK2" in raw and b"PDK1" not in raw, "Native controller must use separate PDK2 protocol")
+    # A short literal can become instruction immediates under MIPS -O2.
+    # Inspect the exact compiled symbol used by encoder AND validator,
+    # rather than treating arbitrary code/data byte substrings as proof.
+    wire_prefix = elf.data("pdn_wire_prefix", 5)
+    require(elf.symbols["pdn_wire_prefix"][1] == 5, "Compiled wire prefix symbol has the wrong width")
+    require(wire_prefix == b"PDK2\x03", "Compiled wire prefix must be exactly PDK2/v3")
+    identity = elf.data("pdn_identity", 12)
+    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0302, 0x0007, 0x03020001),
+            "Compiled firmware identity differs from reviewed PDK2/v3 build")
+    _, firmware_revision, capabilities, build_id = struct.unpack("<4sHHI", identity)
+    protocol_abi = elf.data("pdn_protocol_abi", 16)
+    require(protocol_abi == b"PDNA" + bytes((3, 64, 8, 4, 1, 2, 3, 4, 31, 1, 1, 0)),
+            "Compiled protocol policy differs from explicit host/progress contract")
+    require(protocol_abi[4] == wire_prefix[4], "Wire version differs from compiled protocol ABI")
+    report_sizes = hid_report_sizes(report)
+    require(report_sizes == {"input": 8, "output": 4, "feature": 64},
+            "Compiled HID report sizes disagree with PDK2/v3 identity")
+    require(protocol_abi[5:8] == bytes((report_sizes["feature"], report_sizes["input"], report_sizes["output"])),
+            "Descriptor and compiled ABI sizes disagree")
     return {
-        "revision": "0301", "elf_machine": "MIPS", "kernel_module_verified": True,
+        "revision": f"{firmware_revision:04X}", "elf_machine": "MIPS", "kernel_module_verified": True,
         "mandatory_modules": [path for path, _ in required_modules], "optional_bootstrap_modules": [],
         "function_descriptors_verified": True, "hid_function_interfaces": 1,
-        "hid_input_bytes": 8, "hid_feature_bytes": 32, "protocol": "PDK2/v2",
+        "hid_input_bytes": report_sizes["input"], "hid_output_bytes": report_sizes["output"],
+        "hid_feature_bytes": report_sizes["feature"],
+        "protocol": wire_prefix[:4].decode("ascii") + "/v" + str(wire_prefix[4]),
+        "firmware_identity_in_protocol": True,
+        "host_begin_required": bool(protocol_abi[13]),
+        "host_progress_supported": bool(protocol_abi[14]),
+        "usb_revision_is_firmware_revision": bool(protocol_abi[15]),
+        "firmware_build_id": f"{build_id:08X}", "protocol_capabilities": f"{capabilities:04X}",
         "storage_backend": "native Sony USBStor_Driver", "kernel_filesystem_imports": [],
         "early_sony_boot_imports": [], "expected_pid": "01CD",
         "wire_identity_verified": False, "sony_composition_physically_verified": False,
@@ -124,7 +208,11 @@ def main() -> None:
     result["user_app"] = _reader.audit_user(args.user_elf.read_bytes(), args.user_object.read_bytes())
     pbp = args.pbp.read_bytes()
     result["xmb_assets"] = _reader.audit_pbp(pbp, args.assets)
-    require(b"PSP Dock - Memory Stick + Mando 0301\0" in pbp, "Missing branded 0301 XMB title")
+    require(pbp_title(pbp) == "PSP Dock", "XMB title must be exactly PSP Dock")
+    user_elf = MipsElf(args.user_elf.read_bytes())
+    user_info = user_elf.section_bytes(user_elf.section_names[".rodata.sceModuleInfo"])
+    require(user_info[2:4] == b"\x02\x03", "Expected USER launcher module version 3.2")
+    result["xmb_title"] = "PSP Dock"
     result["pbp_sha256"] = hashlib.sha256(pbp).hexdigest()
     rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"
     if args.output:

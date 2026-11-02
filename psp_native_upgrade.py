@@ -1,6 +1,6 @@
-"""Explicit, recoverable replacement of the reviewed native 0300 application.
+"""Explicit, recoverable replacement of reviewed native 0300/0301 applications.
 
-Only the four pinned 0300 files may be replaced by an audited 0301 package.
+Only four pinned files of a known revision may be replaced by audited 0302.
 The old application is copied to a new fixed-PC backup before any PSP write.
 Directory parking and staging stay outside PSP/GAME; no old launcher can
 accidentally load the new PRX from its hard-coded PSPDockNative pathname.
@@ -24,10 +24,12 @@ from psp_native_package import FILES, REMOTE_FOLDER, digest, verify_package
 from psp_usb import identify, UsbTransitionError
 
 
-FROM_REVISION, TO_REVISION = '0300', '0301'
+TO_REVISION = '0302'
+REVIEWED_TRANSITIONS = frozenset({('0300', '0301'), ('0300', '0302'), ('0301', '0302')})
 SCHEMA = 'pspdock-native-upgrade-receipt-v1'
 BACKUP_SCHEMA = 'pspdock-native-application-backup-v1'
 OLD_RECEIPT_SHA256 = 'e608ccd22a96bf82c6ae88ddf8a364740c602c40d0c04c66010c51055670dab2'
+RECEIPT_0301_SHA256 = 'bc1ab5d87922dc35d5e16aab814ff32d2230749dd501383d91a87353b92cc684'
 # Reviewed installation receipt, not hashes inferred from the mounted PSP.
 KNOWN_0300_FILES = {
     'EBOOT.PBP': {'size': 301968, 'sha256': '5c981962c4eef43f0ce604df89070776217cb548f57f7e65e4cfc766c81983fd'},
@@ -35,6 +37,28 @@ KNOWN_0300_FILES = {
     'LICENSE-FuSa-GPL-3.0.txt': {'size': 35823, 'sha256': '230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809'},
     'LICENSE-DejaVu.txt': {'size': 2555, 'sha256': '24dc6361beb5925c789c056222029b44093854e5f94e5509b833b5a02d511baf'},
 }
+
+# Installed and reread on 2026-11-02, before the observed Sony bcdDevice 0100
+# rejection. These anchors come from the retained 0301 upgrade receipt.
+KNOWN_0301_FILES = {
+    'EBOOT.PBP': {'size': 310072, 'sha256': '955d61312134275de9412177c54495ededde01505af9f36b3b3e9f3b8c371f29'},
+    'docknative.prx': {'size': 20938, 'sha256': '607722612f72cf220f4760750d7bc52c2f6224cd39051527c422e246d382caf9'},
+    'LICENSE-FuSa-GPL-3.0.txt': {'size': 35823, 'sha256': '230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809'},
+    'LICENSE-DejaVu.txt': {'size': 2555, 'sha256': '24dc6361beb5925c789c056222029b44093854e5f94e5509b833b5a02d511baf'},
+}
+
+
+def _known_files(revision: str) -> dict:
+    if revision == '0300':
+        return KNOWN_0300_FILES
+    if revision == '0301':
+        return KNOWN_0301_FILES
+    raise ValueError('La revisión anterior no pertenece a las aplicaciones verificadas.')
+
+
+def _reference_receipt(revision: str) -> str:
+    _known_files(revision)
+    return OLD_RECEIPT_SHA256 if revision == '0300' else RECEIPT_0301_SHA256
 
 
 def _same(same_device) -> None:
@@ -180,18 +204,22 @@ def _paths(root: Path, operation: str, operation_id: str) -> tuple[Path, Path, P
 
 def _backup_record(plan: dict) -> dict:
     return {'schema': BACKUP_SCHEMA, 'operation_id': plan['operation_id'],
-            'identity': plan['identity'], 'revision': FROM_REVISION,
+            'identity': plan['identity'], 'revision': plan['from_revision'],
             'files': plan['from_files'], 'replacement_files': plan['to_files'],
-            'reference_installation_receipt_sha256': OLD_RECEIPT_SHA256, 'complete': True}
+            'reference_installation_receipt_sha256': _reference_receipt(plan['from_revision']), 'complete': True}
 
 
 def _verify_app_backup(plan: dict, root: Path) -> Path:
+    expected = _known_files(plan.get('from_revision'))
+    if (plan.get('from_files') != expected or
+            plan.get('reference_installation_receipt_sha256') != _reference_receipt(plan['from_revision'])):
+        raise ValueError('El origen no coincide con una aplicación y recibo anteriores verificados.')
     backup = _existing_pc(Path(plan['app_backup']), root)
     if not backup.is_dir() or {p.name for p in backup.iterdir()} != {'files', 'manifest.json'}:
         raise ValueError('La copia de recuperación está incompleta o contiene archivos desconocidos.')
     if _read_json(backup / 'manifest.json') != _backup_record(plan):
         raise ValueError('La copia de recuperación no corresponde a esta actualización.')
-    _verify_files(backup / 'files', KNOWN_0300_FILES)
+    _verify_files(backup / 'files', expected)
     return backup / 'files'
 
 
@@ -202,20 +230,25 @@ def plan_upgrade(package: Path, root: Path, snapshot: Path, serial: str, usb_id:
         no_links(path)
     manifest = verify_package(package)
     if manifest['revision'] != TO_REVISION:
-        raise ValueError('La actualización sólo admite el paquete nativo 0301.')
+        raise ValueError('La actualización sólo admite el paquete nativo 0302.')
     target = root / REMOTE_FOLDER
-    _verify_files(target, KNOWN_0300_FILES)
+    observed = _observed_files(target)
+    candidates = [revision for revision in ('0300', '0301')
+                  if observed == _records(_known_files(revision))]
+    if len(candidates) != 1:
+        raise ValueError('La aplicación no coincide con los cuatro archivos revisados de 0300 o 0301.')
+    source_revision = candidates[0]
     matching_backup(root, snapshot, serial, usb_id)
     size = sum(record['size'] for record in manifest['files'].values())
     if shutil.disk_usage(root).free < size + 8 * 1024 * 1024:
         raise ValueError('Falta espacio para preparar la aplicación nueva sin borrar la anterior.')
-    return {'schema': SCHEMA, 'operation': 'upgrade', 'from_revision': FROM_REVISION,
+    return {'schema': SCHEMA, 'operation': 'upgrade', 'from_revision': source_revision,
             'to_revision': TO_REVISION, 'target': str(target), 'package': str(package),
-            'critical_backup': str(snapshot), 'from_files': _records(KNOWN_0300_FILES),
+            'critical_backup': str(snapshot), 'from_files': _records(_known_files(source_revision)),
             'to_files': _records(manifest['files']), 'bytes': size, 'xmb': manifest['xmb'],
             'identity': {'volume_serial': serial, 'usb_device_id': usb_id},
             'installed': False, 'hardware_execution_verified': False, 'autorun': False,
-            'reference_installation_receipt_sha256': OLD_RECEIPT_SHA256}
+            'reference_installation_receipt_sha256': _reference_receipt(source_revision)}
 
 
 def upgrade_package(package: Path, root: Path, snapshot: Path, serial: str, usb_id: str,
@@ -239,10 +272,10 @@ def upgrade_package(package: Path, root: Path, snapshot: Path, serial: str, usb_
     target = root / REMOTE_FOLDER
     try:
         _same(same_device)
-        _verify_files(target, KNOWN_0300_FILES, same_device=same_device)
+        _verify_files(target, plan['from_files'], same_device=same_device)
         app_backup.mkdir(parents=True, exist_ok=False)
         saved = app_backup / 'files';saved.mkdir()
-        _copy_files(target, saved, KNOWN_0300_FILES, same_device=same_device, note=evidence.note)
+        _copy_files(target, saved, plan['from_files'], same_device=same_device, note=evidence.note)
         _write_new_json(app_backup / 'manifest.json', _backup_record(plan))
         _verify_app_backup(plan, root)
         evidence.note('application_backup_verified', backup=str(app_backup))
@@ -259,7 +292,7 @@ def upgrade_package(package: Path, root: Path, snapshot: Path, serial: str, usb_
         _same(same_device)
         matching_backup(root, Path(snapshot), serial, usb_id)
         _verify_files(staging, plan['to_files'], same_device=same_device)
-        _verify_files(target, KNOWN_0300_FILES, same_device=same_device)
+        _verify_files(target, plan['from_files'], same_device=same_device)
         no_links(parked)
         if parked.exists():
             raise FileExistsError('Apareció el destino de aparcado; no se sobrescribe.')
@@ -274,7 +307,7 @@ def upgrade_package(package: Path, root: Path, snapshot: Path, serial: str, usb_
         staging.rename(target)
         evidence.note('published')
         _verify_files(target, plan['to_files'], same_device=same_device)
-        _verify_files(parked, KNOWN_0300_FILES, same_device=same_device)
+        _verify_files(parked, plan['from_files'], same_device=same_device)
         _verify_app_backup(plan, root)
         _same(same_device)
         return evidence.finish(installed=True, revision=TO_REVISION, previous_application_preserved=True)
@@ -286,15 +319,20 @@ def upgrade_package(package: Path, root: Path, snapshot: Path, serial: str, usb_
 def _upgrade_record(receipt: Path, root: Path, serial: str, usb_id: str) -> dict:
     _check_identity(serial, usb_id)
     saved = _read_json(_existing_pc(receipt, root))
+    previous, replacement = saved.get('from_revision'), saved.get('to_revision')
     if (saved.get('schema') != SCHEMA or saved.get('operation') != 'upgrade' or
-            saved.get('from_revision') != FROM_REVISION or saved.get('to_revision') != TO_REVISION or
+            not isinstance(previous, str) or not isinstance(replacement, str) or
+            (previous, replacement) not in REVIEWED_TRANSITIONS or
             saved.get('identity') != {'volume_serial': serial, 'usb_device_id': usb_id} or
-            saved.get('from_files') != KNOWN_0300_FILES or
+            saved.get('from_files') != _known_files(previous) or
+            saved.get('reference_installation_receipt_sha256') != _reference_receipt(previous) or
             not isinstance(saved.get('operation_id'), str) or
             re.fullmatch('[0-9a-f]{32}', saved['operation_id']) is None or
             not isinstance(saved.get('app_backup'), str)):
         raise ValueError('El recibo no pertenece a una actualización conocida de esta PSP.')
     _records(saved.get('to_files'))
+    if replacement == '0301' and saved['to_files'] != _known_files('0301'):
+        raise ValueError('El recibo histórico no conserva la aplicación 0301 verificada.')
     _verify_app_backup(saved, root)
     return saved
 
@@ -305,7 +343,7 @@ def _target_state(root: Path, saved: dict, *, same_device=lambda: True) -> str:
     if not target.exists():
         return 'absent'
     files = _observed_files(target, same_device=same_device)
-    if files == KNOWN_0300_FILES:
+    if files == saved['from_files']:
         return 'original'
     if files == saved['to_files']:
         return 'replacement'
@@ -319,14 +357,14 @@ def plan_rollback(upgrade_receipt: Path, root: Path, serial: str, usb_id: str) -
     saved = _upgrade_record(Path(upgrade_receipt), root, serial, usb_id)
     state = _target_state(root, saved)
     if state != 'original' and shutil.disk_usage(root).free < sum(
-            row['size'] for row in KNOWN_0300_FILES.values()) + 8 * 1024 * 1024:
+            row['size'] for row in saved['from_files'].values()) + 8 * 1024 * 1024:
         raise ValueError('Falta espacio para preparar la restauración sin borrar archivos.')
     return {'schema': 'pspdock-native-rollback-receipt-v1', 'operation': 'rollback',
             'upgrade_receipt': str(Path(upgrade_receipt).absolute()),
             'upgrade_operation_id': saved['operation_id'], 'identity': saved['identity'],
             'target': str(root / REMOTE_FOLDER), 'target_state': state,
-            'app_backup': saved['app_backup'], 'restore_files': _records(KNOWN_0300_FILES),
-            'replaced_files': saved['to_files'], 'restored': False, 'revision': FROM_REVISION,
+            'app_backup': saved['app_backup'], 'restore_files': _records(saved['from_files']),
+            'replaced_files': saved['to_files'], 'restored': False, 'revision': saved['from_revision'],
             'retired_revision': True, 'hardware_execution_verified': False, 'autorun': False}
 
 
@@ -356,10 +394,10 @@ def rollback_package(upgrade_receipt: Path, root: Path, serial: str, usb_id: str
         _same(same_device)
         no_links(workspace);workspace.mkdir(exist_ok=False)
         staging.mkdir(exist_ok=False)
-        _copy_files(original, staging, KNOWN_0300_FILES,
+        _copy_files(original, staging, plan['restore_files'],
                     same_device=same_device, note=evidence.note)
         _verify_app_backup(saved, root)
-        _verify_files(staging, KNOWN_0300_FILES, same_device=same_device)
+        _verify_files(staging, plan['restore_files'], same_device=same_device)
         if _target_state(root, saved, same_device=same_device) != plan['target_state']:
             raise ValueError('La aplicación cambió antes de publicar la restauración.')
         no_links(parked)
@@ -376,7 +414,7 @@ def rollback_package(upgrade_receipt: Path, root: Path, serial: str, usb_id: str
             raise FileExistsError('Apareció otra aplicación en el destino; no se sobrescribe.')
         staging.rename(target)
         evidence.note('restored')
-        _verify_files(target, KNOWN_0300_FILES, same_device=same_device)
+        _verify_files(target, plan['restore_files'], same_device=same_device)
         if plan['target_state'] == 'replacement':
             _verify_files(parked, saved['to_files'], same_device=same_device)
         _same(same_device)
@@ -387,7 +425,7 @@ def rollback_package(upgrade_receipt: Path, root: Path, serial: str, usb_id: str
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description='Actualizar sólo PSP Dock 0300 conocido a 0301, o restaurarlo explícitamente')
+    parser = argparse.ArgumentParser(description='Actualizar sólo PSP Dock 0300/0301 conocido a 0302, o restaurar su versión anterior explícitamente')
     parser.add_argument('--drive', required=True)
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--upgrade', action='store_true', help='Ejecutar la actualización; por defecto sólo se muestra el plan')
@@ -395,7 +433,7 @@ def main(argv=None) -> int:
     parser.add_argument('--restore', action='store_true', help='Ejecutar la restauración pedida con --rollback')
     parser.add_argument('--package', type=Path)
     parser.add_argument('--backup', type=Path, help='Backup crítico actual de la misma PSP')
-    parser.add_argument('--app-backup', type=Path, help='Directorio NUEVO en disco fijo del PC para los cuatro archivos 0300')
+    parser.add_argument('--app-backup', type=Path, help='Directorio NUEVO en disco fijo del PC para los cuatro archivos anteriores')
     parser.add_argument('--receipt', type=Path, help='Archivo NUEVO del PC, obligatorio al ejecutar')
     args = parser.parse_args(argv)
     try:

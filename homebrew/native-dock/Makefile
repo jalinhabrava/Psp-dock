@@ -11,4 +11,4 @@ LDFLAGS = -nostartfiles
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
 
-native_driver.o: native_driver.c native_common.h native_protocol.h native_descriptors.h lab_gate.h report_descriptor.h
+native_driver.o: native_driver.c native_common.h native_protocol.h native_descriptors.h lab_gate.h native_report_descriptor.h

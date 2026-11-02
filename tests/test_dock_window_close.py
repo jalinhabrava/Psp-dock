@@ -36,7 +36,9 @@ class NativeWindowCloseTests(unittest.TestCase):
         self.psp_save = self.psp/'PSP/SAVEDATA/SAVE/DATA.BIN'
         self.psp_save.write_bytes(b'old')
         self.dock = app.Dock(self.home/'data')
-        self.dock.settings({'psp_root':str(self.psp)})
+        # A developer's bundled PPSSPP must not turn a window-lifecycle
+        # fixture into repeated full runtime copies on Windows.
+        self.dock.settings({'psp_root':str(self.psp), 'emulator':''})
         self.pc_save = Path(self.dock.config['memstick'])/'PSP/SAVEDATA/SAVE/DATA.BIN'
         self.pc_save.parent.mkdir(parents=True)
         self.pc_save.write_bytes(b'old')
@@ -117,7 +119,25 @@ class NativeWindowCloseTests(unittest.TestCase):
         self.assertFalse(self.pc_save.exists())
         self.assertFalse((Path(self.dock.config['library'])/'ISO/Game.iso').exists())
         self.assertEqual(self.psp_save.read_bytes(),b'old')
-        self.assertEqual(self.product.flow.snapshot()['choice'],'none')
+        self.assertIsNone(self.product.flow.snapshot()['choice'])
+        self.assertEqual(self.product.flow.snapshot()['purpose'],'cancel')
+        self.assertEqual(self.transport.roles, [])
+
+    def test_x_before_inventory_cancels_entry_without_starting_the_scan_or_return(self):
+        self.product.flow.enabled = True
+        self.product.observation = self.transport.observe(self.dock.devices())
+        self.product.flow.observe(self.product.observation)
+        self.assertEqual(self.product.flow.snapshot()['phase'], 'inventory')
+        self.assertFalse(self.transport.host_confirmed)
+        self.assertTrue(self.close_window(A))
+        self.show_restored_window()
+        with patch('dock.copy_slot', side_effect=AssertionError('early close must not copy saves')):
+            self.assertEqual(self.finish_or_attention()['phase'], 'safe_to_disconnect')
+        self.assertEqual(self.product.snapshot()['purpose'], 'cancel')
+        self.assertEqual(self.transport.roles, [])
+        self.assertEqual(self.transport.begins, 1)
+        self.assertFalse(self.product.entry_path.exists())
+        self.assertEqual(self.psp_save.read_bytes(), b'old')
 
     def test_open_emulator_is_not_killed_and_return_starts_only_after_normal_exit(self):
         self.ready()

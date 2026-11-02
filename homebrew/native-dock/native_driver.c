@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0301: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0302: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,7 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,1);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,2);
 
 typedef struct {
     const char *path,*name;
@@ -48,6 +48,7 @@ static volatile int need_initial_pad=1,input_rearm=1,exit_requested;
 static volatile uint32_t link_generation,ctl_generation;
 static int ctl_feature_receive,ever_cable,cable_absence_pending,usb_poll_started;
 static uint32_t cable_absent_since,last_usb_poll,last_pad_time,hid_reports;
+static uint32_t session_counter;
 static uint8_t idle_rate,latest_pad[8];
 static uint8_t pad_buffer[64] __attribute__((aligned(64)));
 static uint8_t ctl_buffer[256] __attribute__((aligned(64)));
@@ -59,8 +60,13 @@ static void record_error(int result) {
 }
 static void publish_phase(void) {
     if(!ui)return;
+    ui->presentation_generation++;
     ui->phase=protocol.phase;ui->sequence=protocol.sequence;ui->phase_result=protocol.result;
     ui->rejected_commands=protocol.rejected;ui->last_rejection=protocol.last_rejection;
+    ui->host_confirmed=protocol.host_confirmed;ui->activity=protocol.activity;
+    if(protocol.host_confirmed)ui->host_session_seen=1;
+    ui->progress_unit=protocol.progress_unit;ui->completed=protocol.completed;ui->total=protocol.total;
+    ui->presentation_generation++;
 }
 static void neutral_pad(uint8_t out[8]) { memset(out,0,8);memset(out,0x7f,4); }
 static void request_exit(unsigned reason) {
@@ -110,7 +116,7 @@ static int control_submit(const uint8_t *data,int size,int receive,int feature) 
     ctl_submitting=0;sceKernelCpuResumeIntr(irq);return result;
 }
 static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *r) {
-    uint8_t answer[32];int length,irq;
+    uint8_t answer[PDN_FEATURE_SIZE];int length,irq;
     (void)endpoint;
     if(!r || interface_arg<0 || (r->wIndex&0xff00u))return -1;
     /* Sony USBBus dispatches interface-recipient requests to this driver.
@@ -137,7 +143,7 @@ static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *
     if(r->bmRequestType==0xa1 && r->bRequest==1){
         irq=sceKernelCpuSuspendIntr();
         if(r->wValue==0x0300){
-            pdn_protocol_status(&protocol,answer,connected,storage_started,exit_requested);length=32;
+            pdn_protocol_status(&protocol,answer,connected,storage_started,exit_requested);length=PDN_FEATURE_SIZE;
         }else if(r->wValue==0x0100){memcpy(answer,latest_pad,8);length=8;}
         else{sceKernelCpuResumeIntr(irq);return -1;}
         sceKernelCpuResumeIntr(irq);
@@ -175,7 +181,7 @@ static int detach(int a,int b,int c) {
     connected=0;link_attached=0;
     if(active){
         link_generation++;link_reset_pending=1;input_rearm=1;
-        pdn_protocol_fail_pending(&protocol,PDN_ERR_LINK);publish_phase();
+        pdn_protocol_invalidate_link(&protocol);publish_phase();
         if(ui){ui->detach_count++;ui->link_generation=link_generation;ui->hid_interface=UINT32_MAX;}
         set_stage(PDN_STAGE_RECONNECT);
     }
@@ -198,8 +204,9 @@ static void encode_pad(const SceCtrlData *pad,uint8_t out[8]) {
         PSP_CTRL_START,PSP_CTRL_HOME,PSP_CTRL_VOLDOWN,PSP_CTRL_VOLUP,PSP_CTRL_SCREEN};
     int i;uint32_t b=pad->Buttons;
     neutral_pad(out);
-    if(b&PSP_CTRL_NOTE){out[2]=pad->Ly;out[3]=pad->Lx;}
-    else{out[0]=pad->Lx;out[1]=pad->Ly;}
+    /* NOTE belongs exclusively to local diagnostics, never to game input.
+     * The primary analogue axes remain identical when it is pressed. */
+    out[0]=pad->Lx;out[1]=pad->Ly;
     if(b&PSP_CTRL_UP)out[4]=1;
     if(b&PSP_CTRL_RIGHT)out[4]=3;
     if(b&PSP_CTRL_DOWN)out[4]=5;
@@ -212,10 +219,10 @@ static void encode_pad(const SceCtrlData *pad,uint8_t out[8]) {
 }
 static void gated_pad(const SceCtrlData *pad,uint8_t out[8]) {
     neutral_pad(out);
-    if(!pdn_phase_accepts_input(protocol.phase) || protocol.pending)return;
+    if(!pdn_protocol_accepts_input(&protocol))return;
     if(input_rearm){
         /* Release buttons/analogue before the next UI can consume input. */
-        if(!pad->Buttons && pad->Lx>=111 && pad->Lx<=143 && pad->Ly>=111 && pad->Ly<=143)
+        if(!(pad->Buttons&~PSP_CTRL_NOTE) && pad->Lx>=111 && pad->Lx<=143 && pad->Ly>=111 && pad->Ly<=143)
             input_rearm=0;
         return;
     }
@@ -223,12 +230,19 @@ static void gated_pad(const SceCtrlData *pad,uint8_t out[8]) {
     if((pad->Buttons&(PSP_CTRL_START|PSP_CTRL_SELECT))==(PSP_CTRL_START|PSP_CTRL_SELECT))return;
     encode_pad(pad,out);
 }
+static void diagnostic_button(uint32_t buttons,int *held) {
+    /* USER button reads may mask the NOTE system button. Observe it in the
+     * existing kernel sampler and expose only a local display preference. */
+    if((buttons&PSP_CTRL_NOTE) && !*held && ui)ui->diagnostic_visible^=1u;
+    *held=!!(buttons&PSP_CTRL_NOTE);
+}
 static int sample_pad(SceSize args,void *argp) {
-    SceCtrlData pad;uint8_t sample[8];int hold=0,irq,send,result;
+    SceCtrlData pad;uint8_t sample[8];int hold=0,note_held=0,irq,send,result;
     (void)args;(void)argp;
     sceCtrlSetSamplingCycle(0);sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
     while(running){
         if(sceCtrlPeekBufferPositive(&pad,1)>0){
+            diagnostic_button(pad.Buttons,&note_held);
             if((pad.Buttons&(PSP_CTRL_START|PSP_CTRL_SELECT))==(PSP_CTRL_START|PSP_CTRL_SELECT)){
                 if(++hold>=250)request_exit(PDN_STOP_USER);
             }else hold=0;
@@ -256,7 +270,11 @@ static int sample_pad(SceSize args,void *argp) {
 }
 static void make_session(void) {
     uint8_t nonce[16];uint32_t x=sceKernelGetSystemTimeLow()^0x49c3e215u;unsigned i;
+    /* Distinguish resets even at an unchanged timer. Not an auth secret. */
+    session_counter++;x^=session_counter*0x9e3779b9u;
+    if(!x)x=0x49c3e215u;
     for(i=0;i<16;i++){x^=x<<13;x^=x>>17;x^=x<<5;nonce[i]=(uint8_t)x;}
+    pdn_write32(nonce+12,session_counter);
     nonce[0]|=1;pdn_protocol_init(&protocol,nonce);publish_phase();
 }
 static int load_dependencies(void) {
@@ -317,7 +335,10 @@ static int quiesce_link(void) {
     if(hid_busy){result=-3022;goto done;}
     irq=sceKernelCpuSuspendIntr();
     need_initial_pad=1;input_rearm=1;neutral_pad(latest_pad);
-    if(generation==link_generation){link_reset_pending=0;connected=active && link_attached;}
+    if(generation==link_generation){
+        /* Drain old callbacks before requiring a new host session/binding. */
+        make_session();link_reset_pending=0;connected=active && link_attached;
+    }
     sceKernelCpuResumeIntr(irq);
     set_stage(connected?PDN_STAGE_CONNECTED:PDN_STAGE_RECONNECT);
 done:
@@ -463,7 +484,7 @@ static int io_worker(SceSize args,void *argp) {
 }
 static int valid_shared(PdnSharedStatus *p) {
     uintptr_t address=(uintptr_t)p;
-    return !(address&3u) && address>=0x08800000u &&
+    return !(address&(_Alignof(PdnSharedStatus)-1u)) && address>=0x08800000u &&
         address<=0x0a000000u-sizeof(*p) && p->magic==PDN_LAUNCH_MAGIC && p->size==sizeof(*p);
 }
 int module_start(SceSize args,void *argp) {

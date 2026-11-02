@@ -3,11 +3,10 @@ set -euo pipefail
 export PSPDEV="${PSPDEV:-/home/david/projects/psp-dock-build/sdk/pspdev}"
 export PATH="$PSPDEV/bin:/usr/local/bin:/usr/bin:/bin"
 src="$(cd -- "$(dirname -- "$0")" && pwd)"
-work=/home/david/projects/psp-dock-build/native-dock-0301
-assets="$src/../composite-mscdemo/assets"
+work=/home/david/projects/psp-dock-build/native-dock-0302
+assets="$src/assets"
 mkdir -p "$work"
 cp "$src"/*.c "$src"/*.h "$src/Makefile" "$src/exports.exp" "$work/"
-cp "$src/../bridge-hid/report_descriptor.h" "$work/"
 cp "$src/../hid-only-lab/lab_gate.h" "$work/"
 
 # Compile the actual source snapshot with asynchronous host-only doubles.
@@ -56,4 +55,4 @@ if ((${#asset_licenses[@]} == 0)); then
 fi
 cp "${asset_licenses[@]}" "$src/dist/"
 sha256sum "$src/dist/docknative.prx" "$src/dist/EBOOT.PBP"
-printf '\n0301 BUILT; NO INSTALLATION OR PSP ACCESS; SONY COMPOSITION NEEDS PHYSICAL VALIDATION\n'
+printf '\n0302 BUILT; NO INSTALLATION OR PSP ACCESS; SESSION HANDSHAKE NEEDS PHYSICAL VALIDATION\n'

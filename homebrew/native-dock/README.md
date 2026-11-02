@@ -1,165 +1,198 @@
-# PSP Dock Native 0301
+# PSP Dock — firmware nativo 0302
 
-Variante separada de `composite-mscdemo` 0207. Pide al bus de Sony componer
-`USBStor_Driver` (Memory Stick real) y `PSPDockNativeHID` (mando y control de fases).
-El módulo Sony mantiene la propiedad del almacenamiento durante toda la sesión.
-Nuestra aplicación PSP no abre archivos, directorios ni sectores mientras USB está
-activo. Las fases son lógicas: permiten bloquear el mando durante una copia sin
-reconectar el USB ni disputar la FAT entre PSP y Windows.
+El nombre visible en XMB y en la aplicación es **PSP Dock**. La revisión, los
+módulos y códigos USB sólo aparecen en diagnóstico o al producirse un error.
+El botón de nota musical abre/cierra el diagnóstico local; no se transmite al
+juego y no cambia los ejes del mando. Los assets de esta variante están en
+`assets/` y se incluyen exactamente en el PBP. No se modifica la variante 0207.
 
-**La composición nativa está preparada para prueba física; una compilación o un
-test con dobles no demuestra que Sony la exponga correctamente.** La versión 0207
-y su disco ficticio permanecen intactos y sirven de referencia de HID/USBBus.
+Sony `USBStor_Driver` mantiene la propiedad de la Memory Stick durante toda la
+sesión. Nuestro kernel sólo añade HID y control de sesión al bus. La aplicación
+PSP no abre archivos, directorios ni sectores mientras USB está activo. Las
+fases son lógicas: las copias pueden bloquear el mando sin reenumerar USB ni
+compartir la FAT entre PSP y Windows.
 
-## Flujo
+## Evidencia y motivo de esta revisión
 
-1. Abrir PSP Dock en Windows; su pantalla espera a la PSP. No se instala servicio,
-   tarea al conectar USB ni proceso residente cuando se cierra la aplicación.
-2. Abrir **PSP Dock - Memory Stick + Mando 0301** en la PSP, con el cable retirado,
-   y pulsar X. Carga los módulos Sony y prepara ambas funciones USB. Conectar sólo
-   cuando aparece `LISTO`.
-3. Windows vincula el HID y el volumen del mismo dispositivo, inventaría juegos
-   y partidas compatibles, y ofrece partidas / juegos / todo / nada. `STORAGE` habilita
-   botones para esa elección. La PSP muestra `SINCRONIZANDO PSP`.
-4. Windows pide `COPYING` antes de escribir o `CONTROLLER` para navegar/jugar.
-   Debe esperar el ACK de fase. En `COPYING` los informes del mando son neutros.
-5. Copias posteriores usan `COPYING` y vuelven a `CONTROLLER` al terminar.
-6. Salir del dock Windows usa `EXIT_SYNC`: sólo partidas y guardados de emuladores
-   compatibles, nunca el catálogo de juegos. Terminado el trabajo se pide `SAFE`, se completan las
-   operaciones de cierre/expulsión en Windows y se indica retirar el cable.
-7. La PSP detiene USB sólo después de ausencia física durante 500 ms. Entonces
-   muestra el resumen y O vuelve al XMB. Un cambio de configuración USB no sale
-   de la aplicación.
+En la observación física de 0301, Windows enumeró almacenamiento Sony en MI_00,
+HID en MI_01 y el volumen real bajo el mismo padre USB. El bus Sony anunció
+**bcdDevice=0100**, aunque el descriptor aportado por nuestro HID llevaba 0301.
+Por ello la protección de revisión del cliente detuvo el inicio: la PSP tenía
+USB configurado, pero el cliente Windows nunca había confirmado una sesión.
+La fase STORAGE inicial no era evidencia de sincronización.
 
-La sincronización retro admite SRAM de los perfiles reconocidos. Los estados
-instantáneos sin un adaptador de formato verificado permanecen en su dispositivo;
-su respaldo opaco en el PC no equivale a convertirlos para otro emulador.
+0302 conserva la composición nativa e identifica el firmware mediante un
+FEATURE de 64 bytes, independiente del bcdDevice global. Sólo `HOST_BEGIN`,
+posterior a la vinculación del dispositivo en Windows, confirma la sesión.
+Leer descriptores o `GET_FEATURE` nunca inicia trabajo ni habilita botones.
+**La nueva identidad y sesión 0302 requieren su propia prueba física.** Las
+pruebas con dobles y la auditoría MIPS no la sustituyen.
 
-`SAFE` significa que el cliente ha terminado su trabajo. **No es prueba de
-expulsión de Windows**, y no apaga el almacenamiento. START+SELECT durante un
-segundo únicamente publica `EXIT_REQUESTED`; tampoco corta una copia activa.
-La UI pide finalizar desde Windows. El cliente puede convertir esa señal en el
-flujo normal de salida. La solicitud local permanece hasta desenchufar.
+## Flujo del producto
 
-## PDK2: contrato de 32 bytes
+1. Abrir PSP Dock en Windows. Espera la PSP; no se instala un servicio ni una
+   tarea residente y no queda un monitor al cerrar la aplicación.
+2. Abrir **PSP Dock** en la PSP, con el cable retirado, y pulsar X. Conectar
+   cuando aparece LISTO. La PSP muestra **Esperando a Windows** hasta el ACK de
+   `HOST_BEGIN`.
+3. Windows comprueba el FEATURE y la identidad de firmware, vincula HID y
+   volumen al mismo padre USB y confirma el volumen esperado. Dentro de la
+   intención de inventario registrada envía `HOST_BEGIN` y espera su ACK.
+4. `INVENTORY` informa **Sincronizando PSP** mientras lee juegos y partidas.
+   `CHOOSING` presenta partidas / juegos / todo / continuar sin copiar, y
+   habilita cruceta/X para elegir. `SYNC_IN` pausa el mando durante las copias.
+5. `CONTROLLER` habilita navegación/juego. Una copia posterior usa `COPYING` y
+   vuelve a `CONTROLLER` al terminar; el mando permanece neutral durante la copia.
+6. Salir usa `EXIT_SYNC`: se devuelven únicamente partidas y datos compatibles
+   de emuladores, nunca el catálogo completo de juegos. `SAFE` indica que el
+   cliente terminó su trabajo; Windows aún debe completar su expulsión normal.
+7. Sólo después de retirada física del cable durante 500 ms la PSP detiene
+   USB, drena callbacks y permite O para regresar al XMB.
 
-Se conserva el descriptor de mando FuSa/PSP Dock: entrada 8 bytes, salida 4 bytes
-sin efectos, FEATURE 32 bytes. `hidapi` para Windows añade un byte inicial de
-report ID 0, por lo que solicita/envía un buffer de **33 bytes**. El formato del
-payload es Python `struct.Struct('<4sBBBB16sIi')`, little endian.
+Los estados instantáneos sin adaptador de formato verificado no se convierten
+ni se sincronizan como si fueran compatibles. Su respaldo opaco en el PC sirve
+como copia de seguridad, no como conversión para otro emulador.
+
+START+SELECT durante un segundo publica `EXIT_REQUESTED`, sin cortar USB.
+Antes de confirmar Windows, la pantalla indica **Conexion cancelada**, expulsar
+la PSP en Windows y después retirar el cable. Si no hay cable se cierra sin
+esperar Windows. Tras una sesión real la solicitud queda pendiente de que el
+cliente termine juego/copias y cierre normalmente. Después de un reset que ya
+había tenido sesión, la UI pide revisar Windows, sin afirmar que nunca hubo
+trabajo. El latch de salida no se borra al recibir `HOST_BEGIN` ni al reconectar.
+
+## PDK2/v3: contrato exacto de 64 bytes
+
+Entrada del mando: **8 bytes**; salida: **4 bytes**, consumida sin efecto;
+FEATURE: **64 bytes**. Windows añade report ID cero y obtiene tamaños **9/5/65**.
+No hay nuevos report IDs. `native_report_descriptor.h` es independiente del
+header heredado de 0104/0207. Formato LE completo:
+`struct.Struct('<4sBBBB16sIi4sHHIBBHQQ')`.
 
 | Offset | Campo | Valor |
 |---:|---|---|
 | 0 | magic, 4 bytes | `PDK2` |
-| 4 | versión, u8 | 2 |
-| 5 | operación, u8 | STATUS=1; SET_PHASE=2 |
+| 4 | versión, u8 | 3 |
+| 5 | operación, u8 | STATUS=1; SET_PHASE=2; HOST_BEGIN=3; HOST_PROGRESS=4 |
 | 6 | fase, u8 | BOOT=0; STORAGE=1; CONTROLLER=2; COPYING=3; EXIT_SYNC=4; SAFE=5; ERROR=255 |
-| 7 | flags, u8 | CONNECTED=1; PENDING=2; SONY_STORAGE_STARTED=4; EXIT_REQUESTED=8 |
-| 8 | sesión, 16 bytes | Nueva, no nula, por arranque; correlación, no autenticación |
-| 24 | secuencia, u32 | Último comando aceptado; comienza en 0 |
+| 7 | flags, u8 | CONNECTED=1; PENDING=2; SONY_STORAGE=4; EXIT_REQUESTED=8; HOST_CONFIRMED=16 |
+| 8 | sesión, 16 bytes | Nonce no nulo por arranque/generación; correlación, no autenticación |
+| 24 | secuencia, u32 | Último comando aceptado; inicial 0 |
 | 28 | resultado, i32 | IDLE=0; QUEUED=1; APPLIED=2; negativo=fallo |
+| 32 | magic de identidad | `NAT3` |
+| 36 | firmware_revision, u16 | `0302` |
+| 38 | capabilities, u16 | `0007`: native storage=1; host begin=2; host progress=4 |
+| 40 | build_id, u32 | `03020001`, discriminador de build/ABI, no firma criptográfica |
+| 44 | activity, u8 | WAITING=0; INVENTORY=1; CHOOSING=2; SYNC_IN=3; COPY_GAME=4; CONTROLLER=5; SYNC_OUT=6; SAFE=7 |
+| 45 | progress_unit, u8 | UNKNOWN=0; BYTES=1; FILES=2 |
+| 46 | reservado, u16 | 0 |
+| 48 | completed, u64 | Cantidad realmente completada |
+| 56 | total, u64 | Cantidad total realmente conocida |
 
-`SET_PHASE` exige sesión exacta, flags 0 y resultado 0. La siguiente secuencia
-debe ser `status.sequence + 1`, sin desbordamiento. Una repetición idéntica de la
-última secuencia/fase devuelve el mismo resultado; un replay o la misma secuencia
-con distinta fase se rechaza. Sólo hay un comando pendiente. Los rechazos no
-reescriben el ACK del último comando aceptado; su contador/código aparece en el
-diagnóstico PSP. El cliente confirma sesión, secuencia, fase, `APPLIED` y ausencia
-de `PENDING` antes de continuar; no basta con que `SET_REPORT` haya terminado.
+Windows puede aceptar el contenedor USB `054C:01CD` con bcdDevice `0100` o `0302`
+sólo después de validar tamaños, protocolo y toda la identidad explícita. Una
+revisión USB por sí sola no identifica el build. El nombre, la letra de unidad
+y el número MI tampoco prueban la pertenencia del volumen.
+
+Todos los comandos llevan sesión e identidad exactas, flags y resultado cero,
+reservados cero, y siguiente secuencia sin desbordamiento. `HOST_BEGIN` y
+`SET_PHASE` llevan actividad/unidad/contadores cero. `HOST_BEGIN` sólo acepta
+STORAGE sin claim previo; permite una salida solicitada y no limpia ese latch.
+Se publica HOST_CONFIRMED únicamente cuando el worker aplica el comando tras
+completar EP0 y drenar los informes antiguos del mando.
+
+`SET_PHASE` exige claim. `HOST_PROGRESS` también lo exige, además de fase actual
+exacta y actividad válida. En STORAGE se admiten INVENTORY/CHOOSING/SYNC_IN; en
+cada otra fase se admite su actividad correspondiente. Actualiza sólo la UI:
+no concede acceso FAT, cambia fase, inicia almacenamiento ni prueba expulsión.
+UNKNOWN exige contadores cero; BYTES/FILES exigen total mayor que cero y
+completed menor o igual a total. La PSP muestra porcentaje sólo en ese último
+caso, con división exacta sin overflow y lectura coherente de los 64 bits.
+
+Sólo hay un comando pendiente. Una repetición byte a byte de la última
+secuencia conserva su ACK. Reutilizar secuencia con distinto opcode, fase,
+actividad o contador se rechaza. Un comando malformado no sustituye el ACK
+aceptado. El host confirma nonce/secuencia/fase/claim, APPLIED y ausencia de
+PENDING antes de continuar. Una entrega incierta requiere reconciliación;
+no autoriza repetir operaciones sobre archivos.
 
 | Fase actual | Destinos nuevos permitidos |
 |---|---|
 | STORAGE / CONTROLLER / COPYING | STORAGE / CONTROLLER / COPYING / EXIT_SYNC |
-| EXIT_SYNC | CONTROLLER (cancelar salida desde Windows) / SAFE |
+| EXIT_SYNC | CONTROLLER / SAFE |
 | SAFE | Ninguna otra fase durante esa sesión |
 
-Repetir la fase actual con una secuencia nueva es válido. Se parte de `STORAGE`.
-No se permite saltar directamente a `SAFE` sin `EXIT_SYNC`. En las transiciones
-se cancelan/drenan los informes HID antiguos antes de publicar `APPLIED`. Al
-volver a una fase interactiva hay que soltar botones y centrar el analógico para
-armar de nuevo la entrada. No se dejan botones pulsados de una pantalla anterior.
+La fase actual también se puede pedir con una secuencia nueva. No hay salto
+directo STORAGE→SAFE. La cancelación temprana puede confirmar `HOST_BEGIN`,
+pedir EXIT_SYNC y SAFE sin copiar, y efectuar la expulsión normal en Windows.
+SAFE nunca desactiva el USB mientras el cable esté presente.
 
-Errores de protocolo: FRAME=-1, SESSION=-2, SEQUENCE=-3, BUSY=-4,
-TRANSITION=-5, LINK=-6. Una desconfiguración que interrumpe un comando pendiente
-marca ese comando `LINK`; el host puede reconciliar el estado y usar la siguiente
-secuencia. No hay cambios de archivos ni de propietario FAT en callbacks USB.
+Errores: FRAME=-1, SESSION=-2, SEQUENCE=-3, BUSY=-4, TRANSITION=-5, LINK=-6,
+HANDSHAKE=-7, PROGRESS=-8. Al desconfigurar se invalida el claim y se neutraliza
+el mando. Un comando pendiente termina en LINK. Sólo cuando se drenan callbacks
+de la generación antigua se crea otro nonce, STORAGE y secuencia0; el cliente
+debe vincular de nuevo y resolver cualquier intención anterior. Durante el
+drenaje puede verse la fase anterior con CONNECTED=false, claim=false y
+actividad WAITING; eso no autoriza una operación.
 
-## Arranque, identidad y cierre
+## Arranque y propiedad
 
 El EBOOT es USER y sólo carga `ms0:/PSP/GAME/PSPDockNative/docknative.prx` antes de
-activar USB. El kernel carga, comprueba y arranca en orden los PRX oficiales
-`semawm`, `usbstor`, `usbstormgr`, `usbstorms`. Cada uno es obligatorio: cualquier
-error de carga, enlace o arranque detiene el intento. Antes de iniciar el bus se
-comprueba que Sony ha registrado `USBStor_Driver` y está detenido.
-No carga `usbstorboot.prx`, `pcact.prx`, `npdrm.prx` ni importa sus funciones.
-No carga `usbdevice.prx`, no selecciona flash/UMD, no usa `usbstoreflash.prx` y no
-escribe en flash. Esta primera variante está dirigida a la PSP con Memory Stick
-extraíble del desarrollo, no incorpora soporte PSP Go/EFlash.
+activar USB. El kernel carga y arranca en orden los PRX oficiales `semawm`,
+`usbstor`, `usbstormgr`, `usbstorms`. Cada uno sigue siendo obligatorio. Sony debe
+haber registrado `USBStor_Driver` y estar detenido antes de iniciar el bus.
+No se cargan Boot/Pcact/NPDRM/EFlash/USBDevice ni se usan API de filesystem,
+sectores, redirección, flash o UMD. Esta variante está dirigida a la PSP de
+desarrollo con Memory Stick extraíble; no añade soporte PSP Go/EFlash.
 
-La prueba física 0300 falló al arrancar la dependencia 5 (`usbstorboot.prx`),
-en la etapa 3 (`sceKernelStartModule`), con `8002013C` (`LIBRARY_NOTFOUND`). Los
-cuatro módulos anteriores habían arrancado. No se llegó a registrar HID ni a
-activar el bus. En los imports 6.61, Boot depende de `scePcact_driver` y de las
-funciones NPDRM de activación PC; los cuatro módulos del transporte no importan
-Boot. El módulo `usbstor` importa por sí mismo `sceUsbbdRegister/Unregister`.
-0301 elimina ese componente de activación innecesario para el Dock en lugar de
-ignorar su error o cargar funciones de activación. La foto no identifica cuál
-de las bibliotecas importadas faltaba; Pcact/NPDRM son la explicación del grafo
-de dependencias, no una lectura del import fallido en esa PSP.
+0300 falló en StartModule de `usbstorboot.prx`, dependencia5/etapa3, error
+8002013C LIBRARY_NOTFOUND. En 6.61 ese módulo importa Pcact/NPDRM de activación,
+mientras que los cuatro módulos del transporte no importan Boot y `usbstor`
+registra su driver por sí mismo. 0301 lo retiró de la cadena obligatoria y se
+observó la composición nativa real. No se ignora un fallo de las cuatro
+bibliotecas necesarias ni se inventa un NID para ocultarlo.
 
-La versión de módulo pasa a 3.1 y el magic compartido a `PDN1` (`314E4450`),
-por lo que mezclar el launcher y kernel de 0300/0301 se rechaza antes de iniciar
-trabajadores. Los índices de diagnóstico quedan: 1=semawm, 2=usbstor,
-3=usbstormgr, 4=usbstorms. La composición USB real todavía exige prueba física.
+0302 usa módulos versión3.2 y launch magic `PDN2` (`324E4450`). Launcher/kernel
+mezclados con 0300/0301 se rechazan antes de crear workers. Módulos prestados no
+se paran/descargan; sólo se detiene el bus iniciado por esta ejecución. Si un
+Sony PRX propio no admite descarga se conserva junto a sus dependencias sin
+mantener callbacks del HID propio. Un error de mando, timeout, flag SAFE o
+estado USB desconocido jamás autoriza cortar el volumen conectado.
 
-Cada módulo previamente presente se presta y nunca se para/descarga. Sólo se
-detiene un bus que esta ejecución inició. Un fallo de carga/arranque se presenta
-con código, etapa e índice de módulo, y revierte únicamente recursos propios.
-Si un PRX Sony propio no admite descarga se mantiene residente con sus
-dependencias y se muestra `cleanup_error`; esto no mantiene callbacks de nuestro
-HID ni impide descargar el controlador una vez drenado y desregistrado.
+Sony storage inicia antes que HID, que solicita interfaz automática. El bus
+encamina peticiones y se registra wIndex para diagnóstico, sin exigir cero.
+EP0 tiene buffer exclusivo de256bytes y control de generación. No se ejecutan
+órdenes tardías sobre otra sesión. Los informes antiguos se cancelan/drenan
+antes de ACK; después de cambiar de pantalla se deben soltar botones y centrar
+el analógico para armar nuevamente el mando.
 
-Se inicia Sony storage antes de HID para permitir a Sony reservar la interfaz 0.
-HID solicita una interfaz automática y atiende únicamente peticiones HID que el
-bus le ha encaminado, sin exigir `wIndex=0`. Registra el índice observado para
-diagnóstico. EP0 tiene buffer exclusivo y generación; reconfiguraciones drenan
-transferencias antiguas y no ejecutan comandos de una configuración obsoleta.
-
-Se activa el PID de laboratorio **01CD** bajo el VID suministrado por el bus Sony.
-El descriptor propio lleva `bcdDevice=0301`. **Sony puede elegir su descriptor
-global** al componer; el PID, revisión, interfaces, endpoints y ruta de control
-reales se deben observar en la prueba. No se debe aceptar otro volumen por letra
-de unidad ni usar el nombre del dispositivo como prueba de pertenencia. Antes
-de copiar, Windows debe vincular la función de almacenamiento y el HID PDK2 a
-su mismo padre USB y confirmar que el volumen es la Memory Stick esperada.
-
-## Construcción y pruebas
+## Construcción y verificación
 
 `bash homebrew/native-dock/build-wsl.sh` compila una copia separada en
-`/home/david/projects/psp-dock-build/native-dock-0301`. No instala ni abre la PSP.
-Incluye en PBP el título y los `ICON0/PIC0/PIC1` aprobados en 0207 y sus licencias.
-Mantiene los archivos del runtime en memoria; no lee imágenes de `ms0:` cuando
-Sony USBSTOR está activo.
+`/home/david/projects/psp-dock-build/native-dock-0302`. No instala ni abre la PSP.
+Incluye título exacto **PSP Dock**, ICON0/PIC0/PIC1 locales y sus licencias. No lee
+arte desde ms0 cuando Sony USBSTOR ya está activo.
 
-El harness compila **native_driver.c real**, con dobles asíncronos, y verifica:
-orden de arranque, fallos de cada dependencia, rollback, módulos/bus prestados,
-EP0 exclusivo, wIndex 1, ACK sólo tras cancelar input, protección frente a replay,
-reset de configuración sin salida y prohibición de apagar USB con cable presente
-o estado desconocido. Se ejecuta normal y con AddressSanitizer/UndefinedBehaviorSanitizer.
-La regresión 0301 reproduce `8002013C` al arrancar Boot en el doble Sony y
-comprueba que el transporte nunca lo carga. El mismo error en una dependencia
-obligatoria sigue impidiendo activación, y un Sony driver no registrado también
-bloquea el arranque. No se cargan Pcact, NPDRM, EFlash ni redirección USBDevice.
+El harness compila `native_driver.c` real con dobles asíncronos. Cubre orden y
+propiedad, fallos de cada dependencia obligatoria, Boot8002013C que no se carga,
+registros Sony, mezclas de launcher, EP0 exclusivo, Feature64, GET sin claim,
+ACK/replay, progreso64bit, input sólo tras claim y elección/mando, diagnóstico
+sin fuga a juego, reset con nonce nuevo y drenaje pendiente, salida temprana y
+salida real sin cortar USB. Se ejecuta normal y ASan/UBSan. Los tests de UI
+cubren estados anteriores y posteriores al handshake, errores, instrucciones
+de cancelación, porcentajes reales/overflow/lectura parcial y cierre al XMB.
 
-`audit_elf.py` comprueba los ELF MIPS, tablas/punteros/alineación, descriptor HID,
-imports de USER/kernel, las cuatro dependencias compiladas y su orden exacto,
-ausencia de filesystem/Boot/redirección y PBP con assets
-exactos. Su JSON marca explícitamente la validación física como pendiente.
+`audit_elf.py` revisa los ELF MIPS, versión3.2, ABI/punteros/alineación,
+descriptor64 y tamaños8/4/64 calculados, identidad NAT3 y policy ABI compiladas,
+imports USER/kernel, cuatro dependencias exactas y ausencia de las API
+prohibidas. PARAM.SFO se parsea para verificar TITLE exacto y se comparan los
+assets embebidos byte a byte. El JSON distingue identidad del protocolo y
+revisión USB, y mantiene la validación física de0302 como pendiente.
 
-La prueba física siguiente debe confirmar simultáneamente montaje nativo real y
-HID PDK2, inventario, elección con mando, copia verificada, vuelta al mando,
-sincronización final, expulsión y vuelta al XMB tras retirar cable. Los tests del
-PC no pueden resolver por sí solos la composición interna de Sony USBBus.
+La prueba siguiente debe verificar identificación PDK2/v3, confirmación de
+Windows, inventario, elección con mando, copia verificada, vuelta al mando,
+sincronización final, expulsión y vuelta al XMB. El código nunca eleva un test
+con dobles a prueba de comportamiento físico.
 
 ## Fuentes de implementación
 
