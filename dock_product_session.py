@@ -1,6 +1,6 @@
 """Bind the product workflow to Dock's real, verified file operations.
 
-Only the native 0300 transport activates this adapter. The existing Sony
+Only the native 0301 transport activates this adapter. The existing Sony
 manual workflow and the 0207 synthetic diagnostic retain their own gates.
 """
 from __future__ import annotations

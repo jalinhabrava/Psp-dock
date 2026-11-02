@@ -11,8 +11,9 @@
 #include <stdio.h>
 #include <string.h>
 #include "native_common.h"
+#include "native_ui.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,0);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,1);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;
@@ -95,71 +96,42 @@ static void ui_init(void) {
     pspDebugScreenClear();
     /* Let a frame scheduled by debug initialization become current. */
     sceDisplayWaitVblankStart();draw_brand();
-    ui_line(40,UI_MUTED,"MEMORY STICK + MANDO / 0300");
+    ui_line(40,UI_MUTED,"MEMORY STICK + MANDO / %04X",(unsigned)PDN_REVISION);
 }
 
-static const char *stage_name(unsigned stage) {
-    switch(stage){
-        case PDN_STAGE_INIT:return "Preparando PSP Dock...";
-        case PDN_STAGE_GUARD:return "Comprobando conexion USB...";
-        case PDN_STAGE_MODULE_LOAD:return "Cargando almacenamiento Sony...";
-        case PDN_STAGE_MODULE_START:return "Iniciando almacenamiento Sony...";
-        case PDN_STAGE_BUS_START:return "Iniciando bus USB...";
-        case PDN_STAGE_HID_REGISTER:return "Registrando mando PSP Dock...";
-        case PDN_STAGE_HID_START:return "Iniciando mando...";
-        case PDN_STAGE_STORAGE_START:return "Preparando Memory Stick...";
-        case PDN_STAGE_ACTIVATE:return "Activando conexion...";
-        case PDN_STAGE_READY:return "LISTO: conecta el cable USB";
-        case PDN_STAGE_RECONNECT:return "Windows reconfigura USB; espera...";
-        case PDN_STAGE_WAIT_UNPLUG:return "Finaliza en Windows antes de desconectar";
-        case PDN_STAGE_STOPPING:return "Cerrando conexion...";
-        case PDN_STAGE_STOPPED:return "PSP Dock detenido";
-        case PDN_STAGE_ERROR:return "No se pudo iniciar o continuar el dock";
-        default:return "PSP conectada";
-    }
-}
-static const char *phase_name(unsigned phase) {
-    switch(phase){
-        case PDN_PHASE_STORAGE:return "SINCRONIZANDO PSP";
-        case PDN_PHASE_CONTROLLER:return "MODO MANDO";
-        case PDN_PHASE_COPYING:return "COPIANDO; espera a que termine";
-        case PDN_PHASE_EXIT_SYNC:return "GUARDANDO PARTIDAS Y ESTADOS";
-        case PDN_PHASE_SAFE:return "SINCRONIZACION FINALIZADA";
-        case PDN_PHASE_ERROR:return "ERROR; finaliza en Windows";
-        default:return "PREPARANDO PSP DOCK";
-    }
-}
-static void draw_status(void) {
-    ui_line(68,state.error?UI_ERROR:UI_TEAL,"%s",stage_name(state.stage));
-    ui_line(92,UI_WHITE,"%s",phase_name(state.phase));
-    if(state.phase==PDN_PHASE_STORAGE){
-        ui_line(112,UI_MUTED,"Elige en Windows: partidas, juegos, todo o nada.");
-        ui_line(126,UI_MUTED,"Puedes usar la cruceta y X para elegir.");
-    }else if(state.phase==PDN_PHASE_CONTROLLER){
-        ui_line(112,UI_MUTED,"Navega y juega con los botones de tu PSP.");
-        ui_line(126,UI_MUTED,"Salir en Windows guarda partidas y estados.");
-    }else if(state.phase==PDN_PHASE_SAFE){
-        ui_line(112,UI_MUTED,"Espera el aviso de Windows para retirar USB.");
-        ui_line(126,UI_MUTED,"Desconecta el cable para volver al XMB.");
-    }else{
-        ui_line(112,UI_MUTED,"Consulta el progreso en PSP Dock de Windows.");
-        ui_line(126,UI_MUTED,"Manten el cable conectado durante la copia.");
-    }
-    ui_line(156,UI_MUTED,"USB %08X  Mando %u  IF %u",
-        (unsigned)state.usb_state,(unsigned)state.hid_reports,(unsigned)state.hid_interface);
+static void draw_status(int module_unloaded) {
+    PdnUiView view=pdn_ui_present(&state,module_unloaded);
+    ui_line(68,view.warning?UI_ERROR:UI_TEAL,"%s",view.heading);
+    ui_line(92,UI_WHITE,"%s",view.context);
+    ui_line(112,UI_MUTED,"%s",view.detail);
+    ui_line(126,UI_MUTED,"%s",view.action);
+    ui_line(156,UI_MUTED,"USB %08X  HID %u  IF %s",
+        (unsigned)state.usb_state,(unsigned)state.hid_reports,view.interface_label);
     ui_line(168,UI_MUTED,"Sony %u  Fase %u  ACK %u/%d",
         (unsigned)state.sony_storage_started,(unsigned)state.phase,
         (unsigned)state.sequence,(int)state.phase_result);
-    ui_line(180,UI_MUTED,"Arranque %u Modulo %u  Cargados %02X Reusados %02X",
+    ui_line(180,UI_MUTED,"Bus %08X  Sony antes/desp %08X/%08X",
+        (unsigned)state.bus_before,(unsigned)state.storage_before,(unsigned)state.storage_after);
+    ui_line(192,UI_MUTED,"Paso %u Mod %u  Carg %02X Reus %02X",
         (unsigned)state.stage,(unsigned)state.dependency,
         (unsigned)state.modules_loaded,(unsigned)state.modules_borrowed);
-    ui_line(192,state.error?UI_ERROR:UI_MUTED,"Error %08X en %u  Cierre %08X",
+    ui_line(204,view.warning?UI_ERROR:UI_MUTED,"Error %08X en %u  Cierre %08X",
         (unsigned)state.error,(unsigned)state.error_stage,(unsigned)state.cleanup_error);
-    ui_line(204,UI_MUTED,"Control %u  SETUP %08X  Interfaz/valor %08X",
+    ui_line(216,UI_MUTED,"Ctrl %u  SETUP %08X  IF/valor %08X",
         (unsigned)state.ctrl_requests,(unsigned)state.last_setup,(unsigned)state.last_value_index);
-    ui_line(230,UI_TEAL,state.exit_requested?"SALIDA SOLICITADA: termina en Windows":
-        "START + SELECT (1 s): solicitar salida");
-    ui_line(246,UI_MUTED,"El mando se bloquea mientras se copian archivos.");
+    ui_line(230,UI_TEAL,"%s",view.footer);
+    ui_line(244,UI_MUTED,"%s",view.footer_note);
+    ui_line(258,UI_TEAL,"%s",view.exit_hint);
+}
+static void draw_launcher_failure(const char *operation,int result,int status) {
+    ui_clear_body();
+    ui_line(68,UI_ERROR,"Arranque detenido");
+    ui_line(92,UI_WHITE,"No se pudo %s el controlador.",operation);
+    ui_line(112,UI_MUTED,"Archivo: docknative.prx");
+    ui_line(126,UI_MUTED,"No se ha iniciado una sesion de Dock.");
+    ui_line(156,UI_ERROR,"Resultado %08X  Estado %08X",(unsigned)result,(unsigned)status);
+    ui_line(230,UI_WHITE,"Fotografia esta pantalla para revisar el fallo.");
+    ui_line(258,UI_TEAL,"O  VOLVER AL XMB");
 }
 static void wait_cancel(void) {
     SceCtrlData pad;int released=0;
@@ -196,34 +168,29 @@ int main(void) {
      */
     module=sceKernelLoadModule("ms0:/PSP/GAME/PSPDockNative/docknative.prx",0,NULL);
     if(module<0){
-        ui_line(100,UI_ERROR,"No se pudo cargar docknative.prx: %08X",(unsigned)module);
-        ui_line(236,UI_TEAL,"O  VOLVER AL XMB");wait_cancel();sceKernelExitGame();return 0;
+        draw_launcher_failure("cargar",module,0);
+        wait_cancel();sceKernelExitGame();return 0;
     }
     result=sceKernelStartModule(module,sizeof(launch),&launch,&exit_status,NULL);
     if(result<0 || exit_status<0){
-        ui_line(100,UI_ERROR,"No se pudo iniciar: %08X / %08X",
-            (unsigned)result,(unsigned)exit_status);
+        draw_launcher_failure("iniciar",result,exit_status);
         /* module_start starts no worker on failure; no USB is reachable. */
         sceKernelUnloadModule(module);
-        ui_line(236,UI_TEAL,"O  VOLVER AL XMB");wait_cancel();sceKernelExitGame();return 0;
+        wait_cancel();sceKernelExitGame();return 0;
     }
     for(;;){
         sceCtrlPeekBufferPositive(&pad,1);
         if((pad.Buttons&(PSP_CTRL_START|PSP_CTRL_SELECT))==(PSP_CTRL_START|PSP_CTRL_SELECT)){
             if(++hold>=10)state.request_stop=1;
         }else hold=0;
-        draw_status();if(unload_retry>0)--unload_retry;
+        draw_status(0);if(unload_retry>0)--unload_retry;
         if(state.safe_to_unload && !unload_retry){
             int stopped=-1;
             result=sceKernelStopModule(module,0,NULL,&stopped,NULL);
             if(result>=0 && stopped>=0){
                 result=sceKernelUnloadModule(module);
                 if(result>=0){
-                    draw_status();ui_clear_footer();
-                    ui_line(230,UI_TEAL,"PSP DOCK DETENIDO");
-                    ui_line(244,UI_WHITE,state.error?"Fotografia los codigos para revisar el arranque.":
-                        "Ya puedes volver al menu de tu PSP.");
-                    ui_line(258,UI_TEAL,"Pulsa O de nuevo para volver al XMB.");
+                    draw_status(1);
                     wait_cancel();break;
                 }
             }

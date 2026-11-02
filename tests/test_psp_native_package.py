@@ -1,4 +1,4 @@
-"""Native package bytes, branded PBP and independent 0300 schema gates."""
+"""Native package bytes, branded PBP and independent 0301 schema gates."""
 import hashlib
 import json
 from pathlib import Path
@@ -12,7 +12,10 @@ from tests.test_psp_msc_package import pbp, sfo
 
 
 def abi_for(raw=b'NATIVE-ELF-FIXTURE'):
-    return {'revision': '0300', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+    return {'revision': '0301', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+            'mandatory_modules': ['flash0:/kd/semawm.prx', 'flash0:/kd/usbstor.prx',
+                                  'flash0:/kd/usbstormgr.prx', 'flash0:/kd/usbstorms.prx'],
+            'optional_bootstrap_modules': [],
             'function_descriptors_verified': True, 'hid_function_interfaces': 1,
             'hid_input_bytes': 8, 'hid_feature_bytes': 32, 'protocol': 'PDK2/v2',
             'storage_backend': 'native Sony USBStor_Driver', 'kernel_filesystem_imports': [],
@@ -31,7 +34,7 @@ def fixture_native_package(root: Path) -> Path:
     for name, raw in blobs.items():
         (folder / name).write_bytes(raw)
         records[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
-    manifest = {'schema': package.SCHEMA, 'revision': '0300', 'folder': package.REMOTE_FOLDER,
+    manifest = {'schema': package.SCHEMA, 'revision': '0301', 'folder': package.REMOTE_FOLDER,
                 'expected_usb_identity': dict(package.USB_IDENTITY), 'synthetic_storage': False,
                 'storage_backend': 'native Sony USBStor_Driver', 'storage_read_only': False,
                 'real_memory_stick_access_requested': True, 'installed_on_psp': False,
@@ -54,7 +57,8 @@ class NativePackageTests(unittest.TestCase):
         visual = package.audit_pbp(pbp(title=package.TITLE))
         self.assertEqual(visual['title'], package.TITLE)
         self.assertEqual(set(visual['artwork']), {'ICON0.PNG', 'PIC0.PNG', 'PIC1.PNG'})
-        for title in ('PSP Dock - USB Storage + HID 0207', 'PSP Dock'):
+        for title in ('PSP Dock - USB Storage + HID 0207',
+                      'PSP Dock - Memory Stick + Mando 0300', 'PSP Dock'):
             with self.subTest(title=title), self.assertRaises(ValueError):
                 package.audit_pbp(pbp(title=title))
 
@@ -70,14 +74,26 @@ class NativePackageTests(unittest.TestCase):
         root = fixture_native_package(self.root / 'package')
         file = root / 'manifest.json'
         original = json.loads(file.read_text())
-        for key, value in [('schema', 'pspdock-msc-test-package-v1'), ('revision', '0207'),
+        for key, value in [('schema', 'pspdock-msc-test-package-v1'), ('revision', '0207'), ('revision', '0300'),
                            ('folder', 'PSP/GAME/PSPDockStorageTest'), ('synthetic_storage', True),
                            ('storage_read_only', True), ('hardware_execution_verified', True)]:
             changed = {**original, key: value};file.write_text(json.dumps(changed))
             with self.subTest(key=key), self.assertRaises(ValueError):
                 package.verify_package(root)
         file.write_text(json.dumps(original))
-        self.assertEqual(package.verify_package(root)['revision'], '0300')
+        self.assertEqual(package.verify_package(root)['revision'], '0301')
+
+    def test_old_or_optional_bootstrap_is_not_a_valid_0301_audit(self):
+        root = fixture_native_package(self.root / 'package')
+        file = root / 'manifest.json'
+        original = json.loads(file.read_text())
+        for changes in ({'revision': '0300'}, {'mandatory_modules': []},
+                        {'mandatory_modules': abi_for()['mandatory_modules'] + ['flash0:/kd/usbstorboot.prx']},
+                        {'optional_bootstrap_modules': ['flash0:/kd/npdrm.prx']}):
+            changed = {**original, 'compiled_abi': {**original['compiled_abi'], **changes}}
+            file.write_text(json.dumps(changed))
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                package.verify_package(root)
 
     def test_changed_firmware_or_extra_file_is_rejected(self):
         root = fixture_native_package(self.root / 'package')

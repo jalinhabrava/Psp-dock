@@ -67,6 +67,8 @@ class InspectorTests(unittest.TestCase):
         result = api.inspect(PATH)
         self.assertEqual(result['revision_hex'], '0100')
         self.assertFalse(result['supported_revision'])
+        self.assertEqual(result['revision_status'], 'unknown')
+        self.assertFalse(result['retired_revision'])
         self.assertTrue(result['pdk2_valid'])
         self.assertFalse(result['writes_authorized'])
         self.assertFalse(result['can_change_phase'])
@@ -76,13 +78,30 @@ class InspectorTests(unittest.TestCase):
         self.assertEqual(api.calls[-1], ('close', 42))
 
     def test_supported_revision_does_not_authorize_mutations(self):
-        api = LowLevelFake(revision=0x0300)
-        self.assertTrue(api.inspect(PATH)['supported_revision'])
+        api = LowLevelFake(revision=0x0301)
+        result = api.inspect(PATH)
+        self.assertTrue(result['supported_revision'])
+        self.assertEqual(result['revision_status'], 'supported')
+        self.assertFalse(result['retired_revision'])
+        self.assertFalse(result['writes_authorized'])
         with self.assertRaises(inspect.InspectionError):
             with api.open(PATH, write=True):
                 self.fail('write handle opened')
         with self.assertRaises(inspect.InspectionError):
             api.set(42, b'x' * 33)
+
+    def test_0300_remains_observable_but_retired_and_never_authorized(self):
+        api = LowLevelFake(revision=0x0300)
+        result = api.inspect(PATH)
+        self.assertTrue(result['pdk2_valid'])
+        self.assertTrue(result['retired_revision'])
+        self.assertEqual(result['revision_status'], 'retired')
+        self.assertFalse(result['supported_revision'])
+        self.assertFalse(result['writes_authorized'])
+        self.assertFalse(result['can_change_phase'])
+        self.assertEqual(next(args for name, args in api.calls if name == 'open')[1], 0)
+        with self.assertRaises(inspect.InspectionError):
+            api.set(42, b'\0' * 33)
 
     def test_caps_mismatch_is_reported_without_wrong_feature_request(self):
         api = LowLevelFake(feature_bytes=129)

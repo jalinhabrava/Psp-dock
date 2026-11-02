@@ -1,0 +1,79 @@
+{
+  "schema": "pspdock-native-0300-physical-start-failure-v1",
+  "recorded_date_utc": "2026-11-02",
+  "source": "User photograph and report: El dock fallo al iniciarlo",
+  "photo": {
+    "original_filename": "image-1793618743802.jpg",
+    "sha256": "6cd721e0ad30299fe0987d041df92ce66eb007e6bf2e09ad886cff4e5db2494a",
+    "image_committed": false
+  },
+  "installed_revision": "0300",
+  "implementation_commit": "90688974e6f6f9225d6003e89b58d3bc81a175db",
+  "observed": {
+    "heading": "PSP DOCK",
+    "subtitle": "MEMORY STICK + MANDO / 0300",
+    "message": "No se pudo iniciar o continuar el dock",
+    "stale_phase_message": "SINCRONIZANDO PSP",
+    "usb_state_hex": "00000111",
+    "hid_reports": 0,
+    "hid_interface_raw": 4294967295,
+    "sony_storage_started": 0,
+    "phase": 1,
+    "sequence": 0,
+    "phase_result": 0,
+    "stage": 255,
+    "dependency": 5,
+    "modules_loaded_hex": "1F",
+    "modules_borrowed_hex": "00",
+    "error_hex": "8002013C",
+    "error_stage": 3,
+    "cleanup_error_hex": "00000000",
+    "control_requests": 0,
+    "last_setup_hex": "00000000",
+    "last_value_index_hex": "00000000",
+    "footer": "PSP DOCK DETENIDO"
+  },
+  "interpretation": {
+    "failing_module_path": "flash0:/kd/usbstorboot.prx",
+    "failing_module_name": "sceUSB_Stor_Boot_Driver",
+    "operation": "sceKernelStartModule return value or module start status",
+    "kernel_error": "SCE_KERNEL_ERROR_LIBRARY_NOTFOUND",
+    "which_library_was_missing": "Not identified by this photograph; no on-device import-resolution trace is available.",
+    "all_five_modules_loaded": true,
+    "first_four_modules_started": true,
+    "failure_before_sony_function_start": true,
+    "failure_before_hid_registration_and_usb_activation": true
+  },
+  "primary_sources": [
+    {
+      "url": "https://pspdev.github.io/pspsdk/pspkerror_8h_source.html",
+      "supports": "8002013C is LIBRARY_NOTFOUND"
+    },
+    {
+      "url": "https://github.com/Spenon-dev/PSPLibDoc/blob/c2834ef4abf881b95fb2eb798b85bb94cf195eb6/PSPLibDoc/6.61/Import/kd/usbstorboot.xml",
+      "supports": "6.61 Boot imports Pcact and NPDRM activation APIs; it consumes sceUsbstor_internal and does not import EFlash."
+    }
+  ],
+  "correction_0301": {
+    "remove_unneeded_boot_dependency": true,
+    "mandatory_modules": [
+      "semawm.prx",
+      "usbstor.prx",
+      "usbstormgr.prx",
+      "usbstorms.prx"
+    ],
+    "mandatory_failures_remain_fatal": true,
+    "add_pc_activation_or_flash_redirection_modules": false,
+    "error_screen_must_override_stale_phase": true,
+    "unknown_hid_interface_must_be_readable": true,
+    "new_hardware_validation_required": true
+  },
+  "physical_native_acceptance": {
+    "0300_startup_passed": false,
+    "native_composition_verified": false,
+    "real_memory_stick_access_verified": false,
+    "synchronization_performed": false,
+    "hid_input_verified": false,
+    "0301_execution_verified": false
+  }
+}

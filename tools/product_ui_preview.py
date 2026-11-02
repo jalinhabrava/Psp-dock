@@ -40,7 +40,7 @@ from dock_product_flow import MESSAGES, PHASES, plan_session_return
 
 VOLUME = "QA-FIXTURE-ONLY"
 PSP_ROOT = "Q:\\"
-PID, REVISION = 0x01CD, 0x0300
+PID, REVISION = 0x01CD, 0x0301
 SCENARIOS = (
     ("choosing", "choosing", "initial", None),
     ("syncing_in", "syncing_in", "initial", "all"),

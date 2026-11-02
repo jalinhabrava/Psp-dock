@@ -45,10 +45,10 @@ equal(connection({ ...storage, product_flow: flow('ready') }).canPlay, false,
   'Ready does not fabricate a gamepad');
 equal(connection({ ...stable, demo: true, product_flow: flow('ready') }).canPlay, false);
 const native = { selected_device: 'G:\\', controller_status: { connected: true, mode: 'native_dock', can_play: true,
-  synthetic_storage: false, product_id: 0x01cd, revision: 0x0300, phase: 2 }, product_flow: flow('ready') };
+  synthetic_storage: false, product_id: 0x01cd, revision: 0x0301, phase: 2 }, product_flow: flow('ready') };
 equal(connection(native).canPlay, true, 'Verified native Dock can keep its Sony storage enumerated');
 equal(connection(native).nativeController, true);
-for (const changes of [{ product_id: 0x01cc }, { revision: 0x0207 }, { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
+for (const changes of [{ product_id: 0x01cc }, { revision: 0x0207 }, { revision: 0x0300 }, { revision: 0x0302 }, { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
   equal(connection({ ...native, controller_status: { ...native.controller_status, ...changes } }).canPlay,
     false, 'Native identity, controller phase and host eligibility must all agree');
 }

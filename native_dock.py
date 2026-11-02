@@ -22,7 +22,8 @@ from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError, VID
 from psp_usb import PspStorage, identify, _volume_serial
 
 PID = 0x01CD
-REVISION = 0x0300
+REVISION = 0x0301
+RETIRED_REVISIONS = frozenset({0x0300})
 MAGIC, VERSION = b'PDK2', 2
 STATUS, SET_PHASE = 1, 2
 STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR = 1, 2, 3, 4, 5, 255
@@ -93,7 +94,7 @@ class NativeHid(_WindowsHid):
     @contextmanager
     def open(self, path: str, write: bool = False):
         if not isinstance(path, str) or not HID_PATH.match(path):
-            raise NativeDockError('La ruta no pertenece al Dock nativo 0300.')
+            raise NativeDockError('La ruta no pertenece al Dock nativo 0301.')
         handle = self.kernel.CreateFileW(path, 0xC0000000 if write else 0,
                                           3, None, 3, 0, None)
         if handle == C.c_void_p(-1).value:
@@ -101,6 +102,8 @@ class NativeHid(_WindowsHid):
         try:
             attrs = self.attributes(handle)
             if attrs['revision'] != REVISION:
+                if attrs['revision'] in RETIRED_REVISIONS:
+                    raise NativeDockError('PSP Dock 0300 está retirado; instala la revisión 0301 comprobada.')
                 raise NativeDockError('Revisión nativa no verificada: ' + hex(attrs['revision']))
             data = C.c_void_p()
             if not self.hid.HidD_GetPreparsedData(handle, C.byref(data)):

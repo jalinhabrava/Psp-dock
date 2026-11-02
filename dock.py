@@ -2129,9 +2129,10 @@ class Dock:
         seen = self.snapshot.get('controller_status', {})
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
+        from native_dock import PID as NATIVE_PID, REVISION as NATIVE_REVISION
         profiles = {'hid_manual': (0x01CB, 0x0104),
                     'msc_diagnostic': (0x01CC, 0x0207),
-                    'native_dock': (0x01CD, 0x0300)}
+                    'native_dock': (NATIVE_PID, NATIVE_REVISION)}
         if self.product_flow.enabled and self.product_flow.snapshot()['phase'] not in ('choosing','ready','attention'):
             return idle('La navegación está bloqueada mientras se prepara o copia el contenido.')
         expected = profiles.get(seen.get('mode'))

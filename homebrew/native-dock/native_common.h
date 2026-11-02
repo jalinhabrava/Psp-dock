@@ -7,9 +7,10 @@
 #define PDN_DRIVER_NAME "PSPDockNativeHID"
 /* Lab identity, not an allocated production Sony VID/PID. */
 #define PDN_PRODUCT 0x01cdu
-#define PDN_REVISION 0x0300u
-#define PDN_LAUNCH_MAGIC 0x304e4450u
-#define PDN_DEPENDENCIES 5u
+#define PDN_REVISION 0x0301u
+/* PDN1 rejects a mixed 0300 launcher/kernel before starting any worker. */
+#define PDN_LAUNCH_MAGIC 0x314e4450u
+#define PDN_DEPENDENCIES 4u
 
 enum PdnStage {
     PDN_STAGE_INIT=0, PDN_STAGE_GUARD=1, PDN_STAGE_MODULE_LOAD=2,

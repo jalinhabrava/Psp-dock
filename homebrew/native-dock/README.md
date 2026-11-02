@@ -1,4 +1,4 @@
-# PSP Dock Native 0300
+# PSP Dock Native 0301
 
 Variante separada de `composite-mscdemo` 0207. Pide al bus de Sony componer
 `USBStor_Driver` (Memory Stick real) y `PSPDockNativeHID` (mando y control de fases).
@@ -15,7 +15,7 @@ y su disco ficticio permanecen intactos y sirven de referencia de HID/USBBus.
 
 1. Abrir PSP Dock en Windows; su pantalla espera a la PSP. No se instala servicio,
    tarea al conectar USB ni proceso residente cuando se cierra la aplicación.
-2. Abrir **PSP Dock - Memory Stick + Mando 0300** en la PSP, con el cable retirado,
+2. Abrir **PSP Dock - Memory Stick + Mando 0301** en la PSP, con el cable retirado,
    y pulsar X. Carga los módulos Sony y prepara ambas funciones USB. Conectar sólo
    cuando aparece `LISTO`.
 3. Windows vincula el HID y el volumen del mismo dispositivo, inventaría juegos
@@ -88,11 +88,29 @@ secuencia. No hay cambios de archivos ni de propietario FAT en callbacks USB.
 
 El EBOOT es USER y sólo carga `ms0:/PSP/GAME/PSPDockNative/docknative.prx` antes de
 activar USB. El kernel carga, comprueba y arranca en orden los PRX oficiales
-`semawm`, `usbstor`, `usbstormgr`, `usbstorms`, `usbstorboot`. Nunca importa
-`sceUsbstorBoot*` antes de cargar esas dependencias ni necesita sus funciones.
+`semawm`, `usbstor`, `usbstormgr`, `usbstorms`. Cada uno es obligatorio: cualquier
+error de carga, enlace o arranque detiene el intento. Antes de iniciar el bus se
+comprueba que Sony ha registrado `USBStor_Driver` y está detenido.
+No carga `usbstorboot.prx`, `pcact.prx`, `npdrm.prx` ni importa sus funciones.
 No carga `usbdevice.prx`, no selecciona flash/UMD, no usa `usbstoreflash.prx` y no
 escribe en flash. Esta primera variante está dirigida a la PSP con Memory Stick
 extraíble del desarrollo, no incorpora soporte PSP Go/EFlash.
+
+La prueba física 0300 falló al arrancar la dependencia 5 (`usbstorboot.prx`),
+en la etapa 3 (`sceKernelStartModule`), con `8002013C` (`LIBRARY_NOTFOUND`). Los
+cuatro módulos anteriores habían arrancado. No se llegó a registrar HID ni a
+activar el bus. En los imports 6.61, Boot depende de `scePcact_driver` y de las
+funciones NPDRM de activación PC; los cuatro módulos del transporte no importan
+Boot. El módulo `usbstor` importa por sí mismo `sceUsbbdRegister/Unregister`.
+0301 elimina ese componente de activación innecesario para el Dock en lugar de
+ignorar su error o cargar funciones de activación. La foto no identifica cuál
+de las bibliotecas importadas faltaba; Pcact/NPDRM son la explicación del grafo
+de dependencias, no una lectura del import fallido en esa PSP.
+
+La versión de módulo pasa a 3.1 y el magic compartido a `PDN1` (`314E4450`),
+por lo que mezclar el launcher y kernel de 0300/0301 se rechaza antes de iniciar
+trabajadores. Los índices de diagnóstico quedan: 1=semawm, 2=usbstor,
+3=usbstormgr, 4=usbstorms. La composición USB real todavía exige prueba física.
 
 Cada módulo previamente presente se presta y nunca se para/descarga. Sólo se
 detiene un bus que esta ejecución inició. Un fallo de carga/arranque se presenta
@@ -108,7 +126,7 @@ diagnóstico. EP0 tiene buffer exclusivo y generación; reconfiguraciones drenan
 transferencias antiguas y no ejecutan comandos de una configuración obsoleta.
 
 Se activa el PID de laboratorio **01CD** bajo el VID suministrado por el bus Sony.
-El descriptor propio lleva `bcdDevice=0300`. **Sony puede elegir su descriptor
+El descriptor propio lleva `bcdDevice=0301`. **Sony puede elegir su descriptor
 global** al componer; el PID, revisión, interfaces, endpoints y ruta de control
 reales se deben observar en la prueba. No se debe aceptar otro volumen por letra
 de unidad ni usar el nombre del dispositivo como prueba de pertenencia. Antes
@@ -118,7 +136,7 @@ su mismo padre USB y confirmar que el volumen es la Memory Stick esperada.
 ## Construcción y pruebas
 
 `bash homebrew/native-dock/build-wsl.sh` compila una copia separada en
-`/home/david/projects/psp-dock-build/native-dock-v1`. No instala ni abre la PSP.
+`/home/david/projects/psp-dock-build/native-dock-0301`. No instala ni abre la PSP.
 Incluye en PBP el título y los `ICON0/PIC0/PIC1` aprobados en 0207 y sus licencias.
 Mantiene los archivos del runtime en memoria; no lee imágenes de `ms0:` cuando
 Sony USBSTOR está activo.
@@ -128,9 +146,14 @@ orden de arranque, fallos de cada dependencia, rollback, módulos/bus prestados,
 EP0 exclusivo, wIndex 1, ACK sólo tras cancelar input, protección frente a replay,
 reset de configuración sin salida y prohibición de apagar USB con cable presente
 o estado desconocido. Se ejecuta normal y con AddressSanitizer/UndefinedBehaviorSanitizer.
+La regresión 0301 reproduce `8002013C` al arrancar Boot en el doble Sony y
+comprueba que el transporte nunca lo carga. El mismo error en una dependencia
+obligatoria sigue impidiendo activación, y un Sony driver no registrado también
+bloquea el arranque. No se cargan Pcact, NPDRM, EFlash ni redirección USBDevice.
 
 `audit_elf.py` comprueba los ELF MIPS, tablas/punteros/alineación, descriptor HID,
-imports de USER/kernel, ausencia de filesystem/Boot/redirección y PBP con assets
+imports de USER/kernel, las cuatro dependencias compiladas y su orden exacto,
+ausencia de filesystem/Boot/redirección y PBP con assets
 exactos. Su JSON marca explícitamente la validación física como pendiente.
 
 La prueba física siguiente debe confirmar simultáneamente montaje nativo real y
@@ -142,8 +165,18 @@ PC no pueden resolver por sí solos la composición interna de Sony USBBus.
 
 - PSPSDK `src/usb/pspusbbus.h`, ABI real de drivers y callbacks:
   <https://github.com/pspdev/pspsdk/blob/master/src/usb/pspusbbus.h>
-- ARK-5 `extras/menus/arkMenu/src/usb.cpp`, arranque de módulos Sony sin import
-  previo de Boot; copia consultada en `references/ark-usb/menu-usb.cpp`.
+- ARK-5 `extras/menus/arkMenu/src/usb.cpp`, referencia de uso de USB Sony;
+  copia consultada en `references/ark-usb/menu-usb.cpp`. Ese código no comprueba
+  el resultado de StartModule; su listado de PRX no demuestra que Boot arranque.
+- PSPLibDoc, imports/exports extraídos de firmware 6.61, commit
+  `c2834ef4abf881b95fb2eb798b85bb94cf195eb6`:
+  [semawm](https://github.com/Spenon-dev/PSPLibDoc/blob/c2834ef4abf881b95fb2eb798b85bb94cf195eb6/PSPLibDoc/6.61/Import/kd/semawm.xml),
+  [usbstor: registro USBBus](https://github.com/Spenon-dev/PSPLibDoc/blob/c2834ef4abf881b95fb2eb798b85bb94cf195eb6/PSPLibDoc/6.61/Import/kd/usbstor.xml),
+  [usbstormgr](https://github.com/Spenon-dev/PSPLibDoc/blob/c2834ef4abf881b95fb2eb798b85bb94cf195eb6/PSPLibDoc/6.61/Import/kd/usbstormgr.xml),
+  [usbstorms](https://github.com/Spenon-dev/PSPLibDoc/blob/c2834ef4abf881b95fb2eb798b85bb94cf195eb6/PSPLibDoc/6.61/Import/kd/usbstorms.xml),
+  [Boot: imports Pcact/NPDRM](https://github.com/Spenon-dev/PSPLibDoc/blob/c2834ef4abf881b95fb2eb798b85bb94cf195eb6/PSPLibDoc/6.61/Import/kd/usbstorboot.xml).
+- PSPSDK `pspkerror.h`, definición del código `8002013C`:
+  <https://pspdev.github.io/pspsdk/pspkerror_8h_source.html>.
 - uOFW `src/kd/usbacc/usbacc.c`, encaminamiento de peticiones de interfaz por
   USBBus, commit `28306bb5bd4fcdcc0c1d469bf1f3bdb885dde3e9`:
   <https://github.com/uofw/uofw/blob/28306bb5bd4fcdcc0c1d469bf1f3bdb885dde3e9/src/kd/usbacc/usbacc.c>

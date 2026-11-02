@@ -19,7 +19,8 @@ from pathlib import Path
 import subprocess
 
 from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError
-from native_dock import PID, REVISION, HID_PATH, USB_PARENT, decode_status, hid_instance
+from native_dock import (PID, REVISION, RETIRED_REVISIONS, HID_PATH, USB_PARENT,
+                         decode_status, hid_instance)
 from psp_usb import identify
 
 
@@ -56,12 +57,16 @@ class NativeReadOnlyInspector(_WindowsHid):
     def inspect(self, path: str) -> dict:
         result = {'path': path, 'writes_authorized': False, 'can_change_phase': False,
                   'supported_revision': False, 'descriptor_matches': False,
+                  'retired_revision': False, 'revision_status': 'unknown',
                   'pdk2_valid': False, 'errors': []}
         with self.open(path) as handle:
             attrs = self.attributes(handle)
             result.update(attrs)
             result['revision_hex'] = f"{attrs['revision']:04X}"
             result['supported_revision'] = attrs['revision'] == REVISION
+            result['retired_revision'] = attrs['revision'] in RETIRED_REVISIONS
+            result['revision_status'] = ('supported' if result['supported_revision'] else
+                                         'retired' if result['retired_revision'] else 'unknown')
             data = C.c_void_p()
             if not self.hid.HidD_GetPreparsedData(handle, C.byref(data)):
                 result['errors'].append(str(self._failure('Leer descriptor HID observado')))
@@ -143,6 +148,7 @@ def inspect_native(*, api_factory=NativeReadOnlyInspector, storage_roots=None,
         'observed_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
         'read_only': True, 'writes_authorized': False, 'can_change_phase': False,
         'required_revision_hex': f'{REVISION:04X}', 'devices': [],
+        'retired_revision_hex': [f'{revision:04X}' for revision in sorted(RETIRED_REVISIONS)],
         'storage_candidates': [], 'errors': [],
     }
     if api_factory is NativeReadOnlyInspector:

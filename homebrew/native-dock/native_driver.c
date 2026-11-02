@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0300: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0301: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,7 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,0);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,1);
 
 typedef struct {
     const char *path,*name;
@@ -30,9 +30,14 @@ static NativeDependency dependencies[PDN_DEPENDENCIES]={
     {"flash0:/kd/semawm.prx","sceSemawm",-1,0,0},
     {"flash0:/kd/usbstor.prx","sceUSB_Stor_Driver",-1,0,0},
     {"flash0:/kd/usbstormgr.prx","sceUSB_Stor_Mgr_Driver",-1,0,0},
-    {"flash0:/kd/usbstorms.prx","sceUSB_Stor_Ms_Driver",-1,0,0},
-    {"flash0:/kd/usbstorboot.prx","sceUSB_Stor_Boot_Driver",-1,0,0}
+    {"flash0:/kd/usbstorms.prx","sceUSB_Stor_Ms_Driver",-1,0,0}
 };
+/* 6.61 usbstorboot adds PC activation imports (Pcact/NPDRM), which may
+ * be unavailable in GAME. It consumes sceUsbstor_internal; none of these
+ * four modules imports it. USBStor's own module registers its driver.
+ * Do not load Boot, Pcact, EFlash or a storage-redirection module here.
+ * Every dependency listed above remains mandatory and fails closed.
+ */
 static PdnSharedStatus *ui;
 static PdnProtocol protocol;
 static SceUID worker_thread=-1,pad_thread=-1,lifecycle_lock=-1;

@@ -1,6 +1,32 @@
 # PSP Dock · prototipo para Windows
 
-## Sesión de producto 0300: entrada, mando, copia y salida
+## Estado actual: 0301 instalada; prueba física pendiente
+
+La revisión actual del controlador nativo es **0301**. El primer arranque
+físico de **0300** falló con `8002013C` al iniciar la dependencia 5,
+`usbstorboot.prx` (etapa 3), **antes de registrar HID y activar USB**.
+Ese intento no validó la composición nativa, el acceso a la Memory Stick
+ni la sincronización. [Registro del fallo](docs/validation/native-0300-start-failure.json).
+
+0301 elimina ese módulo de activación PC, innecesario para este transporte,
+y mantiene las cuatro dependencias obligatorias `semawm`, `usbstor`,
+`usbstormgr` y `usbstorms`. También corrige la pantalla para que un fallo
+de arranque muestre su etapa y código, sin anunciar una sincronización
+activa ni instrucciones de mando que todavía no pueden funcionar.
+
+La compilación PSP GCC, las pruebas C normales, con sanitizers y de la
+presentación PSP, y las auditorías del paquete 0301 han pasado.
+También pasan 65 pruebas Windows y 163 aserciones de interfaz de esta revisión.
+La actualización 0300 → 0301 terminó el 2 de noviembre a las 11:46:08 UTC:
+cuatro archivos releídos por SHA-256, con respaldo previo de la aplicación 0300
+en el PC y la copia anterior conservada fuera de `PSP/GAME`.
+**La ejecución y aceptación física de 0301 siguen pendientes**; las
+comprobaciones de 0300 y 0207 conservan su alcance original y no validan
+esta nueva revisión. [Transporte 0301](homebrew/native-dock/README.md) ·
+[Flujo de producto](docs/FLUJO-PRODUCTO.md) ·
+[Validación 0301](docs/validation/native-0301-startup-fix.json).
+
+## Integración 0300: historial del flujo, superada por 0301
 
 Esta rama integra el flujo completo pedido el 2 de noviembre: **Sincronizando
 PSP**, inventario de juegos/ROMs/partidas, elección **Todo / Partidas y estados /
@@ -12,8 +38,9 @@ en el PC. Los conflictos requieren una elección explícita.
 La variante **PSP Dock - Memory Stick + Mando 0300** usa Sony USBSTOR junto con
 el HID PDK2 y se instala en `PSP/GAME/PSPDockNative`. El paquete conserva el
 nombre, thumbnail y fondos aprobados. La 0207 se mantiene como referencia
-física validada del disco sintético. **0300 está compilada e instalada, pero
-su composición USB y el ciclo completo requieren todavía la prueba física.**
+física validada del disco sintético. **0300 fue compilada e instalada;
+su primer arranque físico falló antes de activar USB.** Los resultados de
+software de esta integración se conservan como evidencia histórica.
 
 Los estados instantáneos sin compatibilidad verificada se conservan en su
 dispositivo. La continuidad con emuladores de Windows incluye únicamente los
@@ -35,9 +62,11 @@ El flujo elegido por David es **manual en Windows**:
 
 1. Abre `Iniciar-PSP-Dock.cmd` (o el acceso PSP Dock).
 2. La ventana muestra **Conecta tu PSP**.
-3. Abre PSP Dock en la consola y conecta el cable USB.
-4. Con 0300 aparece **Sincronizando PSP**, eliges qué preparar y después entras
-   al menú. Los modos anteriores conservan su entrada al menú ya comprobada.
+3. Abre PSP Dock en la consola. Para la prueba nativa 0301, inicia con el
+   cable retirado y conéctalo cuando la PSP indique **LISTO**.
+4. El flujo nativo 0301 previsto muestra **Sincronizando PSP**, permite elegir
+   qué preparar y después entra al menú. Su aceptación física sigue pendiente.
+   Los modos anteriores conservan su entrada al menú ya comprobada.
 
 La detección pertenece a la aplicación abierta. No se instala un servicio,
 un monitor al iniciar sesión ni una tarea que abra la app con Windows cerrado.

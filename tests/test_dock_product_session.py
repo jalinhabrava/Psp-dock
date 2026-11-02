@@ -33,7 +33,7 @@ class FakeTransport:
                 'storage_ready': self.phase in (1, 3, 4), 'controller_ready': self.phase == 2,
                 'safe_ready': self.phase == 5, 'controller_available': self.phase in (1, 2),
                 'phase': self.phase, 'path': 'synthetic-native-hid', 'product_id': 0x01CD,
-                'revision': 0x0300, 'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
+                'revision': 0x0301, 'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
                 'root': str(self.root), 'exit_requested': self.exit_requested}
 
     def observe(self, devices):
@@ -61,7 +61,7 @@ class FakeTransport:
         return {'connected': self.connected and self.phase in (1, 2), 'can_play': self.phase == 2,
                 'mode': 'native_dock', 'synthetic_storage': False, 'path': 'synthetic-native-hid',
                 'session': self.session_id, 'phase': self.phase, 'product_id': 0x01CD,
-                'revision': 0x0300, 'reason': 'Synthetic transport for tests'}
+                'revision': 0x0301, 'reason': 'Synthetic transport for tests'}
 
     def finish_session(self):
         self.finishes += 1
@@ -314,6 +314,17 @@ class DockProductSessionTests(unittest.TestCase):
         migrate.assert_not_called()
         self.assertEqual(self.dock.config,before)
         self.assertFalse((self.home/'new-library').exists())
+
+    def test_launcher_input_requires_current_native_revision(self):
+        self.ready('none')
+        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+            reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
+            self.assertTrue(self.dock.psp_launcher_input()['connected'])
+            reader.assert_called_once_with(expected_product=0x01CD)
+            for revision in (0x0300, 0x0302):
+                self.dock.snapshot['controller_status']['revision'] = revision
+                self.assertFalse(self.dock.psp_launcher_input()['connected'])
+            self.assertEqual(reader.call_count, 1)
 
     def test_dock_apps_are_excluded_but_unrelated_homebrew_is_preserved(self):
         for name in ('PSPDock','pspdocknative','PSPDockStorageTest','PSPDockCompositeTest',

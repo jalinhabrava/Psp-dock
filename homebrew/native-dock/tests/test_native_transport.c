@@ -1,4 +1,4 @@
-/* Actual 0300 transport under asynchronous USB/module doubles. These tests
+/* Actual 0301 transport under asynchronous USB/module doubles. These tests
  * establish ownership and order, not Sony USBBus composition on hardware. */
 #include <assert.h>
 #include <stdio.h>
@@ -18,7 +18,23 @@ static unsigned fake_time,borrow_mask,load_mask,start_mask,stop_mask,unload_mask
 static unsigned operation_count;
 static char operations[64][32];
 static int fail_load=-1,fail_start=-1,fail_usb_start,hold_cancel,queue_failure;
+static int start_failure_code=-601,suppress_sony_registration;
+static unsigned boot_loads,boot_starts,forbidden_loads;
 static void (*cancel_hook)(unsigned);
+enum { REQUIRED_MASK=15u, FAKE_BOOT_MODULE=104 };
+/* Independent Sony fixture: Boot really fails to link in this GAME model.
+ * Keeping it in the double makes a regression to the 0300 bootstrap fail,
+ * instead of silently declaring every newly listed dependency successful.
+ */
+static const char *fake_paths[5]={
+    "flash0:/kd/semawm.prx", "flash0:/kd/usbstor.prx",
+    "flash0:/kd/usbstormgr.prx", "flash0:/kd/usbstorms.prx",
+    "flash0:/kd/usbstorboot.prx"
+};
+static const char *fake_names[5]={
+    "sceSemawm", "sceUSB_Stor_Driver", "sceUSB_Stor_Mgr_Driver",
+    "sceUSB_Stor_Ms_Driver", "sceUSB_Stor_Boot_Driver"
+};
 
 static void log_operation(const char *name){
     assert(operation_count<64);snprintf(operations[operation_count++],32,"%s",name);
@@ -53,7 +69,7 @@ int sceUsbStart(const char *n,int size,void *arg){
     (void)size;(void)arg;log_operation(n);
     if(!strcmp(n,PSP_USBBUS_DRIVERNAME)){fake_bus=1;return 0;}
     if(!strcmp(n,PSP_USBSTOR_DRIVERNAME)){
-        assert((start_mask|borrow_mask)==31u && fake_bus==1 && !activated);
+        assert((start_mask|borrow_mask)==REQUIRED_MASK && fake_bus==1 && !activated);
         fake_storage=1;return 0;
     }
     assert(!strcmp(n,PDN_DRIVER_NAME) && fake_registered && fake_storage==1 && !activated);
@@ -81,7 +97,7 @@ int sceUsbbdUnregister(struct UsbDriver *d){
 }
 SceModule *sceKernelFindModuleByName(const char *name){
     static SceModule modules[5];unsigned i;
-    for(i=0;i<5;i++)if(!strcmp(name,dependencies[i].name) && (borrow_mask&(1u<<i))){
+    for(i=0;i<5;i++)if(!strcmp(name,fake_names[i]) && (borrow_mask&(1u<<i))){
         modules[i].modid=(int)i+100;return &modules[i];
     }
     return NULL;
@@ -89,7 +105,12 @@ SceModule *sceKernelFindModuleByName(const char *name){
 SceUID sceKernelLoadModule(const char *path,int flags,void *option){
     unsigned i;(void)flags;(void)option;
     assert(!activated && fake_storage!=1);
-    for(i=0;i<5;i++)if(!strcmp(path,dependencies[i].path)){
+    if(strstr(path,"/pcact.prx") || strstr(path,"/npdrm.prx") ||
+       strstr(path,"/usbstoreflash.prx") || strstr(path,"/usbdevice.prx")){
+        forbidden_loads++;return -602;
+    }
+    for(i=0;i<5;i++)if(!strcmp(path,fake_paths[i])){
+        if(i==4)boot_loads++;
         if((int)i==fail_load)return -600;
         assert(!(borrow_mask&(1u<<i)));load_mask|=1u<<i;return (int)i+100;
     }
@@ -98,8 +119,11 @@ SceUID sceKernelLoadModule(const char *path,int flags,void *option){
 int sceKernelStartModule(SceUID id,SceSize size,void *args,int *status,void *option){
     unsigned i=(unsigned)(id-100);(void)size;(void)args;(void)option;
     assert(i<5 && (load_mask&(1u<<i)) && !(borrow_mask&(1u<<i)));
-    *status=0;if((int)i==fail_start)return -601;start_mask|=1u<<i;
-    if(i==1)fake_storage=2;
+    *status=0;
+    if(id==FAKE_BOOT_MODULE){boot_starts++;return (int)0x8002013cu;}
+    if((int)i==fail_start)return start_failure_code;
+    start_mask|=1u<<i;
+    if(i==1 && !suppress_sony_registration)fake_storage=2;
     return id;
 }
 int sceKernelStopModule(SceUID id,SceSize size,void *args,int *status,void *option){
@@ -117,7 +141,7 @@ static void fixture(void){
     memset(&state,0,sizeof(state));ui=&state;
     memset(pending,0,sizeof(pending));memset(submissions,0,sizeof(submissions));memset(cancels,0,sizeof(cancels));
     memset(operations,0,sizeof(operations));operation_count=0;
-    for(i=0;i<5;i++){dependencies[i].owned=0;dependencies[i].started=0;dependencies[i].id=-1;}
+    for(i=0;i<PDN_DEPENDENCIES;i++){dependencies[i].owned=0;dependencies[i].started=0;dependencies[i].id=-1;}
     active=connected=link_attached=link_reset_pending=0;
     registered=hid_started=storage_started=bus_owned=activated=0;
     ctl_busy=ctl_submitting=ctl_quiescing=hid_busy=0;
@@ -129,6 +153,8 @@ static void fixture(void){
     fake_usb=0;fake_bus=2;fake_storage=(int)HID_LAB_STORAGE_NOENT;fake_hid=2;fake_registered=0;
     fake_time=1;borrow_mask=load_mask=start_mask=stop_mask=unload_mask=0;
     fail_load=fail_start=-1;fail_usb_start=hold_cancel=queue_failure=0;cancel_hook=NULL;
+    start_failure_code=-601;suppress_sony_registration=0;
+    boot_loads=boot_starts=forbidden_loads=0;
 }
 static void connected_fixture(void){
     fixture();assert(start_usb()==0 && activated);fake_usb=0x222;
@@ -145,16 +171,16 @@ static void receive_phase(uint8_t phase,uint32_t sequence){
 }
 static void test_start_order_and_owned_cleanup(void){
     fixture();assert(start_usb()==0);
-    assert(load_mask==31u && start_mask==31u && state.modules_loaded==31u);
+    assert(load_mask==REQUIRED_MASK && start_mask==REQUIRED_MASK && state.modules_loaded==REQUIRED_MASK);
     assert(operation_count==4 && !strcmp(operations[0],PSP_USBBUS_DRIVERNAME));
     assert(!strcmp(operations[1],PSP_USBSTOR_DRIVERNAME));
     assert(!strcmp(operations[2],PDN_DRIVER_NAME) && !strcmp(operations[3],"activate"));
     assert(stop_usb()==0 && unload_dependencies()==0);
-    assert(stop_mask==31u && unload_mask==31u && !registered && !fake_registered && fake_bus==2);
+    assert(stop_mask==REQUIRED_MASK && unload_mask==REQUIRED_MASK && !registered && !fake_registered && fake_bus==2);
 }
 static void test_borrowed_modules_and_bus_survive(void){
-    fixture();borrow_mask=31u;fake_storage=2;fake_bus=1;
-    assert(start_usb()==0 && state.modules_borrowed==31u && !bus_owned);
+    fixture();borrow_mask=REQUIRED_MASK;fake_storage=2;fake_bus=1;
+    assert(start_usb()==0 && state.modules_borrowed==REQUIRED_MASK && !bus_owned);
     assert(stop_usb()==0 && unload_dependencies()==0);
     assert(!load_mask && !start_mask && !stop_mask && !unload_mask && fake_bus==1);
 }
@@ -162,7 +188,7 @@ static void test_guard_and_bootstrap_failures(void){
     unsigned i;
     fixture();fake_usb=0x20;assert(start_usb()==-3002 && !load_mask && !activated);
     fixture();fake_storage=1;assert(start_usb()==-3002 && !load_mask);
-    for(i=0;i<5;i++){
+    for(i=0;i<PDN_DEPENDENCIES;i++){
         fixture();fail_load=(int)i;assert(start_usb()==-600 && !activated && !storage_started);
         assert(stop_usb()==0 && unload_dependencies()==0 && unload_mask==load_mask);
         fixture();fail_start=(int)i;assert(start_usb()==-601 && !activated && !storage_started);
@@ -170,7 +196,39 @@ static void test_guard_and_bootstrap_failures(void){
     }
     fixture();fail_usb_start=1;assert(start_usb()==-700 && storage_started && !activated);
     assert(stop_usb()==0 && !storage_started && !registered && !bus_owned);
-    assert(unload_dependencies()==0 && unload_mask==31u);
+    assert(unload_dependencies()==0 && unload_mask==REQUIRED_MASK);
+}
+static void test_0301_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
+    int result,status=-1;SceUID boot;
+    /* Reproduce the photographed 0300 failure in the Sony module double. */
+    fixture();boot=sceKernelLoadModule("flash0:/kd/usbstorboot.prx",0,NULL);
+    assert(boot==FAKE_BOOT_MODULE);
+    assert(sceKernelStartModule(boot,0,NULL,&status,NULL)==(int)0x8002013cu);
+    assert(boot_loads==1 && boot_starts==1 && !start_mask);
+    assert(sceKernelUnloadModule(boot)==boot);
+
+    /* 0301 must reach the normal transport without ever loading that PRX,
+     * Pcact, NPDRM, EFlash or usbdevice redirection. */
+    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0301u);
+    assert(start_usb()==0 && activated && storage_started);
+    assert(load_mask==REQUIRED_MASK && !boot_loads && !boot_starts && !forbidden_loads);
+    assert(stop_usb()==0 && unload_dependencies()==0);
+
+    /* The same error on a mandatory Memory Stick module is still fatal. */
+    fixture();fail_start=3;start_failure_code=(int)0x8002013cu;
+    result=start_usb();assert(result==(int)0x8002013cu);record_error(result);
+    assert(state.dependency==4 && state.error_stage==PDN_STAGE_MODULE_START);
+    assert(state.error==(int)0x8002013cu && !activated && !storage_started && !registered);
+    assert(stop_usb()==0 && unload_dependencies()==0);
+    assert(unload_mask==REQUIRED_MASK && stop_mask==7u);
+}
+static void test_sony_registration_and_launcher_revision_remain_required(void){
+    PdnLaunchArgs old_launch={0x304e4450u,sizeof(PdnLaunchArgs),&state};
+    fixture();suppress_sony_registration=1;
+    assert(start_usb()==-3003 && !activated && !registered && !storage_started);
+    assert(!operation_count && stop_usb()==0 && unload_dependencies()==0);
+    assert(PDN_LAUNCH_MAGIC==0x314e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
+    assert(module_start(sizeof(old_launch),&old_launch)==-1);
 }
 static void test_phase_ack_cancels_old_input_first(void){
     uint8_t status[32];connected_fixture();
@@ -269,6 +327,8 @@ static void test_protocol_replay_malformed_and_terminal_safe(void){
 int main(void){
     test_start_order_and_owned_cleanup();test_borrowed_modules_and_bus_survive();
     test_guard_and_bootstrap_failures();test_phase_ack_cancels_old_input_first();
+    test_0301_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
+    test_sony_registration_and_launcher_revision_remain_required();
     test_reconfiguration_and_old_ep0_cannot_change_phase();test_stop_waits_for_real_unplug();
     test_input_is_neutral_in_transfer_and_after_phase_switch();
     test_exit_request_preserves_controls_until_windows_acknowledges();

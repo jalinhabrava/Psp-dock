@@ -1,5 +1,18 @@
 # PSP Dock: sesión completa de producto
 
+## Estado actual — 0301, pendiente de prueba física
+
+La revisión actual es **0301**. La primera ejecución física de 0300 se
+detuvo al iniciar `usbstorboot.prx`, dependencia 5, con `8002013C` en la
+etapa 3. El fallo ocurrió antes de registrar HID y activar USB; no se
+verificó una sesión nativa ni se realizó sincronización en ese intento.
+[Evidencia del fallo 0300](validation/native-0300-start-failure.json).
+
+0301 retira esa dependencia de activación PC y corrige la presentación de
+los errores de arranque. El flujo descrito a continuación sigue siendo el
+objetivo implementado en el producto; **su funcionamiento completo en la
+PSP con 0301 aún requiere aceptación física**.
+
 ## Requisito de David — 2 de noviembre de 2026
 
 El hito incluye toda la sesión, desde el inventario inicial hasta devolver
@@ -8,8 +21,10 @@ flujo. Windows se abre manualmente y no instala un servicio, tarea USB ni
 monitor al iniciar sesión.
 
 1. Abrir PSP Dock en Windows: **Conecta tu PSP**.
-2. Abrir Dock en la PSP y conectar el cable: **Sincronizando PSP** mientras
-   se comparan juegos, ROMs y partidas de ambos dispositivos.
+2. Abrir Dock en la PSP. En la variante nativa 0301, iniciar con el cable
+   retirado y conectar cuando indique **LISTO**. Tras verificar la conexión,
+   mostrar **Sincronizando PSP** mientras se comparan juegos, ROMs y
+   partidas de ambos dispositivos.
 3. Elegir **Todo**, **Partidas y estados**, **Sólo juegos** o **Sin copiar ahora**.
    El inventario se realiza aunque no se elija copiar. Las opciones sin
    sincronización de partidas avisan de que se usarán las del PC.
@@ -29,12 +44,26 @@ monitor al iniciar sesión.
 La primera implementación bloquea la navegación durante las transferencias.
 No necesita prometer navegación y copia simultáneas para satisfacer el flujo.
 
-## Transporte 0300
+## Transporte 0301
 
 `homebrew/native-dock` es una variante separada de la 0207 ya validada.
 Carga las dependencias oficiales de Sony y combina su controlador de
 almacenamiento con el mando HID del Dock. Sony mantiene la propiedad del
 sistema de archivos; el módulo nuevo no importa `sceIo*` ni redirige a flash.
+
+Las dependencias obligatorias son `semawm`, `usbstor`, `usbstormgr` y
+`usbstorms`; un fallo en cualquiera de ellas sigue deteniendo el arranque.
+0301 elimina `usbstorboot.prx`: sus imports de firmware 6.61 incluyen
+activación PC mediante Pcact/NPDRM, y los cuatro módulos del transporte no
+dependen de Boot. La foto 0300 identifica el módulo y la etapa del fallo,
+pero no cuál de sus bibliotecas importadas faltaba. No se añaden módulos
+de activación para resolverlo. El launcher y el kernel 0301 usan el magic
+`PDN1`, que impide mezclar ambos componentes con los de 0300.
+
+Un error de arranque prevalece ahora sobre la fase lógica inicial:
+la pantalla muestra **Arranque detenido**, el contexto y los códigos,
+sin presentar **Sincronizando PSP** como una operación activa.
+Una interfaz HID aún no asignada aparece como `sin_asignar`.
 
 El protocolo PDK2 solicita fases y espera confirmaciones de la misma sesión
 y secuencia. Los cambios de fase son lógicos: ambos canales USB pueden seguir
@@ -42,7 +71,7 @@ enumerados, mientras el producto decide cuándo autoriza lectura, escritura o
 navegación. La aceptación de una orden no prueba por sí sola el montaje.
 
 Windows vincula la interfaz HID, el disco Sony y la letra de unidad a un
-único padre USB físico. El PID previsto es `054C:01CD`, revisión `0300`.
+único padre USB físico. El PID previsto es `054C:01CD`, revisión `0301`.
 Las guardas del HID estable y del diagnóstico 0207 no se amplían para aceptar
 una tarjeta genérica ni un dispositivo con otra revisión.
 
@@ -94,13 +123,24 @@ marcador de respaldo incompleto sólo se retira tras verificar el conjunto.
 
 ## Verificación y límite físico
 
-La compilación 0300 con PSPDEV y los ensayos del controlador real bajo
-ASan/UBSan han pasado. El ELF y el PBP verifican módulos USER/kernel,
-descriptores, protocolo, imports y recursos XMB. Esto no demuestra todavía
-que el bus Sony componga ambas funciones en la PSP concreta.
+La compilación 0301 con PSP GCC, las pruebas C normales y con ASan/UBSan,
+los casos de presentación PSP, las auditorías ELF/PBP, 65 pruebas Windows
+y 163 aserciones de interfaz han pasado. La 0301 quedó instalada y releída
+por SHA-256, con copia previa de la 0300 en el PC, a las 11:46:08 UTC del
+2 de noviembre. [Validación 0301](validation/native-0301-startup-fix.json). Son
+comprobaciones de software: no demuestran que el bus Sony componga ambas
+funciones en la PSP concreta ni que retirar Boot resuelva por sí solo todo
+el arranque en hardware.
 
-La primera comprobación física debe observar PDK2, HID y la Memory Stick
-real bajo el mismo padre, y recorrer entrada, selección, copia puntual y
-salida. Hasta entonces no se marca como validado en hardware el transporte
-0300 ni la sesión completa. La evidencia de 0207 corresponde a su disco
-sintético y permanece independiente.
+La compilación y los ensayos previos de 0300, junto con las pruebas Windows
+y las vistas sintéticas de su interfaz, se conservan como evidencia de
+aquella integración. **No se transfieren como aceptación de 0301.** La
+prueba física posterior de 0300 falló antes de activar USB, como registra
+el informe enlazado al principio; no validó acceso real a la Memory Stick,
+entrada HID ni sincronización. [Registro histórico de integración 0300](validation/product-session-0300.json).
+
+La comprobación física pendiente de 0301 debe confirmar primero el arranque,
+observar PDK2, HID y la Memory Stick real bajo el mismo padre, y recorrer
+entrada, selección, copia puntual y salida. Hasta entonces no se marca como
+validado en hardware el transporte 0301 ni la sesión completa. La evidencia
+de 0207 corresponde a su disco sintético y permanece independiente.

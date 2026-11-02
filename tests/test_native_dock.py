@@ -1,5 +1,7 @@
 import contextlib
+import ctypes as C
 from dataclasses import asdict, replace
+from types import SimpleNamespace
 import unittest
 
 import native_dock as native
@@ -120,6 +122,43 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(native.USB_PARENT.fullmatch(r'USB\VID_054C&PID_01CD&MI_01\DOCK0300'))
         with self.assertRaises(native.NativeDockError):
             native.hid_instance(PATH.replace('01cd', '01cc'))
+
+    def test_production_open_gate_only_admits_0301_before_phase_commands(self):
+        for revision in (0x0300, 0x0100, 0x0302, 0x0301):
+            with self.subTest(revision=revision):
+                api = native.NativeHid.__new__(native.NativeHid)
+                calls = []
+                current = [status()]
+                def caps(data, pointer):
+                    value = C.cast(pointer, C.POINTER(native.HIDP_CAPS)).contents
+                    value.UsagePage, value.Usage = 1, 4
+                    value.FeatureReportByteLength = 33
+                    value.InputReportByteLength, value.OutputReportByteLength = 9, 5
+                    return 0x00110000
+                api.kernel = SimpleNamespace(CreateFileW=lambda *args: 42,
+                    CloseHandle=lambda handle: calls.append('closed'))
+                api.hid = SimpleNamespace(HidD_GetPreparsedData=lambda *args: 1,
+                    HidP_GetCaps=caps, HidD_FreePreparsedData=lambda data: None)
+                api.attributes = lambda handle: {'vendor_id': VID, 'product_id': native.PID,
+                                                'revision': revision}
+                api.paths = lambda: [PATH]
+                api.get = lambda handle: current[0]
+                def command(handle, payload):
+                    calls.append('set_feature')
+                    current[0] = status(native.CONTROLLER, 1, 2)
+                api.set = command
+                if revision == 0x0301:
+                    self.assertIsNotNone(native.probe_native(api_factory=lambda: api))
+                    self.assertTrue(native.request_phase(PATH, SESSION, native.CONTROLLER,
+                                    api_factory=lambda: api)['accepted'])
+                    self.assertEqual(calls.count('set_feature'), 1)
+                else:
+                    with self.assertRaises(native.NativeDockError):
+                        native.probe_native(api_factory=lambda: api)
+                    with self.assertRaises(native.NativeDockError):
+                        native.request_phase(PATH, SESSION, native.CONTROLLER, api_factory=lambda: api)
+                    self.assertNotIn('set_feature', calls)
+                self.assertEqual(calls.count('closed'), 2)
 
 
 class TransportTests(unittest.TestCase):

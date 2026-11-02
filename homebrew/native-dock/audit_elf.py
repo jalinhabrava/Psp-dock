@@ -1,4 +1,4 @@
-"""Audit 0300's actual MIPS ELF and USER PBP; never opens USB or a PSP.
+"""Audit 0301's actual MIPS ELF and USER PBP; never opens USB or a PSP.
 
 The default device descriptor chosen by Sony's composed USB bus is a hardware
 question. This audit proves our descriptor and imports, not that composition
@@ -22,9 +22,35 @@ _spec.loader.exec_module(_reader)
 MipsElf, require = _reader.MipsElf, _reader.require
 
 
+def _cstring_at(elf, address: int) -> str:
+    matches = [section for section in elf.sections if section[1] != 8 and
+               section[2] & 2 and section[3] <= address < section[3] + section[5]]
+    require(len(matches) == 1, "Dependency pointer is not unique initialized ELF data")
+    section = matches[0]
+    data = elf.section_bytes(section)[address - section[3]:address - section[3] + 128]
+    require(b"\0" in data, "Unterminated dependency path/name")
+    return data.split(b"\0", 1)[0].decode("ascii", "strict")
+
+
 def audit(raw: bytes) -> dict:
     elf = MipsElf(raw)
     require(elf.module_attributes() & 0x1000, "Native USB controller must be kernel PRX")
+    module_info = elf.section_bytes(elf.section_names[".rodata.sceModuleInfo"])
+    require(module_info[2:4] == b"\x01\x03", "Expected kernel module version 3.1")
+    required_modules = (
+        ("flash0:/kd/semawm.prx", "sceSemawm"),
+        ("flash0:/kd/usbstor.prx", "sceUSB_Stor_Driver"),
+        ("flash0:/kd/usbstormgr.prx", "sceUSB_Stor_Mgr_Driver"),
+        ("flash0:/kd/usbstorms.prx", "sceUSB_Stor_Ms_Driver"),
+    )
+    dependencies = elf.data("dependencies", 4 * 20)
+    for index, expected in enumerate(required_modules):
+        path, name, uid, owned, started = struct.unpack_from("<IIiII", dependencies, index * 20)
+        require((_cstring_at(elf, path), _cstring_at(elf, name)) == expected,
+                "Native dependency order/name differs from reviewed 0301 bootstrap")
+        require((uid, owned, started) == (-1, 0, 0), "Dependency ownership must start empty")
+    for forbidden_path in (b"usbstorboot.prx", b"pcact.prx", b"npdrm.prx", b"usbstoreflash.prx", b"usbdevice.prx"):
+        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0301: " + forbidden_path.decode())
     require(elf.data("pdn_interface", 12) == struct.pack("<iii", -1, 0, 1),
             "HID must request one automatically assigned interface")
     require(elf.data("pdn_endpoints", 24) == struct.pack("<6I", 0, 0, 0, 1, 0, 0),
@@ -32,8 +58,8 @@ def audit(raw: bytes) -> dict:
     for speed, interval in (("hi", 6), ("full", 4)):
         device = elf.data("pdn_device_" + speed, 20)
         require(device[:8] == b"\x12\x01\x00\x02\0\0\0\x40", "Invalid USB 2.0 device/EP0")
-        require(struct.unpack_from("<H", device, 12)[0] == 0x0300 and device[17] == 1,
-                "Wrong 0300 descriptor revision/configuration")
+        require(struct.unpack_from("<H", device, 12)[0] == 0x0301 and device[17] == 1,
+                "Wrong 0301 descriptor revision/configuration")
         interfaces, endpoints = "pdn_interfaces_" + speed, "pdn_endpoint_" + speed
         settings, config_name = "pdn_settings_" + speed, "pdn_configdesc_" + speed
         require(elf.data(settings, 12) == struct.pack("<3I", elf.address(interfaces), 0, 1),
@@ -72,7 +98,8 @@ def audit(raw: bytes) -> dict:
         elf.address(name)
     require(b"PDK2" in raw and b"PDK1" not in raw, "Native controller must use separate PDK2 protocol")
     return {
-        "revision": "0300", "elf_machine": "MIPS", "kernel_module_verified": True,
+        "revision": "0301", "elf_machine": "MIPS", "kernel_module_verified": True,
+        "mandatory_modules": [path for path, _ in required_modules], "optional_bootstrap_modules": [],
         "function_descriptors_verified": True, "hid_function_interfaces": 1,
         "hid_input_bytes": 8, "hid_feature_bytes": 32, "protocol": "PDK2/v2",
         "storage_backend": "native Sony USBStor_Driver", "kernel_filesystem_imports": [],
@@ -97,7 +124,7 @@ def main() -> None:
     result["user_app"] = _reader.audit_user(args.user_elf.read_bytes(), args.user_object.read_bytes())
     pbp = args.pbp.read_bytes()
     result["xmb_assets"] = _reader.audit_pbp(pbp, args.assets)
-    require(b"PSP Dock - Memory Stick + Mando 0300\0" in pbp, "Missing branded 0300 XMB title")
+    require(b"PSP Dock - Memory Stick + Mando 0301\0" in pbp, "Missing branded 0301 XMB title")
     result["pbp_sha256"] = hashlib.sha256(pbp).hexdigest()
     rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"
     if args.output:

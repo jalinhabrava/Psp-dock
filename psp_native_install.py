@@ -1,4 +1,4 @@
-"""Install 0300 only into a new PSPDockNative folder, from Sony XMB USB.
+"""Install 0301 only into a new PSPDockNative folder, from Sony XMB USB.
 
 No upgrade, firmware execution, USB transition, flash, plugins or drivers.
 Every installation has a persistent PC receipt/journal and a current backup.
@@ -58,7 +58,7 @@ def plan_install(package: Path, root: Path, snapshot: Path, serial: str, usb_id:
     size = sum(record['size'] for record in manifest['files'].values())
     if shutil.disk_usage(root).free < size + 8 * 1024 * 1024:
         raise ValueError('Falta espacio para PSP Dock nativo.')
-    return {'schema': 'pspdock-native-install-receipt-v1', 'revision': '0300',
+    return {'schema': 'pspdock-native-install-receipt-v1', 'revision': manifest['revision'],
             'target': str(target), 'backup': str(snapshot), 'files': manifest['files'],
             'xmb': manifest['xmb'], 'bytes': size, 'synthetic_storage': False,
             'storage_backend': 'native Sony USBStor_Driver',

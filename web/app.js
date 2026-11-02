@@ -1543,7 +1543,7 @@ function dockConnectionView(state, options = {}) {
   const product = dockProductFlowView(current, options);
   const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
   const nativeIdentity = controller.connected === true && controller.mode === 'native_dock' &&
-    controller.product_id === 0x01cd && controller.revision === 0x0300 && controller.synthetic_storage === false;
+    controller.product_id === 0x01cd && controller.revision === 0x0301 && controller.synthetic_storage === false;
   const nativeController = nativeIdentity && controller.phase === 2 && product.enabled && product.phase === 'ready';
   const stable = controller.connected === true && controller.mode === 'hid_manual' || nativeController;
   const storage = !demo && !options.serviceOffline && controller.mode === 'usb_storage' &&
