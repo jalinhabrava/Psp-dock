@@ -40,11 +40,13 @@ La caché persistente sólo guarda catálogo. Cada conexión enumera nombres, ti
 
 252 pruebas Windows/Python 3.12 PASS. JavaScript: 316 aserciones de producto y 156 de conexión, PASS. C/GCC estricto, ASan/UBSan, UI, MIPS y auditoría ELF/PBP PASS; LSan desactivado en este entorno. Regresión de rearme: guarda anterior FAIL esperado, corregida PASS.
 
-Candidato 0307/03070001, capacidades000F. Host admite 0306 y 0307 con el mismo transporte de fragmentos/CRC16. Paquete `data/native-dock-0307-package`, **no instalado ni probado físicamente aún**. No se han escrito juegos ni guardados durante este trabajo.
+Candidato 0307/03070001, capacidades000F. Host admite 0306 y 0307 con el mismo transporte de fragmentos/CRC16. Paquete `data/native-dock-0307-package`, **instalado y releído correctamente a las 21:53:47 UTC del 2 de noviembre de 2026**. Se verificó USB normal del XMB, misma tarjeta y archivos exactos 0306; se conservó el backup de la aplicación anterior. Sólo se escribieron la carpeta PSPDockNative y el área de actualización. No se han escrito juegos ni guardados. Falta ejecutar esta versión en la PSP y verificar físicamente el mando.
+
+Windows se abrió con el código actualizado: una ventana, `waiting_psp`, sin recuperación ni error pendiente. Recibo local de instalación `data/native-dock-0307-evidence/upgrade.json`, SHA-256 `e4d317530265826bde9dae7c8bfd531ebb4480115fef4818504e3502d18e2ca4`. Otras 12 pruebas HTTP superadas tras añadir la revocación de la preferencia automática.
 
 | Archivo | SHA-256 |
 |---|---|
 | EBOOT.PBP | `92c8c683f2975d11530b18c6e88212a9e77bc0b7c49948d8dfe017b39fde609e` |
 | docknative.prx | `15847cada01843359d9b8b9910f34874e376157252e05723229ed16c7ca55b3c` |
 
-Pendiente: instalar desde USB normal XMB con backup nuevo; navegar selector y XMB con PSP; jugar y guardar; salir sólo desde Windows; verificar retorno y Círculo al XMB con cable conectado. Medir la segunda conexión para evaluar la caché real, sin prometer tiempos antes de esa prueba.
+Pendiente: salir de USB desde XMB manteniendo cable, abrir PSP Dock y pulsar X; navegar selector y XMB con PSP; jugar y guardar; salir sólo desde Windows; verificar retorno y Círculo al XMB con cable conectado. Medir la segunda conexión para evaluar la caché real, sin prometer tiempos antes de esa prueba.
