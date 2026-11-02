@@ -86,7 +86,28 @@ aprobado en un contenedor ICO, sin cambiar sus píxeles.
 La comprobación final encontró cero tareas PSP Dock, cero servicios PSPDock
 y ninguna entrada de inicio de sesión. El resumen con hashes está en
 [windows-manual-entry.json](validation/windows-manual-entry.json).
-**La llegada física a la nueva app y la navegación con la PSP se probarán aparte.**
+
+### Transiciones con PSP real — 2 de noviembre de 2026
+
+David conectó la PSP con Dock 0207 y confirmó el paso de la pantalla de espera
+al XMB de Windows. Su captura muestra la ventana PSP Dock y el aviso
+**Modo diagnóstico · 0207**, disco de prueba de 512 KiB y juegos desactivados.
+Después confirmó que detener Dock en la PSP devuelve Windows a la espera.
+
+El sondeo posterior, a las 09:30:52 de Madrid (08:30:52 UTC), encontró
+`dock_connected`, `msc_diagnostic`, PID `01CC` y revisión `0207`. La app real
+mantenía un cliente, recibía un estado válido del mando mediante WinMM y
+publicaba `can_launch_game=false`, sin error, juego activo ni transferencia.
+La entrada está respaldada por el usuario y su captura; este sondeo corrobora
+el estado conectado. La vuelta a espera está respaldada por la confirmación
+explícita del usuario, no por una traza del cambio en el backend.
+
+El archivo de observación `data/windows-manual-entry/post-stop-20261102.json`
+conserva `result=state_requires_review` porque el comprobador esperaba encontrar
+la PSP detenida. Su contenido registra una conexión de diagnóstico válida;
+ese marcador no demuestra un fallo ni permite inferir cuándo cambió la conexión.
+No se repitió la aceptación de almacenamiento ni se muestreó movimiento HID.
+La Memory Stick real continúa pendiente.
 
 ### Pasos para repetirla
 

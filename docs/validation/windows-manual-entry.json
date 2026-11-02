@@ -7,8 +7,56 @@
   "windows_startup_entry_installed": false,
   "pnp_task_installed": false,
   "firmware_0207_changed": false,
-  "physical_psp_transition_verified": false,
-  "physical_psp_transition_note": "The PSP was absent during this Windows-window check; test the arrival in the open app separately.",
+  "physical_psp_transition_verified": true,
+  "physical_psp_transition_note": "On 2026-11-02, the user confirmed entry into the Windows XMB after connecting PSP Dock 0207 and supplied a screenshot showing diagnostic mode. The user also confirmed return to the waiting screen after stopping Dock on the PSP. A separate backend snapshot later showed a valid connected diagnostic device; it did not capture the return transition.",
+  "physical_psp_transition": {
+    "date": "2026-11-02",
+    "timezone": "Europe/Madrid",
+    "tested_windows_commit": "240b452f7c0fed3c8a712e3b75573ad592329f61",
+    "windows_app_already_open": true,
+    "arrival_to_windows_xmb": {
+      "confirmed": true,
+      "evidence": ["user_report", "user_screenshot"]
+    },
+    "stop_psp_dock_returns_to_waiting": {
+      "confirmed": true,
+      "evidence": ["user_report"],
+      "backend_transition_trace_captured": false
+    },
+    "screenshot": {
+      "source": "user attachment image.png in the project conversation",
+      "sha256": "df33f2500fad9894bc4ec11d6f8e0cce9d6259e9fcde258e3e47798acf74072d",
+      "bytes": 993481,
+      "pixels": [1032, 777],
+      "visible_window_title": "PSP Dock",
+      "visible_mode": "Modo diagnóstico · 0207",
+      "visible_storage_warning": "Disco de prueba de 512 KiB. Puedes navegar; los juegos están desactivados."
+    },
+    "backend_observation": {
+      "observed_utc": "2026-11-02T08:30:52.817321+00:00",
+      "scope": "read_only_snapshot_not_a_transition_trace",
+      "real_live_app": true,
+      "ui_clients": 1,
+      "connection_state": "dock_connected",
+      "controller_mode": "msc_diagnostic",
+      "product_id": 460,
+      "revision": 519,
+      "controller_connected": true,
+      "controller_input_connected": true,
+      "controller_input_source": "psp_winmm",
+      "can_play": false,
+      "synthetic_storage": true,
+      "can_launch_game": false,
+      "error": null,
+      "game_running": false,
+      "pending_return": false,
+      "transfer_active": false,
+      "raw_result": "state_requires_review",
+      "raw_result_explanation": "The probe expected waiting_psp after the user report; the actual snapshot shows a valid connected diagnostic state. This is not evidence of a product failure and does not establish when the connection changed."
+    },
+    "hid_motion_sampled_in_this_check": false,
+    "real_memory_stick_access_verified": false
+  },
   "native_window": {
     "started_utc": "2026-11-01T23:01:38.100800+00:00",
     "finished_utc": "2026-11-01T23:01:49.190511+00:00",
@@ -74,10 +122,12 @@
   "evidence": {
     "native-window-result.json": "73f323a08b4a857f84c9da3c606904c04a5256c3e933047a0298918cdaa76cd8",
     "ui-preview-result.json": "464a3a37316c2bcbde888b6168190221a517e23cfc53164406dfc37d24ed28d0",
-    "native-waiting-window.png": "592845e10c5fb80de82eecdf273f6929fb98952ae8b22b23adaea7597d811a4b"
+    "native-waiting-window.png": "592845e10c5fb80de82eecdf273f6929fb98952ae8b22b23adaea7597d811a4b",
+    "post-stop-20261102.json": "63b5737000371197dd3e92f08fd301ca811c82587ca5a1005632689fe6195a8e"
   },
   "limitations": [
     "MSC 0207 still exposes only synthetic read-only FAT12, not the real Memory Stick.",
-    "No claim of physical menu transition until the user starts Dock on the PSP while Windows is open."
+    "The 2026-11-02 transition confirmation does not add a sampled HID-navigation or gameplay test.",
+    "The return to waiting was confirmed by the user; the later backend snapshot observed the device connected and is not a transition trace."
   ]
 }

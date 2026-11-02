@@ -30,8 +30,12 @@ cierre con la X en 4,172 s, proceso terminado, bloqueo liberado y sesión
 idéntica por SHA-256. El acceso **PSP Dock** del escritorio lleva el thumbnail
 aprobado como icono y abre esta versión sin consola adicional. El instalador
 manual está en `windows/Create-PSP-Dock-Shortcut.ps1` (Install/Status/Remove).
-La llegada física de la PSP a esta nueva pantalla sigue pendiente; las
-transiciones visuales se verificaron con fixtures en Chrome de Windows.
+**Prueba física confirmada el 2 de noviembre de 2026:** al conectar Dock 0207,
+Windows pasó de la espera al XMB; la captura de David muestra el modo diagnóstico.
+David confirmó también la vuelta a espera al detener Dock en la PSP. Un sondeo
+posterior encontró el compuesto 0207 conectado, HID disponible y juegos bloqueados,
+sin errores. La vuelta a espera está respaldada por su observación; ese sondeo
+no captura retrospectivamente la transición ni añade una prueba de movimiento HID.
 [Registro de verificación](docs/validation/windows-manual-entry.json).
 
 ## USBSTOR + HID 0207: aceptación física completada con el disco de prueba
