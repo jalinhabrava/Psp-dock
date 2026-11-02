@@ -2,7 +2,7 @@
 
 ## Resultado real del 2 de noviembre de 2026
 
-La PSP sigue ejecutando 0303. Dos reintentos físicos de HOST_BEGIN terminaron
+Durante las mediciones siguientes la PSP ejecutaba 0303. Dos reintentos físicos de HOST_BEGIN terminaron
 sin aceptación: secuencia 0, resultado 0, pendiente false, STORAGE y Windows
 sin confirmar. No llegaron al inventario ni a copiar juegos o partidas.
 La anterior corrección de caché de 0303 no resolvió el fallo observado por David;
@@ -63,7 +63,7 @@ timeout específico de HidUSB, ni qué metadatos recibió el callback de PSP.
   cualquier cambio de identidad durante el ACK. Las revisiones anteriores,
   desconocidas y mezclas de build siguen rechazadas.
 
-## Diagnóstico PSP 0304 preparado, todavía sin instalar
+## Diagnóstico PSP 0304 instalado; ejecución pendiente
 
 La nueva pantalla NOTE captura en RAM el último SET, setup, submit, completion,
 retcode, recvsize, generaciones, motivo de descarte, resultado del parser,
@@ -93,7 +93,13 @@ Paquete local: `data/native-dock-0304-package`, cuatro archivos, 375.760 bytes.
 
 Manifest SHA-256:
 `9b6539bb4a4766c16b976f917ca31cc9ea097697378dd20383701c8d1a7515c2`.
-Preparar y verificar el paquete no lo instaló ni ejecutó en la PSP.
+La actualización física 0303→0304 terminó el 2 de noviembre a las 18:41:27 UTC,
+después de verificar la identidad Sony del USB normal del XMB. El instalador
+copió los cuatro archivos anteriores a un respaldo nuevo del PC, verificó los
+hashes, preparó y publicó el paquete y volvió a comprobar ambos extremos.
+La aplicación anterior también permanece aparcada en la tarjeta, fuera de GAME.
+Recibo privado: `data/native-dock-0304-evidence/upgrade.json`.
+La instalación no acredita todavía la ejecución ni el handshake físico de 0304.
 
 ## Validación y evidencia
 
@@ -117,12 +123,43 @@ no se incorporan a git. No se borraron journals ni se forzó expulsión.
 SHA-256 de `retry-after-waiting-fix.json`:
 `1e801c4beb41c093199c84be76adf5d46e879b594d2b6cd481affdcac0cc5bb2`.
 
-## Siguiente observación necesaria
+## Foto 0303 recibida y nueva observación necesaria
 
-Solicitada foto de NOTE en la 0303 que continúa en Dock y conectada por USB,
-especialmente Rechazos/último rechazo. Si esa evidencia no basta, está preparado
-el paquete 0304 para capturar el motivo exacto del descarte. Cualquier instalación
-requiere primero el cambio físico a USB XMB y la verificación normal de identidad.
+La foto recibida muestra ACK0/0, Host0, Rechazos0/0 y Gen0. El estado vivo del
+host conserva el mismo nonce. En el protocolo0303, una aceptación establecería
+una secuencia positiva y un rechazo incrementaría el contador: la orden no
+llegó a esas rutas durante la sesión observada. El último SETUP004001A1 es
+GET_REPORT, con longitud64, interfaz1 y Feature report0; no acredita el SET.
+0303 no conserva los motivos previos al parser. La captura0304 ahora instalada
+registra esos puntos sin modificar las condiciones de aceptación.
+
+Tras esa foto, Cancelar y desconectar terminó con verified y
+host_eject_accepted verdaderos a las18:29:08 UTC. La app salió normalmente.
+David volvió al XMB y activó USB para la actualización. Reportó además que la
+salida de Dock sigue exigiendo retirar cable aunque Windows ya haya expulsado.
+El requisito explícito es cerrar Dock en Windows y poder volver al XMB desde
+PSP manteniendo el cable, sin expulsión manual ni START+SELECT obligatorio.
+El análisis de ese cierre se conserva en `native-exit-connected-cable.md`.
+
+La primera solicitud normal de expulsión del USB XMB tras instalar0304 recibió
+veto de SearchIndexer (CR23, tipo3); no se forzó. Ese resultado es distinto de la
+expulsión nativa anterior, que sí fue aceptada. Registros privados en
+`data/native-dock-0304-evidence/`.
+Un reintento tras acabar las escrituras recibió el mismo veto. La solicitud
+normal al disco USBSTOR exacto recibió CR23/tipo8 y la unidad seguía montada.
+No se interpretó ninguno como cierre. Se abrió Indexing Options y se revisó su
+botón Pause, protegido con el escudo de administrador; los intentos de invocarlo
+no cambiaron el estado visible «Indexing in progress». No hubo pausa confirmada
+ni cambios de servicio. La PSP sigue en USB XMB mientras se resuelve ese bloqueo.
+
+`tools/inspect_native_ejection.py` está preparado para capturar el subárbol
+nativo y sus relaciones sin expulsar ni escribir en PSP. Compilación e importación
+CLI verificadas en Windows. En la consulta XMB de lectura, algunas relaciones
+devolvieron CR0x25; se conservan como null con su código, nunca como listas vacías.
+
+Falta lanzar0304 y capturar NOTE tras una sola orden HOST_BEGIN real, junto con
+las relaciones PnP del dispositivo para el cierre con cable conectado.
 No retirar la guarda de longitud ni alterar `unkc` por conjetura.
 La aceptación completa requiere después observar HOST_BEGIN, inventario,
-sincronización y modo mando reales. PR #11 continúa draft, sin fusionar.
+sincronización, modo mando y salida al XMB con cable conectado reales.
+PR #11 continúa draft, sin fusionar.
