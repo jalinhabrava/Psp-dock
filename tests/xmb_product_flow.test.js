@@ -121,6 +121,13 @@ for (const phase of [null, 'unexpected', '__proto__']) {
 }
 const choose = { ...storage, product_flow: flow('choosing') };
 equal(product(choose).canChoose, true);
+equal(product(choose).rememberedChoice, 'none');
+equal(product(choose).rememberAutomatic, false);
+equal(product({ ...choose, product_flow: flow('choosing', {remembered_choice:'saves',remember_automatic:true}) }).rememberedChoice, 'saves');
+equal(product({ ...choose, product_flow: flow('choosing', {remembered_choice:'invalid',remember_automatic:'true'}) }).rememberedChoice, 'none');
+equal(product({ ...choose, product_flow: flow('choosing', {remember_automatic:'true'}) }).rememberAutomatic, false);
+equal(connection({ ...native, controller_status: { ...native.controller_status,
+  firmware_revision:0x0307, build_id:0x03070001, capabilities:15 } }).canPlay,true);
 assert.match(product(choose).note, /teclado o el ratón/); ++assertions;
 assert.doesNotMatch(product(choose).note, /confirma con ✕/); ++assertions;
 equal(product({ ...choose, product_flow: flow('choosing', { offer_id: '' }) }).canChoose, false);

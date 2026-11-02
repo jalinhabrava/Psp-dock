@@ -1,4 +1,4 @@
-/* Actual 0306 transport under asynchronous USB/module doubles. These tests
+/* Actual 0307 transport under asynchronous USB/module doubles. These tests
  * establish ownership and order, not Sony USBBus composition on hardware. */
 #include <assert.h>
 #include <stdio.h>
@@ -340,7 +340,7 @@ static void test_native_start_rechecks_busy_unknown_and_error_states(void){
         }
     }
 }
-static void test_0306_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
+static void test_0307_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
     int result,status=-1;SceUID boot;
     /* Reproduce the photographed 0300 failure in the Sony module double. */
     fixture();boot=sceKernelLoadModule("flash0:/kd/usbstorboot.prx",0,NULL);
@@ -349,9 +349,9 @@ static void test_0306_omits_pc_activation_and_keeps_mandatory_link_failures_fata
     assert(boot_loads==1 && boot_starts==1 && !start_mask);
     assert(sceKernelUnloadModule(boot)==boot);
 
-    /* 0306 must reach the normal transport without ever loading that PRX,
+    /* 0307 must reach the normal transport without ever loading that PRX,
      * Pcact, NPDRM, EFlash or usbdevice redirection. */
-    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0306u);
+    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0307u);
     assert(start_usb()==0 && activated && storage_started);
     assert(load_mask==REQUIRED_MASK && !boot_loads && !boot_starts && !forbidden_loads);
     assert(stop_usb()==0 && unload_dependencies()==0);
@@ -369,7 +369,7 @@ static void test_sony_registration_and_launcher_revision_remain_required(void){
     fixture();suppress_sony_registration=1;
     assert(start_usb()==-3003 && !activated && !registered && !storage_started);
     assert(!operation_count && stop_usb()==0 && unload_dependencies()==0);
-    assert(PDN_LAUNCH_MAGIC==0x364e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
+    assert(PDN_LAUNCH_MAGIC==0x374e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
     old_launch.magic=0x314e4450u;
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
@@ -384,7 +384,7 @@ static void test_identification_and_get_are_read_only(void){
     struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
     struct DeviceRequest descriptor={0x81,6,0x2200,1,sizeof(report_descriptor)};
     struct DeviceRequest legacy_set={0x21,9,0x0300,1,32};
-    const uint8_t identity[12]={'N','A','T','3',6,3,15,0,1,0,6,3};
+    const uint8_t identity[12]={'N','A','T','3',7,3,15,0,1,0,7,3};
     uint8_t before[16];unsigned i;
     connected_fixture();memcpy(before,protocol.session,16);
     assert(sizeof(pdn_wire_prefix)==5 && !memcmp(pdn_wire_prefix,"PDK2\x03",5));
@@ -612,6 +612,23 @@ static void test_input_only_after_claim_and_choice_or_controller(void){
     protocol.phase=PDN_PHASE_CONTROLLER;protocol.pending=1;gated_pad(&pad,input);assert(!memcmp(input,neutral,8));
     protocol.pending=0;input_rearm=0;pad.Buttons=PSP_CTRL_START|PSP_CTRL_SELECT;
     gated_pad(&pad,input);assert(!memcmp(input,neutral,8));
+}
+static void test_persistent_kernel_switches_do_not_lock_gamepad_rearm(void){
+    const uint32_t switches=0x030c0000u; /* MS, DISC, REMOTE, WLAN_UP */
+    uint8_t input[8],neutral[8],frame[64];SceCtrlData pad={switches,127,127};
+    claimed_fixture();neutral_pad(neutral);
+    progress_message(frame,PDN_ACTIVITY_CHOOSING,PDN_UNIT_UNKNOWN,0,0,2);
+    receive_message(frame);assert(apply_phase()==0 && input_rearm);
+    gated_pad(&pad,input);assert(!input_rearm && !memcmp(input,neutral,8));
+    pad.Buttons=switches|PSP_CTRL_CROSS;gated_pad(&pad,input);assert(input[4]&0x10);
+    receive_phase(PDN_PHASE_CONTROLLER,3);assert(apply_phase()==0 && input_rearm);
+    gated_pad(&pad,input);assert(input_rearm && !memcmp(input,neutral,8));
+    pad.Buttons=switches|0x00020000u;gated_pad(&pad,input);
+    assert(input_rearm && !memcmp(input,neutral,8)); /* HOLD remains a lock. */
+    pad.Buttons=switches;pad.Lx=30;gated_pad(&pad,input);assert(input_rearm);
+    pad.Lx=127;gated_pad(&pad,input);assert(!input_rearm);
+    pad.Buttons=switches|PSP_CTRL_RIGHT|PSP_CTRL_CIRCLE;gated_pad(&pad,input);
+    assert((input[4]&15)==3 && (input[4]&0x20));
 }
 static void test_exit_request_before_and_after_handshake_never_cuts_storage(void){
     uint8_t input[8],neutral[8];SceCtrlData pad={0,127,127};unsigned before;
@@ -1020,7 +1037,7 @@ int main(void){
     test_guard_and_bootstrap_failures();test_begin_ack_and_phase_ack_cancel_old_input_first();
     test_native_start_accepts_passive_cable_with_known_idle_drivers();
     test_native_start_rechecks_busy_unknown_and_error_states();
-    test_0306_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
+    test_0307_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
     test_sony_registration_and_launcher_revision_remain_required();
     test_identification_and_get_are_read_only();test_reset_nonce_changes_at_constant_timer();
     test_ep0_cpu_copy_keeps_command_until_protocol_reads_it();
@@ -1029,6 +1046,7 @@ int main(void){
     test_reconfiguration_and_old_ep0_cannot_change_session();test_stop_waits_for_real_unplug();
     test_held_control_drain_never_acknowledges_old_generation();
     test_input_only_after_claim_and_choice_or_controller();
+    test_persistent_kernel_switches_do_not_lock_gamepad_rearm();
     test_exit_request_before_and_after_handshake_never_cuts_storage();
     test_interface_one_and_transfer_buffer_ownership();test_progress_requires_valid_current_phase_and_preserves_storage();
     test_ep0_diagnostics_distinguish_dispatch_completion_and_parser();
@@ -1040,5 +1058,5 @@ int main(void){
     test_short_reports_preserve_the_full_protocol_and_commit_last();
     test_fragmented_abort_mix_corruption_and_nonce_never_act();
     test_output_diagnostic_never_executes_or_discards_a_partial_frame();
-    puts("native-dock 0306: passive cable, EP0 control, identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
+    puts("native-dock 0307: passive cable, EP0 control, identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
 }

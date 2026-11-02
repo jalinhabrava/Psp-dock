@@ -17,8 +17,8 @@ SESSION = '1234567890abcdef1234567890abcdef'
 PATH = r'\\?\hid#vid_054c&pid_01cd&mi_01#7&cafe&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}'
 PARENT = r'USB\VID_054C&PID_01CD\DOCK0300'
 FIRMWARES = ((0x0303, 0x03030001), (0x0304, 0x03040001),
-             (0x0305, 0x03050001), (0x0306, 0x03060001))
-FIRMWARE_CAPABILITIES = {0x0303: 7, 0x0304: 7, 0x0305: 15, 0x0306: 15}
+             (0x0305, 0x03050001), (0x0306, 0x03060001), (0x0307, 0x03070001))
+FIRMWARE_CAPABILITIES = {0x0303: 7, 0x0304: 7, 0x0305: 15, 0x0306: 15, 0x0307: 15}
 
 
 def status(phase=native.STORAGE, sequence=0, result=0, **changes):
@@ -85,7 +85,7 @@ class ProtocolTests(unittest.TestCase):
     def test_exact_firmware_capabilities_and_build_are_required_even_with_sony_usb_revision(self):
         invalid = [dict(firmware_revision=revision, build_id=build) for revision, build in (
             (0x0300, 0x03000001), (0x0301, 0x03010001), (0x0302, 0x03020001),
-            (0x0307, 0x03070001), (0x0303, 0x03040001), (0x0304, 0x03030001),
+            (0x0308, 0x03080001), (0x0303, 0x03040001), (0x0304, 0x03030001),
             (0x0303, 0x03050001), (0x0305, 0x03030001),
             (0x0304, 0x03050001), (0x0305, 0x03040001),
             (0x0303, 0x03030002), (0x0304, 0x03040002), (0x0305, 0x03050002))]
@@ -154,7 +154,7 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(api.frames, [final_ack])
 
     def test_unverified_identity_is_rejected_before_sending(self):
-        for revision, build in ((0x0302, 0x03020001), (0x0307, 0x03070001),
+        for revision, build in ((0x0302, 0x03020001), (0x0308, 0x03080001),
                                 (0x0303, 0x03040001), (0x0304, 0x03030001),
                                 (0x0304, 0x03050001), (0x0305, 0x03040001)):
             with self.subTest(revision=revision, build=build):
@@ -221,7 +221,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(native.FRAME.unpack(frame[1:33]),
                          (b'PDK2', 3, 2, 3, 0, bytes.fromhex(SESSION), 8, 0))
         self.assertEqual(native.EXTENSION.unpack(frame[33:65]),
-                         (b'NAT3', 0x0306, 15, 0x03060001, 0, 0, 0, 0, 0))
+                         (b'NAT3', 0x0307, 15, 0x03070001, 0, 0, 0, 0, 0))
 
     def test_command_encoding_admits_only_exact_explicit_firmware_pairs(self):
         for revision, build in FIRMWARES:
@@ -231,7 +231,7 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(native.EXTENSION.unpack(frame[33:65])[:4],
                                  (b'NAT3', revision, FIRMWARE_CAPABILITIES[revision], build))
         invalid = [dict(firmware_revision=revision, build_id=build) for revision, build in (
-            (0x0302, 0x03020001), (0x0307, 0x03070001),
+            (0x0302, 0x03020001), (0x0308, 0x03080001),
             (0x0303, 0x03040001), (0x0304, 0x03030001),
             (0x0303, 0x03050001), (0x0305, 0x03030001),
             (0x0304, 0x03050001), (0x0305, 0x03040001),
@@ -383,7 +383,7 @@ class ProtocolTests(unittest.TestCase):
                     calls.append('set_feature')
                     current[0] = status(native.CONTROLLER, 1, 2)
                 api.set = command
-                if revision in (0x0100, 0x0303, 0x0304, 0x0305, 0x0306):
+                if revision in (0x0100, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307):
                     self.assertIsNotNone(native.probe_native(api_factory=lambda: api))
                     self.assertTrue(native.request_phase(PATH, SESSION, native.CONTROLLER,
                                     api_factory=lambda: api)['accepted'])

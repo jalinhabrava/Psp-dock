@@ -90,6 +90,10 @@ def slots(root):
 
 def sync_plan(psp, pc, baseline):
     a, b = slots(psp), slots(pc)
+    return sync_plan_from_snapshots(a, b, baseline)
+
+def sync_plan_from_snapshots(a, b, baseline):
+    """Compare an already read pair; never hash the same saves for presentation."""
     actions, conflicts = [], []
     for slot in sorted(a.keys() | b.keys() | baseline.keys()):
         x, y, old = a.get(slot), b.get(slot), baseline.get(slot)
@@ -520,6 +524,8 @@ class Dock:
         # PSP/GAME folders and their assets for EVERY thumbnail can monopolize
         # the USB worker and the launcher for minutes.
         self.cached_game_results = None
+        from device_memory import DeviceMemory
+        self.device_memory = DeviceMemory(self.data, atomic_json)
         self.last_storage_scan_at = 0.0
         self.last_storage_scan_identity = ''
         self.storage_scan_interval = 300.0
@@ -695,7 +701,8 @@ class Dock:
             serial = volume_identity(root)
             previous = ({g['relative']: g for g in self.last_games}
                         if serial == self.catalog_volume else {})
-            found = game_inventory(root)
+            found = self.device_memory.inventory(inside(root, ''), serial, 'games',
+                                                lambda:game_inventory(root))
             for game in found:
                 # An empty PC library is already proof of absence. Never read
                 # gigabytes over PSP USB just to display an absent game.
@@ -774,7 +781,8 @@ class Dock:
             serial = volume_identity(root)
             old = ({r['relative']: r for r in self.last_roms}
                    if serial == self.retro_volume else {})
-            found = emulator_inventory(root)
+            found = self.device_memory.inventory(inside(root, ''), serial, 'retro',
+                                                lambda:emulator_inventory(root))
             for index, rom in enumerate(found['roms'], 1):
                 source = inside(root, rom['relative'])
                 local = inside(library, rom['relative'])
@@ -2230,14 +2238,20 @@ class Dock:
         retro = (self.cached_retro_results if cached_catalogs and self.cached_retro_results is not None
                  else self.retro_catalog())
         retro_install=self.retro_install_state()
-        retro_saves=self.retro_save_plan() if not running else {
-            'rows':[], 'pending':0,'conflicts':0,'unmanaged':0,'offline':True}
-        saves = (self.save_plan() if not running
-                 else {'actions': [], 'conflicts': [], 'unchanged': 0})
         product = self.product_session.snapshot()
-        if product['enabled'] and product['purpose']=='exit' and device is not None and not running:
-            saves = self.product_session.return_plan()
-            retro_saves = self.product_session.retro_return_view()
+        if cached_catalogs and product['enabled']:
+            # Publishing a phase is NOT another synchronization operation.
+            # In particular it must not scan all SRAMs three times between
+            # EXIT_SYNC, sync_return and finalize_exit (56s on real hardware).
+            saves, retro_saves = self.product_session.presentation_save_plans()
+        else:
+            retro_saves=self.retro_save_plan() if not running else {
+                'rows':[], 'pending':0,'conflicts':0,'unmanaged':0,'offline':True}
+            saves = (self.save_plan() if not running
+                     else {'actions': [], 'conflicts': [], 'unchanged': 0})
+            if product['enabled'] and product['purpose']=='exit' and device is not None and not running:
+                saves = self.product_session.return_plan()
+                retro_saves = self.product_session.retro_return_view()
         remembered_serial = volume_identity(device) if device is not None else (self.catalog_volume or self.retro_volume)
         controller = self.controller_status(device is not None)
         hid_eligible = bool(controller.get('connected') is True and
@@ -2993,6 +3007,15 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     from storage_layout import choose_pc_storage_parent
                     chosen=choose_pc_storage_parent()
                     return self.reply({'path':chosen,'cancelled':chosen is None})
+                if self.path == '/api/session-forget-automatic':
+                    # Revocation is metadata-only; it never starts a sync.
+                    with dock.lock:
+                        current = dock.native_transport.current
+                        pref = dock.device_memory.preference(current, dock.config)
+                        if not current or not pref:
+                            raise ValueError('Conecta la PSP cuya preferencia quieres cambiar.')
+                        dock.device_memory.remember(current, dock.config, pref['choice'], False)
+                    return self.reply({'ok': True})
                 if self.path == '/api/copy-policy':
                     # A click to SKIP missing games only changes one PC JSON
                     # preference. Never block the browser for a new USB game
@@ -3017,7 +3040,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     previous_pending_return = bool(dock.session.get('pending_return'))
                     save_result = None
                     if self.path == '/api/session-choice':
-                        dock.product_session.choose(body.get('choice'),body.get('offer_id'))
+                        dock.product_session.choose(body.get('choice'),body.get('offer_id'),
+                                                    automatic=body.get('automatic', False))
                     elif self.path == '/api/session-retry':
                         dock.product_session.retry(body.get('offer_id'))
                     elif self.path == '/api/session-cancel':

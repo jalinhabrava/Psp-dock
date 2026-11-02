@@ -6,6 +6,7 @@ manual workflow and the 0207 synthetic diagnostic retain their own gates.
 from __future__ import annotations
 
 from functools import partial
+from copy import deepcopy
 from connection_diagnostics import ConnectionDiagnostics
 import hashlib
 import json
@@ -38,6 +39,8 @@ class DockProductSession:
         self._progress = {'active': False}
         self._last_wire_progress = (None, 0.0)
         self._progress_error = None
+        self._presentation_plans = None
+        self._presentation_identity = None
         self.entry_path = dock.data / 'product-entry.json'
         self.entry = self.api.read_json(self.entry_path, {})
         self.flow = ProductFlow(
@@ -54,6 +57,10 @@ class DockProductSession:
 
     def snapshot(self):
         result = self.flow.snapshot()
+        preference = self.dock.device_memory.preference(self.transport.current, self.dock.config)
+        result['remembered_choice'] = preference.get('choice')
+        result['remember_automatic'] = preference.get('automatic', False)
+        result['catalog_cache'] = dict(self.dock.device_memory.stats)
         if self.dock.recovery_required or self.dock.session.get('running'):
             result['can_choose'] = False
             result['can_retry'] = False
@@ -119,7 +126,15 @@ class DockProductSession:
             # confirmed that process is closed, even though this Flow
             # object has no in-memory process handle after restarting.
             return False
-        return self.flow.advance()
+        advanced = self.flow.advance()
+        state = self.flow.snapshot()
+        preference = self.dock.device_memory.preference(self.transport.current, self.dock.config)
+        if (state['phase']=='choosing' and state['can_choose'] and not state['recovery_required']
+                and preference.get('automatic') is True and state['counts']['save_conflicts']==0):
+            # This is a previously explicit per-PSP policy, not consent
+            # inferred from arrival. Conflicts always stop for review.
+            self.choose(preference['choice'], state['offer_id'], automatic=True)
+        return advanced
 
     def _invoke_callback(self, callback, context):
         # Admission is checked after the coordinator persists its intent.
@@ -256,13 +271,28 @@ class DockProductSession:
         # the same card. The workflow has required fresh user consent first.
         return self.entry
 
+    def presentation_save_plans(self):
+        """Read-only UI mirror. Copies always recompute their own preconditions."""
+        identity = self.transport.current or {}
+        if self._presentation_identity == (identity.get('session_id'), identity.get('volume_serial')) and self._presentation_plans:
+            saves, retro = deepcopy(self._presentation_plans)
+            retro['offline'] = self.root() is None
+            return saves, retro
+        return ({'actions': [], 'conflicts': [], 'unchanged': 0, 'checking': True},
+                {'rows': [], 'pending': 0, 'conflicts': 0, 'unmanaged': 0, 'offline': True, 'checking': True})
+
+    def _cache_save_plans(self, saves, retro):
+        identity = self.transport.current or {}
+        self._presentation_identity = (identity.get('session_id'), identity.get('volume_serial'))
+        self._presentation_plans = deepcopy((saves, retro))
+
     def _save_snapshots(self, root):
         d, a = self.dock, self.api
         psp = a.inside(root, 'PSP/SAVEDATA')
         pc = a.inside(Path(d.config['memstick']), 'PSP/SAVEDATA')
         if list(psp.glob('.dock-journal-*.json')) or list(pc.glob('.dock-journal-*.json')):
             raise ProductFlowError('Hay una copia de partidas interrumpida. Revisa el journal antes de continuar.')
-        d.retro_save_plan()
+        retro_view = d.retro_save_plan()
         retro_psp, retro_pc, paths = {}, {}, {}
         for row in d.last_retro_save_rows:
             rom = next((item for item in d.last_roms if item['id'] == row['rom_id']), None)
@@ -275,8 +305,11 @@ class DockProductSession:
             retro_pc[row['rom_id']] = row.get('pc_signature')
             paths[row['rom_id']] = {'relative': row['source_relative'], 'system': rom['system'],
                                     'suggested_path': row.get('suggested_path') is True}
-        return {'psp': a.slots(psp), 'pc': a.slots(pc),
-                'retro_psp': retro_psp, 'retro_pc': retro_pc, 'retro_paths': paths}
+        result = {'psp': a.slots(psp), 'pc': a.slots(pc),
+                  'retro_psp': retro_psp, 'retro_pc': retro_pc, 'retro_paths': paths}
+        self._cache_save_plans(a.sync_plan_from_snapshots(result['psp'], result['pc'],
+            a.read_json(d.baseline_path(), {})), retro_view)
+        return result
 
     def _report(self, context, *, capture=False):
         root = self._context_root(context)
@@ -286,10 +319,8 @@ class DockProductSession:
         self.publish_progress('inventory', 'Buscando emuladores y ROMs.', completed=len(games))
         retro = d.retro_catalog()
         self.publish_progress('inventory', 'Comparando partidas guardadas.', completed=len(games) + len(retro['roms']))
-        saves = d.save_plan()
-        self.publish_progress('inventory', 'Comprobando partidas de emuladores.', completed=len(saves['actions']) + saves['unchanged'])
-        retro_saves = d.retro_save_plan()
         snapshots = self._save_snapshots(root)
+        saves, retro_saves = self.presentation_save_plans()
         missing = [g['id'] for g in games if g['availability'] == 'missing']
         missing += [g['id'] for g in retro['roms'] if g['availability'] == 'missing']
         counts = {
@@ -333,8 +364,10 @@ class DockProductSession:
             raise ProductFlowError('No se pudo confirmar el final del inventario: ' + str(self._progress_error))
         return result
 
-    def choose(self, choice, offer_id):
+    def choose(self, choice, offer_id, *, automatic=False):
         self._require_idle()
+        if type(automatic) is not bool:
+            raise ProductFlowError('La preferencia automática debe ser sí o no.')
         self.flow.choose(choice, offer_id)
         try:
             self._require_entry()
@@ -343,6 +376,7 @@ class DockProductSession:
             self.dock.session.update(product_volume=self.entry['identity']['volume_serial'],
                                      product_choice=choice)
             self.api.atomic_json(self.dock.data / 'session.json', self.dock.session)
+            self.dock.device_memory.remember(self.transport.current, self.dock.config, choice, automatic)
         except (OSError, ValueError) as exc:
             self.flow.halt(str(exc))
             raise
@@ -495,6 +529,25 @@ class DockProductSession:
                 row['revision'] = signature
             for row in plan['actions']:
                 row['revision'] = signature
+        # Exit presentation must use this session's directional comparison,
+        # not the initial two-way baseline. Reuse the already-read SRAM rows.
+        native_view = {**native, 'direction_scope':'to_psp'}
+        by_id = {row['slot']:{**row, 'status':'pc_to_psp'} for row in retro['actions']}
+        by_id.update({row['slot']:{**row, 'status':'conflict'} for row in retro['conflicts']})
+        rows = []
+        for original in self.dock.last_retro_save_rows:
+            row = {k:v for k,v in original.items() if k not in ('pc_signature','psp_signature')}
+            change = by_id.get(row['rom_id'])
+            if change:
+                row.update(status=change['status'], revision=change['revision'],
+                           reason=change.get('reason',''), skipped=False)
+            elif row['status'] not in ('unsupported','blocked'):
+                row.update(status='identical' if row.get('pc_present') else 'none',
+                           skipped=row['rom_id'] in entry.get('skipped_retro',[]))
+            rows.append(row)
+        self._cache_save_plans(native_view, {'rows':rows,'offline':False,'pending':len(by_id),
+            'conflicts':len(retro['conflicts']),
+            'unmanaged':sum(row['status'] in ('unsupported','blocked') for row in rows)})
         return native, retro, now
 
     def return_plan(self):
@@ -553,6 +606,31 @@ class DockProductSession:
             raise ProductFlowError('La salida sólo devuelve partidas hacia la PSP.')
         root = self._context_root(context)
         self._require_entry(context)
+        self.publish_progress('verifying', 'Comprobando si han cambiado tus partidas en el ordenador.')
+        # Most visits to the menu do not launch a game. Only changed PC saves
+        # can require a return. Do not rescan hundreds of PSP SRAM locations
+        # merely to discover that every PC source is unchanged.
+        d, a = self.dock, self.api
+        pc_root = a.inside(Path(d.config['memstick']), 'PSP/SAVEDATA')
+        psp_root = a.inside(root, 'PSP/SAVEDATA')
+        if list(pc_root.glob('.dock-journal-*.json')) or list(psp_root.glob('.dock-journal-*.json')):
+            raise ProductFlowError('Hay una copia de partidas interrumpida. Revisa el journal antes de continuar.')
+        pc_now = a.slots(pc_root)
+        from retro_saves import _sha
+        retro_now = {key:_sha(private_save_paths(Path(d.config['storage_root']),
+            self.entry['identity']['volume_serial'], key)[0]) for key in self.entry['retro_pc']}
+        if pc_now == self.entry['pc'] and retro_now == self.entry['retro_pc']:
+            self._context_root(context)
+            self.entry.update(return_data_verified=True, return_identity=dict(context['identity']),
+                return_summary={'psp_copied':0, 'retro_copied':0, 'pc_unchanged':True})
+            self._save_entry()
+            d.session['return_result'] = 'data_verified'
+            a.atomic_json(d.data/'session.json', d.session)
+            self._cache_save_plans({'actions': [], 'conflicts': [], 'unchanged':len(pc_now)},
+                {'rows': [], 'pending':0, 'conflicts':0, 'unmanaged':0, 'offline':False})
+            self.publish_progress('verifying', 'No hay partidas nuevas que devolver.', wire=False)
+            return {'verified': True, 'direction':'to_psp', 'conflicts': [], **self.entry['return_summary']}
+        self.publish_progress('inventory', 'Comparando las partidas modificadas con la PSP.')
         native, retro, _ = self._return_plans(root)
         conflicts = list(native['conflicts']) + [dict(row, kind='retro') for row in retro['conflicts']]
         if conflicts:
@@ -585,6 +663,8 @@ class DockProductSession:
             raise ProductFlowError('Los datos cambiaron durante la devolución; revisa el resultado.')
         self.entry['return_data_verified'] = True
         self.entry['return_identity'] = dict(context['identity'])
+        self.entry['return_summary'] = {'psp_copied':len(native['actions']),
+            'retro_copied':len(retro['actions']), 'pc_unchanged':False}
         self._save_entry()  # Durable before firmware SAFE / host eject.
         d.session['return_result'] = 'data_verified'
         a.atomic_json(d.data/'session.json', d.session)

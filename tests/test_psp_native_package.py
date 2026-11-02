@@ -1,4 +1,4 @@
-"""Product artwork, protocol identity and independent 0306 package gates."""
+"""Product artwork, protocol identity and independent 0307 package gates."""
 import hashlib
 import json
 from pathlib import Path
@@ -19,7 +19,7 @@ def pbp(title=package.TITLE, *, sfo_data=None, replacements=None):
 
 
 def abi_for(raw=b'NATIVE-ELF-FIXTURE'):
-    return {'revision': '0306', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+    return {'revision': '0307', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
             'mandatory_modules': ['flash0:/kd/semawm.prx', 'flash0:/kd/usbstor.prx',
                                   'flash0:/kd/usbstormgr.prx', 'flash0:/kd/usbstorms.prx'],
             'optional_bootstrap_modules': [],
@@ -28,7 +28,7 @@ def abi_for(raw=b'NATIVE-ELF-FIXTURE'):
             'firmware_identity_in_protocol': True, 'host_begin_required': True,
             'host_progress_supported': True, 'host_shutdown_supported': True,
             'usb_revision_is_firmware_revision': False,
-            'firmware_build_id': '03060001', 'protocol_capabilities': '000F',
+            'firmware_build_id': '03070001', 'protocol_capabilities': '000F',
             'command_transport': 'output4-fragments-crc16',
             'storage_backend': 'native Sony USBStor_Driver', 'kernel_filesystem_imports': [],
             'early_sony_boot_imports': [], 'expected_pid': '01CD',
@@ -46,7 +46,7 @@ def fixture_native_package(root: Path) -> Path:
     for name, raw in blobs.items():
         (folder / name).write_bytes(raw)
         records[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
-    manifest = {'schema': package.SCHEMA, 'revision': '0306', 'folder': package.REMOTE_FOLDER,
+    manifest = {'schema': package.SCHEMA, 'revision': '0307', 'folder': package.REMOTE_FOLDER,
                 'expected_usb_identity': dict(package.USB_IDENTITY),
                 'expected_protocol_identity': dict(package.PROTOCOL_IDENTITY), 'synthetic_storage': False,
                 'storage_backend': 'native Sony USBStor_Driver', 'storage_read_only': False,
@@ -63,7 +63,7 @@ class NativeCompiledPolicyTests(unittest.TestCase):
         self.auditor = package._kernel_auditor()
         self.blobs = {
             'pdn_wire_prefix': b'PDK2\x03',
-            'pdn_identity': struct.pack('<4sHHI', b'NAT3', 0x0306, 0x000F, 0x03060001),
+            'pdn_identity': struct.pack('<4sHHI', b'NAT3', 0x0307, 0x000F, 0x03070001),
             'pdn_protocol_abi': bytes.fromhex('50444e4103400804010203043f01010005'),
             'pdn_transport_abi': b'PDF4' + bytes((32, 2, 0xc0, 64, 0xe0, 16)),
         }
@@ -76,8 +76,8 @@ class NativeCompiledPolicyTests(unittest.TestCase):
     def test_shutdown_policy_is_derived_from_compiled_identity_and_abi(self):
         abi, policy = self.auditor._compiled_protocol(self.compiled())
         self.assertEqual(len(abi), 17)
-        self.assertEqual(policy['revision'], '0306')
-        self.assertEqual(policy['firmware_build_id'], '03060001')
+        self.assertEqual(policy['revision'], '0307')
+        self.assertEqual(policy['firmware_build_id'], '03070001')
         self.assertEqual(policy['protocol_capabilities'], '000F')
         self.assertIs(policy['host_shutdown_supported'], True)
 
@@ -90,7 +90,7 @@ class NativeCompiledPolicyTests(unittest.TestCase):
 
     def test_compiled_capabilities_are_exact_not_just_shutdown_bit(self):
         for capabilities in (0x0007, 0x0008, 0x001F):
-            identity = struct.pack('<4sHHI', b'NAT3', 0x0306, capabilities, 0x03060001)
+            identity = struct.pack('<4sHHI', b'NAT3', 0x0307, capabilities, 0x03070001)
             with self.subTest(capabilities=capabilities), self.assertRaises(ValueError):
                 self.auditor._compiled_protocol(self.compiled(pdn_identity=identity))
 
@@ -148,9 +148,9 @@ class NativePackageTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 package.verify_package(root)
         file.write_text(json.dumps(original))
-        self.assertEqual(package.verify_package(root)['revision'], '0306')
+        self.assertEqual(package.verify_package(root)['revision'], '0307')
 
-    def test_old_or_optional_bootstrap_is_not_a_valid_0306_audit(self):
+    def test_old_or_optional_bootstrap_is_not_a_valid_0307_audit(self):
         root = fixture_native_package(self.root / 'package')
         file = root / 'manifest.json'
         original = json.loads(file.read_text())
@@ -180,7 +180,7 @@ class NativePackageTests(unittest.TestCase):
         file = root / 'manifest.json'
         original = json.loads(file.read_text())
         for key, value in (
-                ('expected_usb_identity', {'vid': '054C', 'pid': '01CD', 'revision': '0306'}),
+                ('expected_usb_identity', {'vid': '054C', 'pid': '01CD', 'revision': '0307'}),
                 ('expected_protocol_identity', None),
                 ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'version': 2}),
                 ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'firmware_revision': '0301'}),

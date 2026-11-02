@@ -13,8 +13,8 @@
 #define PDN_TRANSFER_SIZE PDN_FEATURE_SIZE
 #define PDN_SESSION_SIZE 16u
 #define PDN_VERSION 3u
-#define PDN_FIRMWARE_REVISION 0x0306u
-#define PDN_BUILD_ID 0x03060001u
+#define PDN_FIRMWARE_REVISION 0x0307u
+#define PDN_BUILD_ID 0x03070001u
 #define PDN_CAP_NATIVE_STORAGE 1u
 #define PDN_CAP_HOST_BEGIN 2u
 #define PDN_CAP_HOST_PROGRESS 4u
@@ -61,7 +61,7 @@ static const uint8_t pdn_protocol_abi[17] __attribute__((used)) = {
     63,1,1,0, /* flags, mandatory work claim, progress, USB-as-build */
     PDN_OP_HOST_SHUTDOWN /* terminal host release; not an input/work claim */
 };
-/* Exact command transport for 0306: 32 ordered reports, 2 core bytes/report.
+/* Exact command transport for 0307: 32 ordered reports, 2 core bytes/report.
  * Status GET keeps the already observed 64-byte Feature layout. */
 static const uint8_t pdn_transport_abi[10] __attribute__((used)) = {
     'P','D','F','4',32,2,0xc0,64,0xe0,16 /* final CRC16-CCITT commit */

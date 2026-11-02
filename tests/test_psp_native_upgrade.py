@@ -47,7 +47,7 @@ class NativeUpgradeTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('KEEP ' + relative).encode())
             self.kept[path] = path.read_bytes()
-        self.package = fixture_native_package(self.home / 'package0306')
+        self.package = fixture_native_package(self.home / 'package0307')
         self.new_records = json.loads((self.package / 'manifest.json').read_text())['files']
         snapshot = psp_backup.backup(self.psp, self.home / 'critical', 'critical', SERIAL, USB,
                                      verify_identity=lambda: True, reserve_bytes=0)
@@ -83,7 +83,7 @@ class NativeUpgradeTests(unittest.TestCase):
     def test_plan_is_read_only(self):
         before = {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()}
         result = self.plan()
-        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0306'))
+        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0307'))
         self.assertEqual(result['reference_installation_receipt_sha256'],
                          upgrade._reference_receipt(self.previous_revision))
         self.assertFalse(result['installed']);self.assertFalse(result['autorun'])
@@ -373,6 +373,10 @@ class Native0303UpgradeTests(NativeUpgradeTests):
 class Native0304UpgradeTests(NativeUpgradeTests):
     """Repeat interruption, verified backup and rollback gates for the installed 0304."""
     previous_revision = '0304'
+
+
+class Native0306UpgradeTests(NativeUpgradeTests):
+    previous_revision = '0306'
 
 
 class Native0305UpgradeTests(NativeUpgradeTests):

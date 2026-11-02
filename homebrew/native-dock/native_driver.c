@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0306: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0307: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,7 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,6);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,7);
 
 typedef struct {
     const char *path,*name;
@@ -263,7 +263,7 @@ static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *
         if(r->wValue==0x0300){
             pdn_protocol_status(&protocol,answer,connected,storage_started,exit_requested);length=PDN_TRANSFER_SIZE;
             if(ui){
-                /* 0306 status-only diagnostic: drop4, receive-length7,
+                /* 0307 status-only diagnostic: drop4, receive-length7,
                  * signed result5 (-16 unknown). Commands keep these two
                  * reserved bytes zero, so this cannot authorize an action. */
                 uint32_t drop=ui->ep0.drop_reason&15u;
@@ -372,11 +372,19 @@ static void encode_pad(const SceCtrlData *pad,uint8_t out[8]) {
     for(i=0;i<12;i++)if(b&masks[i])out[4+(i+4)/8]|=(uint8_t)(1u<<((i+4)%8));
 }
 static void gated_pad(const SceCtrlData *pad,uint8_t out[8]) {
+    /* Kernel Ctrl also reports persistent hardware state (Memory Stick,
+     * UMD, WLAN and remote switches). Those are not held game buttons.
+     * Waiting for Buttons==0 on a console with a card can never rearm. */
+    const uint32_t held_controls=PSP_CTRL_CROSS|PSP_CTRL_CIRCLE|PSP_CTRL_SQUARE|
+        PSP_CTRL_TRIANGLE|PSP_CTRL_UP|PSP_CTRL_RIGHT|PSP_CTRL_DOWN|PSP_CTRL_LEFT|
+        PSP_CTRL_LTRIGGER|PSP_CTRL_RTRIGGER|PSP_CTRL_SELECT|PSP_CTRL_START|
+        PSP_CTRL_HOME|PSP_CTRL_VOLDOWN|PSP_CTRL_VOLUP|PSP_CTRL_SCREEN|
+        0x00020000u; /* HOLD remains an intentional input lock. */
     neutral_pad(out);
     if(!pdn_protocol_accepts_input(&protocol))return;
     if(input_rearm){
         /* Release buttons/analogue before the next UI can consume input. */
-        if(!(pad->Buttons&~PSP_CTRL_NOTE) && pad->Lx>=111 && pad->Lx<=143 && pad->Ly>=111 && pad->Ly<=143)
+        if(!(pad->Buttons&held_controls) && pad->Lx>=111 && pad->Lx<=143 && pad->Ly>=111 && pad->Ly<=143)
             input_rearm=0;
         return;
     }

@@ -25,13 +25,13 @@ from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError, VID
 from psp_usb import PspStorage, identify, _volume_serial
 
 PID = 0x01CD
-REVISION = 0x0306  # Firmware version, never inferred from Sony bcdDevice.
+REVISION = 0x0307  # Firmware version, never inferred from Sony bcdDevice.
 FIRMWARE_BUILDS = {0x0303: 0x03030001, 0x0304: 0x03040001,
-                   0x0305: 0x03050001, 0x0306: 0x03060001}
-FIRMWARE_CAPABILITIES = {0x0303: 0x0007, 0x0304: 0x0007, 0x0305: 0x000F, 0x0306: 0x000F}
+                   0x0305: 0x03050001, 0x0306: 0x03060001, 0x0307: 0x03070001}
+FIRMWARE_CAPABILITIES = {0x0303: 0x0007, 0x0304: 0x0007, 0x0305: 0x000F, 0x0306: 0x000F, 0x0307: 0x000F}
 CAP_HOST_SHUTDOWN = 8
 RETIRED_REVISIONS = frozenset({0x0300, 0x0301, 0x0302})
-USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304, 0x0305, 0x0306})
+USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307})
 MAGIC, VERSION = b'PDK2', 3
 STATUS, SET_PHASE, HOST_BEGIN, HOST_PROGRESS = 1, 2, 3, 4
 HOST_SHUTDOWN = 5
@@ -44,7 +44,7 @@ EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', FIRMWARE_CAPABILITIES[REVISION], FI
 CORE_REPORT_BYTES = 65  # Windows report ID byte + unchanged 64-byte PDK2 core.
 REPORT_BYTES = CORE_REPORT_BYTES
 FIRMWARE_REPORT_BYTES = {revision: CORE_REPORT_BYTES for revision in FIRMWARE_BUILDS}
-FRAGMENT_REVISION = 0x0306
+FRAGMENT_REVISIONS = frozenset((0x0306, 0x0307))
 WAITING, INVENTORY, CHOOSING, SYNC_IN, COPY_GAME, CONTROL_ACTIVITY, SYNC_OUT, SAFE_ACTIVITY = range(8)
 UNKNOWN, BYTES, FILES = 0, 1, 2
 PHASE_ACTIVITIES = {STORAGE: (INVENTORY, CHOOSING, SYNC_IN),
@@ -132,9 +132,9 @@ def decode_status(report: bytes) -> NativeStatus:
             (not pending and seq > 0 and result not in (2,) and result >= 0)):
         raise NativeDockError('Confirmación PDK2 incoherente.')
     ext_magic, firmware, capabilities, build, activity, unit, reserved, done, total = EXTENSION.unpack(report[33:65])
-    if ext_magic != EXT_MAGIC or (reserved and firmware != FRAGMENT_REVISION):
+    if ext_magic != EXT_MAGIC or (reserved and firmware not in FRAGMENT_REVISIONS):
         raise NativeDockError('Extensión de identidad nativa inválida.')
-    if firmware == FRAGMENT_REVISION and (reserved & 15) > 9:
+    if firmware in FRAGMENT_REVISIONS and (reserved & 15) > 9:
         raise NativeDockError('Diagnóstico de transporte nativo inválido.')
     status = NativeStatus(session.hex(), phase, seq, result, bool(flags & CONNECTED),
                           pending, bool(flags & SONY_STORAGE), bool(flags & EXIT_REQUESTED),
@@ -261,7 +261,7 @@ class NativeHid(_WindowsHid):
                     activity=extension[4], unit=extension[5], completed=extension[7], total=extension[8],
                     firmware_revision=extension[1], build_id=extension[3])):
             raise NativeDockError('La orden no conserva el formato completo del protocolo.')
-        if extension[1] == FRAGMENT_REVISION:
+        if extension[1] in FRAGMENT_REVISIONS:
             token = secrets.randbelow(256)
             payload = report[1:]
             for index in range(32):
@@ -289,7 +289,7 @@ class NativeHid(_WindowsHid):
         any descriptor length. Command reserved bytes must still be zero.
         """
         _validate_status_identity(status)
-        if status.firmware_revision != 0x0306:
+        if status.firmware_revision not in FRAGMENT_REVISIONS:
             return {}
         current = self.get(handle)
         if (current.session != status.session or

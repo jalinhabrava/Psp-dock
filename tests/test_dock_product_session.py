@@ -216,6 +216,68 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertFalse(view['can_launch_game'])
         self.assertEqual(view['product_flow']['phase'], 'choosing')
 
+    def test_native_presentation_never_scans_saves_again(self):
+        self.retro_fixture()
+        self.offer()
+        with patch.object(self.dock,'save_plan',side_effect=AssertionError('UI repeated native saves')), \
+             patch.object(self.dock,'retro_save_plan',side_effect=AssertionError('UI repeated SRAMs')), \
+             patch.object(self.product,'return_plan',side_effect=AssertionError('UI repeated return')), \
+             patch.object(self.product,'retro_return_view',side_effect=AssertionError('UI repeated retro return')):
+            view=self.dock.state(cached_catalogs=True)
+        self.assertEqual(view['product_flow']['phase'],'choosing')
+        self.assertTrue(view['retro_saves']['rows'])
+
+    def test_choice_is_remembered_without_implicit_consent(self):
+        token=self.offer()
+        self.product.choose('none',token)
+        pref=self.dock.device_memory.preference(self.transport.current,self.dock.config)
+        self.assertEqual(pref,{'choice':'none','automatic':False})
+        self.assertEqual(self.product.snapshot()['remembered_choice'],'none')
+
+    def test_opted_in_policy_is_reused_only_after_live_inventory(self):
+        self.dock.device_memory.remember(self.transport.current,self.dock.config,'none',True)
+        self.product.tick(self.dock.devices())
+        self.assertEqual(self.transport.begins,1)
+        self.assertEqual(self.product.snapshot()['phase'],'entering_controller')
+        self.assertEqual(self.product.snapshot()['choice'],'none')
+        self.assertTrue(self.product.entry_path.exists())
+
+    def test_remembered_policy_never_bypasses_save_conflicts(self):
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'PSP version')
+        self.slot(self.pc_saves,'SAVE',b'PC version')
+        self.dock.device_memory.remember(self.transport.current,self.dock.config,'all',True)
+        self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'],'choosing')
+        self.assertGreater(self.product.snapshot()['counts']['save_conflicts'],0)
+
+    def test_no_pc_save_change_exits_without_rescanning_psp_savedata(self):
+        self.retro_fixture()
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'unchanged')
+        self.slot(self.pc_saves,'SAVE',b'unchanged')
+        self.ready('none')
+        self.dock.request_exit()
+        self.product.tick(self.dock.devices())  # Confirm EXIT_SYNC.
+        with patch.object(self.product,'_return_plans',side_effect=AssertionError('unchanged PC must not rescan PSP')), \
+             patch.object(self.dock,'retro_save_plan',side_effect=AssertionError('unchanged PC must not enumerate SRAM')):
+            self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'],'finalizing')
+        self.assertEqual(self.product.entry['return_summary'],
+            {'psp_copied':0,'retro_copied':0,'pc_unchanged':True})
+        self.assertTrue(self.product.entry['return_data_verified'])
+
+    def test_cached_exit_conflicts_keep_direction_and_fresh_revision(self):
+        psp=self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'old')
+        pc=self.slot(self.pc_saves,'SAVE',b'old')
+        self.ready('none')
+        psp.write_bytes(b'PSP changed');pc.write_bytes(b'PC changed')
+        self.dock.request_exit()
+        self.product.tick(self.dock.devices());self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'],'attention')
+        view=self.dock.state(cached_catalogs=True)
+        self.assertEqual(view['saves']['direction_scope'],'to_psp')
+        self.assertEqual(len(view['saves']['conflicts']),1)
+        self.assertTrue(view['saves']['conflicts'][0]['revision'])
+
     def test_failed_host_begin_publishes_attention_without_any_catalog_scan(self):
         self.assertIsNone(self.dock.cached_game_results)
         self.assertIsNone(self.dock.cached_retro_results)

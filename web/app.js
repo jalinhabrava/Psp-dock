@@ -12,6 +12,7 @@ const ui = {
   nativePadConnected: false, nativePadLastAt: 0,
   nativePadHeld: {}, nativePadDirection: '', nativePadAt: 0,
   nativePadFlowKey: '',
+  productRemember: false,
   graphicsGame: null,
   textureProgress: null,
   appClosing: false, appClosed: false,
@@ -1552,6 +1553,7 @@ function dockProductFlowView(state, options = {}) {
   const actionable = enabled && online && !options.busy && !connectionInterrupted;
   const offerId = typeof flow.offer_id === 'string' ? flow.offer_id : '';
   const count = (key) => Number.isSafeInteger(flow.counts?.[key]) && flow.counts[key] >= 0 ? flow.counts[key] : null;
+  const rememberedChoice = ['all','saves','games','none'].includes(flow.remembered_choice) ? flow.remembered_choice : 'none';
   const progress = dockProgressView(flow, phase);
   const copying = ['syncing_in', 'copying_game', 'syncing_out'].includes(phase);
   const automatic = flow.capabilities?.automatic_transition === true;
@@ -1613,6 +1615,7 @@ function dockProductFlowView(state, options = {}) {
     title, kicker: welcome ? 'TU PSP, EN LA PANTALLA GRANDE' : canceling || closing && phase !== 'safe_to_disconnect' ? 'CERRANDO LA CONEXIÓN' : stages[phase][1], message, note, offerId,
     welcome, retryLabel: welcome ? (closing ? 'Completar cierre anterior' : 'Continuar con mi PSP') : 'Reintentar',
     choosing: phase === 'choosing', canChoose, canReview, canRetry, canClose, canCancel, canDismiss,
+    rememberedChoice, rememberAutomatic: flow.remember_automatic === true,
     closePending: flow.window_close_requested === true,
     counts: { psp: count('psp_games'), pc: count('pc_games'), missing: count('missing_games'), saves: count('save_actions'), conflicts: count('save_conflicts') },
     showCounts: ['choosing', 'syncing_in', 'entering_controller'].includes(phase),
@@ -1642,7 +1645,7 @@ function dockConnectionView(state, options = {}) {
   const product = dockProductFlowView(current, options);
   const link = dockLinkView(current);
   const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
-  const nativeBuild = [[0x0303, 0x03030001, 7], [0x0304, 0x03040001, 7], [0x0305, 0x03050001, 15], [0x0306, 0x03060001, 15]].some(
+  const nativeBuild = [[0x0303, 0x03030001, 7], [0x0304, 0x03040001, 7], [0x0305, 0x03050001, 15], [0x0306, 0x03060001, 15], [0x0307, 0x03070001, 15]].some(
     ([revision, build, capabilities]) => controller.firmware_revision === revision && controller.build_id === build && controller.capabilities === capabilities);
   const nativeIdentity = controller.connected === true && controller.mode === 'native_dock' &&
     controller.product_id === 0x01cd && controller.protocol_version === 3 && nativeBuild &&
@@ -1918,6 +1921,10 @@ function renderProductFlow(product) {
   $('dock-session-save-count').textContent = displayCount(product.counts.saves) +
     (product.counts.conflicts ? ` · ${product.counts.conflicts} por revisar` : '');
   $('dock-session-choices').hidden = !product.choosing;
+  if (changed) ui.productRemember = product.rememberAutomatic;
+  $('dock-session-remember').setAttribute('aria-pressed', String(ui.productRemember));
+  $('dock-session-remember').disabled = !product.canChoose;
+  $('dock-session-remember').textContent = 'Aplicar mi elección automáticamente al conectar esta PSP: ' + (ui.productRemember ? 'sí' : 'no');
   panel.querySelectorAll('[data-session-choice]').forEach((button) => { button.disabled = !product.canChoose; });
   $('dock-session-review').hidden = !product.canReview;
   $('dock-session-retry').hidden = !product.canRetry;
@@ -1953,7 +1960,7 @@ function renderProductFlow(product) {
   $('dock-session-progress-item').textContent = product.progress.currentItem;
   $('dock-session-progress-item').hidden = !product.progress.currentItem;
   if (changed && !document.querySelector('dialog[open]')) {
-    const target = product.canChoose ? panel.querySelector('[data-session-choice="none"]') :
+    const target = product.canChoose ? panel.querySelector(`[data-session-choice="${product.rememberedChoice}"]`) :
       product.canReview ? $('dock-session-review') : product.canRetry ? $('dock-session-retry') :
         product.canClose ? $('dock-session-close') : panel;
     target.focus({ preventScroll: true });
@@ -1965,7 +1972,7 @@ async function chooseProductSession(choice) {
   ui.productRequestError = '';
   // Capture this exact offer. The backend rejects a choice if the PSP or
   // inventory changes before the request reaches it.
-  const operation = mutate('/api/session-choice', { choice, offer_id: product.offerId });
+  const operation = mutate('/api/session-choice', { choice, offer_id: product.offerId, automatic: ui.productRemember });
   xmbRender();
   await operation;
 }
@@ -2156,6 +2163,11 @@ function xmbBuildSections() {
           xmbPreviewGame(previous);
         }) },
     { key: 'pad', t: 'Mando', s: () => xmbText('gamepad-status') || 'Sin detectar', icon: 'pad', activate: () => toast(xmbText('gamepad-status')) },
+    { key: 'session-memory', t: 'Sincronización al conectar esta PSP', icon: 'info',
+      s: () => state.product_flow?.remember_automatic ? 'Elección automática activada · pulsa ✕ para volver a preguntar' : 'Preguntar · se recuerda la última elección',
+      activate: () => state.product_flow?.remember_automatic ?
+        mutate('/api/session-forget-automatic', {}, 'Se volverá a preguntar al conectar esta PSP.') :
+        toast('Puedes activar la elección automática en la próxima pantalla de sincronización.') },
     { key: 'storage', t: 'Carpeta principal de datos',
       s: () => settingsValue('storage_root',settingsValue('library','')),
       icon: 'folder', activate: () => xmbStorageLocation() },
@@ -2969,6 +2981,11 @@ document.querySelectorAll('[data-session-choice]').forEach((button) => {
 });
 $('dock-session-review').addEventListener('click', reviewProductSaves);
 $('dock-session-retry').addEventListener('click', retryProductSession);
+$('dock-session-remember').addEventListener('click', () => {
+  if (!xmbConnectionView().product?.canChoose) return;
+  ui.productRemember = !ui.productRemember;
+  xmbRender();
+});
 $('dock-session-refresh').addEventListener('click', refresh);
 $('dock-session-cancel').addEventListener('click', cancelProductSession);
 $('dock-session-close').addEventListener('click', closeDockApp);

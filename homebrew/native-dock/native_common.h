@@ -8,8 +8,8 @@
 /* Lab identity, not an allocated production Sony VID/PID. */
 #define PDN_PRODUCT 0x01cdu
 #define PDN_REVISION PDN_FIRMWARE_REVISION
-/* PDN6 rejects a mixed launcher/kernel before starting any worker. */
-#define PDN_LAUNCH_MAGIC 0x364e4450u
+/* PDN7 rejects a mixed launcher/kernel before starting any worker. */
+#define PDN_LAUNCH_MAGIC 0x374e4450u
 #define PDN_DEPENDENCIES 4u
 
 enum PdnStage {
