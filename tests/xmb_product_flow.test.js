@@ -46,12 +46,16 @@ equal(connection({ ...storage, product_flow: flow('ready') }).canPlay, false,
 equal(connection({ ...stable, demo: true, product_flow: flow('ready') }).canPlay, false);
 const native = { selected_device: 'G:\\', controller_status: { connected: true, mode: 'native_dock', can_play: true,
   synthetic_storage: false, product_id: 0x01cd, protocol_version: 3, firmware_revision: 0x0303,
+  capabilities: 7, build_id: 0x03030001,
   usb_revision: 0x0100, host_confirmed: true, phase: 2 }, product_flow: flow('ready') };
 equal(connection(native).canPlay, true, 'Verified native Dock can keep its Sony storage enumerated');
 equal(connection(native).nativeController, true);
+equal(connection({ ...native, controller_status: { ...native.controller_status, firmware_revision: 0x0304, build_id: 0x03040001 } }).canPlay,
+  true, 'The explicitly supported diagnostic firmware keeps the same product journey');
 for (const changes of [{ product_id: 0x01cc }, { firmware_revision: 0x0207 }, { firmware_revision: 0x0300 },
-  { firmware_revision: 0x0301 }, { firmware_revision: 0x0302 }, { firmware_revision: undefined, revision: 0x0303 }, { protocol_version: 2 },
+  { firmware_revision: 0x0301 }, { firmware_revision: 0x0302 }, { firmware_revision: 0x0305 }, { firmware_revision: undefined, revision: 0x0303 }, { protocol_version: 2 },
   { protocol_version: undefined }, { host_confirmed: false }, { host_confirmed: undefined },
+  { capabilities: undefined }, { capabilities: 3 }, { build_id: undefined }, { build_id: 0x03040001 },
   { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
   equal(connection({ ...native, controller_status: { ...native.controller_status, ...changes } }).canPlay,
     false, 'Native identity, controller phase and host eligibility must all agree');

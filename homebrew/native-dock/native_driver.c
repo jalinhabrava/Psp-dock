@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0303: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0304 diagnostic: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,7 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,3);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,4);
 
 typedef struct {
     const char *path,*name;
@@ -55,6 +55,28 @@ static uint8_t ctl_buffer[256] __attribute__((aligned(64)));
 static struct UsbdDeviceReq pad_req,ctl_req;
 
 static void set_stage(unsigned stage) { if(ui)ui->stage=stage; }
+static void set_worker_site(unsigned site) { if(ui)ui->worker_site=site; }
+/* Diagnostic writers run with interrupts suspended, for RAM publication
+ * only. Never cover a USB call or a wait with this diagnostic seqlock. */
+static void ep0_diag_begin(void) {
+    if(ui){ui->ep0.generation++;__asm__ volatile("" ::: "memory");}
+}
+static void ep0_diag_end(void) {
+    if(ui){__asm__ volatile("" ::: "memory");ui->ep0.generation++;}
+}
+static uint32_t ep0_gate_flags(void) {
+    return (active?PDN_EP0_ACTIVE:0u)|(connected?PDN_EP0_CONNECTED:0u)|
+        (ctl_quiescing?PDN_EP0_QUIESCING:0u)|(link_reset_pending?PDN_EP0_RESET_PENDING:0u)|
+        (ctl_generation==link_generation?PDN_EP0_SAME_GENERATION:0u)|
+        (ctl_busy?PDN_EP0_CTL_BUSY:0u)|(ctl_submitting?PDN_EP0_CTL_SUBMITTING:0u)|
+        (protocol.pending?PDN_EP0_PROTOCOL_PENDING:0u);
+}
+static void ep0_diag_link(void) {
+    if(ui){
+        ui->ep0.request_generation=ctl_generation;ui->ep0.live_generation=link_generation;
+        ui->ep0.gate_flags=ep0_gate_flags();
+    }
+}
 static void record_error(int result) {
     if(ui && !ui->error){ui->error=result;ui->error_stage=ui->stage;}
 }
@@ -82,7 +104,18 @@ static int pad_done(struct UsbdDeviceReq *r,int a,int b) {
     hid_busy=0;return 0;
 }
 static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
-    int irq;(void)a;(void)b;
+    int irq,received;unsigned i;(void)a;(void)b;
+    if(ctl_feature_receive && ui){
+        irq=sceKernelCpuSuspendIntr();ep0_diag_begin();
+        ui->ep0.completions++;ui->ep0.retcode=r->retcode;ui->ep0.recvsize=r->recvsize;
+        ui->ep0.drop_reason=r->retcode?PDN_EP0_DROP_RETCODE:
+            r->recvsize!=(int)PDN_FEATURE_SIZE?PDN_EP0_DROP_SIZE:PDN_EP0_DROP_NONE;
+        ep0_diag_link();
+        /* The full allocated buffer is always readable. This snapshot is
+         * not a claim that 64 bytes arrived when recvsize reports otherwise. */
+        for(i=0;i<PDN_FEATURE_SIZE;i++)ui->ep0.raw[i]=ctl_buffer[i];
+        ep0_diag_end();sceKernelCpuResumeIntr(irq);
+    }
     if(ctl_feature_receive && !r->retcode && r->recvsize==(int)PDN_FEATURE_SIZE){
         /* Recv owns this buffer until completion. Prepare its cache before
          * submission (below), as Sony usbacc does for EP0 OUT; do not
@@ -92,7 +125,16 @@ static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
         irq=sceKernelCpuSuspendIntr();
         if(active && connected && !ctl_quiescing && !link_reset_pending &&
            ctl_generation==link_generation){
-            pdn_protocol_receive(&protocol,ctl_buffer,PDN_FEATURE_SIZE);publish_phase();
+            received=pdn_protocol_receive(&protocol,ctl_buffer,PDN_FEATURE_SIZE);
+            if(ui){
+                ep0_diag_begin();ui->ep0.parser_calls++;ui->ep0.parser_result=received;
+                ui->ep0.drop_reason=received<0?PDN_EP0_DROP_PARSER:PDN_EP0_DROP_NONE;
+                ep0_diag_link();ep0_diag_end();
+            }
+            publish_phase();
+        }else if(ui){
+            ep0_diag_begin();ui->ep0.drop_reason=PDN_EP0_DROP_LINK;
+            ep0_diag_link();ep0_diag_end();
         }
         sceKernelCpuResumeIntr(irq);
     }
@@ -101,9 +143,17 @@ static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
 static int control_submit(const uint8_t *data,int size,int receive,int feature) {
     int irq=sceKernelCpuSuspendIntr(),result;
     if(!active || ctl_busy || ctl_quiescing || size<0 || size>(int)sizeof(ctl_buffer)){
+        if(feature && ui){
+            ep0_diag_begin();ui->ep0.drop_reason=PDN_EP0_DROP_SUBMIT_GATE;
+            ep0_diag_link();ep0_diag_end();
+        }
         sceKernelCpuResumeIntr(irq);return -1;
     }
     ctl_busy=1;ctl_submitting=1;ctl_generation=link_generation;ctl_feature_receive=feature;
+    if(feature && ui){
+        ep0_diag_begin();ui->ep0.recv_submissions++;ui->ep0.submit_result=INT32_MIN;
+        ep0_diag_link();ep0_diag_end();
+    }
     sceKernelCpuResumeIntr(irq);
     memset(&ctl_req,0,sizeof(ctl_req));ctl_req.endp=&pdn_endpoints[0];
     ctl_req.data=ctl_buffer;ctl_req.size=size;ctl_req.func=ctl_done;
@@ -117,6 +167,11 @@ static int control_submit(const uint8_t *data,int size,int receive,int feature) 
     }
     irq=sceKernelCpuSuspendIntr();
     if(result<0)ctl_busy=0;
+    if(feature && ui){
+        ep0_diag_begin();ui->ep0.submit_result=result;
+        if(result<0)ui->ep0.drop_reason=PDN_EP0_DROP_SUBMIT_ERROR;
+        ep0_diag_end();
+    }
     ctl_submitting=0;sceKernelCpuResumeIntr(irq);return result;
 }
 static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *r) {
@@ -156,6 +211,20 @@ static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *
         return control_submit(answer,length,0,0);
     }
     if(r->bmRequestType==0x21 && r->bRequest==9){
+        if((r->wValue&0xff00u)==0x0300u && ui){
+            unsigned i;
+            irq=sceKernelCpuSuspendIntr();ep0_diag_begin();ui->ep0.set_seen++;
+            ui->ep0.setup=(uint32_t)r->bmRequestType|((uint32_t)r->bRequest<<8)|
+                ((uint32_t)r->wLength<<16);
+            ui->ep0.value_index=(uint32_t)r->wValue|((uint32_t)r->wIndex<<16);
+            ui->ep0.submit_result=ui->ep0.retcode=ui->ep0.parser_result=INT32_MIN;
+            ui->ep0.recvsize=-1;
+            ui->ep0.drop_reason=(r->wValue==0x0300 && r->wLength==PDN_FEATURE_SIZE)?
+                PDN_EP0_DROP_NONE:PDN_EP0_DROP_SUBMIT_GATE;
+            ep0_diag_link();
+            for(i=0;i<PDN_FEATURE_SIZE;i++)ui->ep0.raw[i]=0;
+            ep0_diag_end();sceKernelCpuResumeIntr(irq);
+        }
         if(r->wValue==0x0300 && r->wLength==PDN_FEATURE_SIZE)
             return control_submit(NULL,PDN_FEATURE_SIZE,1,1);
         if(r->wValue==0x0200 && r->wLength==4)return control_submit(NULL,4,1,0);
@@ -322,6 +391,7 @@ static int unload_dependencies(void) {
 }
 static int quiesce_link(void) {
     uint32_t generation;unsigned tries;int irq,result=0,old_control;
+    set_worker_site(PDN_WORKER_LOCK_WAIT);
     sceKernelWaitSema(lifecycle_lock,1,NULL);
     irq=sceKernelCpuSuspendIntr();generation=link_generation;connected=0;
     old_control=(ctl_busy||ctl_submitting) && ctl_generation!=generation;
@@ -351,6 +421,7 @@ done:
 static int apply_phase(void) {
     unsigned tries;int irq,result=0;uint32_t generation;
     if(!protocol.pending || ctl_busy || ctl_submitting)return 0;
+    set_worker_site(PDN_WORKER_LOCK_WAIT);
     sceKernelWaitSema(lifecycle_lock,1,NULL);
     irq=sceKernelCpuSuspendIntr();generation=link_generation;
     if(!active || !connected || link_reset_pending || !protocol.pending || ctl_busy || ctl_submitting){
@@ -358,12 +429,16 @@ static int apply_phase(void) {
     }
     sceKernelCpuResumeIntr(irq);
     /* Input samples queued for the old UI must finish/cancel before ACK. */
+    set_worker_site(PDN_WORKER_EP1_CANCEL);
     sceUsbbdReqCancelAll(&pdn_endpoints[1]);
+    set_worker_site(PDN_WORKER_EP1_DRAIN);
     for(tries=0;hid_busy && tries<2000;tries++)sceKernelDelayThread(1000);
     if(hid_busy){result=-3023;goto done;}
     irq=sceKernelCpuSuspendIntr();
     if(active && connected && !link_reset_pending && generation==link_generation){
+        set_worker_site(PDN_WORKER_COMMIT);
         pdn_protocol_apply(&protocol);input_rearm=1;need_initial_pad=1;
+        if(ui)ui->apply_count++;
         neutral_pad(latest_pad);publish_phase();
     }
     sceKernelCpuResumeIntr(irq);
@@ -452,29 +527,37 @@ static int start_usb(void) {
 }
 static int io_worker(SceSize args,void *argp) {
     int result,cleanup,fault=0;(void)args;(void)argp;
+    set_worker_site(PDN_WORKER_INIT);
     make_session();result=start_usb();
     if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
     /* If activation did succeed, even a later HID fault waits for unplug.
      * A controller error is never treated as permission to cut Sony I/O. */
     while(activated){
+        if(ui)ui->worker_loops++;
         if(ui && ui->request_stop)request_exit(PDN_STOP_USER);
+        set_worker_site(PDN_WORKER_POLL);
         result=poll_cable();
         if(result==1)break;
         if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
         if(!fault && link_reset_pending){
+            set_worker_site(PDN_WORKER_QUIESCE);
             result=quiesce_link();if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
         }
         if(!fault){
+            set_worker_site(PDN_WORKER_APPLY);
             result=apply_phase();if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
         }
         if(fault){
+            set_worker_site(PDN_WORKER_FAULT);
             int irq=sceKernelCpuSuspendIntr();
             pdn_protocol_fail_pending(&protocol,PDN_ERR_LINK);protocol.phase=PDN_PHASE_ERROR;
             input_rearm=1;neutral_pad(latest_pad);publish_phase();sceKernelCpuResumeIntr(irq);
         }
         if(exit_requested || protocol.phase==PDN_PHASE_SAFE)set_stage(PDN_STAGE_WAIT_UNPLUG);
+        set_worker_site(PDN_WORKER_SLEEP);
         sceKernelDelayThread(4000);
     }
+    set_worker_site(PDN_WORKER_STOP);
     cleanup=stop_usb();
     if(cleanup<0){record_error(cleanup);fault=1;}
     if(!hid_started && !storage_started && !registered && !activated && !bus_owned){

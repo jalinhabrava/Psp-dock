@@ -1,4 +1,4 @@
-"""Audit 0303's actual MIPS ELF and USER PBP; never opens USB or a PSP.
+"""Audit 0304's actual MIPS ELF and USER PBP; never opens USB or a PSP.
 
 The default device descriptor chosen by Sony's composed USB bus is a hardware
 question. This audit proves our descriptor and imports, not that composition
@@ -95,7 +95,7 @@ def audit(raw: bytes) -> dict:
     elf = MipsElf(raw)
     require(elf.module_attributes() & 0x1000, "Native USB controller must be kernel PRX")
     module_info = elf.section_bytes(elf.section_names[".rodata.sceModuleInfo"])
-    require(module_info[2:4] == b"\x03\x03", "Expected kernel module version 3.3")
+    require(module_info[2:4] == b"\x04\x03", "Expected kernel module version 3.4")
     required_modules = (
         ("flash0:/kd/semawm.prx", "sceSemawm"),
         ("flash0:/kd/usbstor.prx", "sceUSB_Stor_Driver"),
@@ -106,10 +106,10 @@ def audit(raw: bytes) -> dict:
     for index, expected in enumerate(required_modules):
         path, name, uid, owned, started = struct.unpack_from("<IIiII", dependencies, index * 20)
         require((_cstring_at(elf, path), _cstring_at(elf, name)) == expected,
-                "Native dependency order/name differs from reviewed 0303 bootstrap")
+                "Native dependency order/name differs from reviewed 0304 bootstrap")
         require((uid, owned, started) == (-1, 0, 0), "Dependency ownership must start empty")
     for forbidden_path in (b"usbstorboot.prx", b"pcact.prx", b"npdrm.prx", b"usbstoreflash.prx", b"usbdevice.prx"):
-        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0303: " + forbidden_path.decode())
+        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0304: " + forbidden_path.decode())
     require(elf.data("pdn_interface", 12) == struct.pack("<iii", -1, 0, 1),
             "HID must request one automatically assigned interface")
     require(elf.data("pdn_endpoints", 24) == struct.pack("<6I", 0, 0, 0, 1, 0, 0),
@@ -117,8 +117,8 @@ def audit(raw: bytes) -> dict:
     for speed, interval in (("hi", 6), ("full", 4)):
         device = elf.data("pdn_device_" + speed, 20)
         require(device[:8] == b"\x12\x01\x00\x02\0\0\0\x40", "Invalid USB 2.0 device/EP0")
-        require(struct.unpack_from("<H", device, 12)[0] == 0x0303 and device[17] == 1,
-                "Wrong 0303 descriptor revision/configuration")
+        require(struct.unpack_from("<H", device, 12)[0] == 0x0304 and device[17] == 1,
+                "Wrong 0304 descriptor revision/configuration")
         interfaces, endpoints = "pdn_interfaces_" + speed, "pdn_endpoint_" + speed
         settings, config_name = "pdn_settings_" + speed, "pdn_configdesc_" + speed
         require(elf.data(settings, 12) == struct.pack("<3I", elf.address(interfaces), 0, 1),
@@ -162,7 +162,7 @@ def audit(raw: bytes) -> dict:
     require(elf.symbols["pdn_wire_prefix"][1] == 5, "Compiled wire prefix symbol has the wrong width")
     require(wire_prefix == b"PDK2\x03", "Compiled wire prefix must be exactly PDK2/v3")
     identity = elf.data("pdn_identity", 12)
-    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0303, 0x0007, 0x03030001),
+    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0304, 0x0007, 0x03040001),
             "Compiled firmware identity differs from reviewed PDK2/v3 build")
     _, firmware_revision, capabilities, build_id = struct.unpack("<4sHHI", identity)
     protocol_abi = elf.data("pdn_protocol_abi", 16)
@@ -211,7 +211,7 @@ def main() -> None:
     require(pbp_title(pbp) == "PSP Dock", "XMB title must be exactly PSP Dock")
     user_elf = MipsElf(args.user_elf.read_bytes())
     user_info = user_elf.section_bytes(user_elf.section_names[".rodata.sceModuleInfo"])
-    require(user_info[2:4] == b"\x03\x03", "Expected USER launcher module version 3.3")
+    require(user_info[2:4] == b"\x04\x03", "Expected USER launcher module version 3.4")
     result["xmb_title"] = "PSP Dock"
     result["pbp_sha256"] = hashlib.sha256(pbp).hexdigest()
     rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"

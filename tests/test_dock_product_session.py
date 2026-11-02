@@ -39,6 +39,7 @@ class FakeTransport:
                 'phase': self.phase, 'path': 'synthetic-native-hid', 'product_id': 0x01CD,
                 'revision': 0x0100, 'usb_revision': 0x0100, 'protocol_version':3,
                 'firmware_revision':0x0303, 'host_confirmed': self.host_confirmed,
+                'capabilities':0x0007, 'build_id':0x03030001,
                 'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
                 'root': str(self.root), 'exit_requested': self.exit_requested}
 
@@ -87,6 +88,7 @@ class FakeTransport:
                 'session': self.session_id, 'phase': self.phase, 'product_id': 0x01CD,
                 'revision': 0x0100, 'usb_revision':0x0100, 'protocol_version':3,
                 'firmware_revision':0x0303, 'host_confirmed':self.host_confirmed,
+                'capabilities':0x0007, 'build_id':0x03030001,
                 'reason': 'Synthetic transport for tests'}
 
     def finish_session(self, *, cancel=False):
@@ -214,6 +216,37 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertFalse(view['can_launch_game'])
         self.assertEqual(view['product_flow']['phase'], 'choosing')
 
+    def test_failed_host_begin_publishes_attention_without_any_catalog_scan(self):
+        self.assertIsNone(self.dock.cached_game_results)
+        self.assertIsNone(self.dock.cached_retro_results)
+        with patch.object(self.transport, 'begin_session', side_effect=ValueError('HOST_BEGIN sin ACK')) as begin, \
+             patch.object(self.transport, 'observe', wraps=self.transport.observe) as observe, \
+             patch.object(self.dock, 'state', side_effect=AssertionError('no fallback after failed handshake')) as state, \
+             patch.object(self.dock, 'games', side_effect=AssertionError('no PC game inventory')) as games, \
+             patch.object(self.dock, 'retro_catalog', side_effect=AssertionError('no PC ROM inventory')) as retro:
+            for _ in range(3):
+                self.watch_once()
+
+        begin.assert_called_once()
+        self.assertEqual(observe.call_count, 3)
+        state.assert_not_called()
+        games.assert_not_called()
+        retro.assert_not_called()
+        view = self.dock.snapshot
+        self.assertEqual(view['product_flow']['phase'], 'attention')
+        self.assertEqual(view['product_flow']['purpose'], 'initial')
+        self.assertIn('HOST_BEGIN sin ACK', view['product_flow']['attention_reason'])
+        self.assertFalse(view['product_flow']['entry_completed'])
+        self.assertFalse(self.transport.host_confirmed)
+        self.assertIsNone(view['selected_device'])
+        self.assertFalse(view['scanning'])
+        self.assertFalse(view['can_launch_game'])
+        self.assertFalse(view['can_launch_retro'])
+        self.assertFalse(view['controller_status']['connected'])
+        stages = self.product.diagnostics.snapshot()['stages']
+        self.assertEqual(stages['ui.publish_native_waiting']['count'], 3)
+        self.assertNotIn('ui.publish', stages)
+
     def test_native_publication_rebuilds_invalidated_catalogs_instead_of_old_snapshot(self):
         self.offer()
         games = list(self.dock.cached_game_results)
@@ -258,6 +291,24 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertEqual(self.transport.finishes, 1)
         self.assertFalse(self.product.entry_path.exists())
         self.assertEqual(saved.read_bytes(), b'original')
+
+    def test_connection_timing_distinguishes_observation_and_failed_handshake(self):
+        with patch.object(self.transport, 'begin_session', side_effect=ValueError('missing ACK')):
+            self.tick()
+        timing = self.product.diagnostics.snapshot()
+        self.assertEqual(timing['stages']['usb.observe']['count'], 1)
+        self.assertEqual(timing['stages']['usb.host_begin']['errors'], 1)
+        self.assertEqual(timing['stages']['callback.inventory']['errors'], 1)
+        durable = app.read_json(self.dock.data/'connection-timing.json', {})
+        self.assertEqual(durable['events'][-1]['event'], 'error')
+
+    def test_usb_discovery_is_visible_before_windows_finishes_enumerating(self):
+        with self.product.diagnostics.measure('usb.devices'):
+            with patch.object(self.transport, 'observe', side_effect=AssertionError('snapshot must not probe')):
+                view = self.product.snapshot()
+            self.assertEqual(view['connection']['phase'], 'searching')
+            self.assertFalse(view['can_choose'])
+        self.assertEqual(self.product.snapshot()['connection']['phase'], 'waiting')
 
     def test_psp_exit_drains_current_save_and_never_starts_the_next_copy(self):
         self.slot(self.psp/'PSP/SAVEDATA','SAVE_A',b'first')
@@ -525,13 +576,21 @@ class DockProductSessionTests(unittest.TestCase):
         self.ready('none')
         with patch('psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
-            self.assertTrue(self.dock.psp_launcher_input()['connected'])
-            reader.assert_called_once_with(expected_product=0x01CD)
             original = dict(self.dock.snapshot['controller_status'])
-            for changes in ({'firmware_revision':0x0301}, {'protocol_version':2}, {'host_confirmed':False}):
+            for firmware, build in ((0x0303, 0x03030001), (0x0304, 0x03040001)):
+                self.dock.snapshot['controller_status'] = {
+                    **original, 'firmware_revision':firmware, 'build_id':build}
+                self.assertTrue(self.dock.psp_launcher_input()['connected'])
+            self.assertEqual(reader.call_count, 2)
+            reader.assert_called_with(expected_product=0x01CD)
+            for changes in ({'firmware_revision':0x0301}, {'protocol_version':2},
+                            {'host_confirmed':False}, {'capabilities':0},
+                            {'firmware_revision':0x0304}, {'build_id':0x03040001},
+                            {'firmware_revision':[]}, {'firmware_revision':None},
+                            {'build_id':None}, {'synthetic_storage':True}):
                 self.dock.snapshot['controller_status'] = {**original, **changes}
                 self.assertFalse(self.dock.psp_launcher_input()['connected'])
-            self.assertEqual(reader.call_count, 1)
+            self.assertEqual(reader.call_count, 2)
 
     def test_dock_apps_are_excluded_but_unrelated_homebrew_is_preserved(self):
         for name in ('PSPDock','pspdocknative','PSPDockStorageTest','PSPDockCompositeTest',

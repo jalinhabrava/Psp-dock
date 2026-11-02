@@ -7,7 +7,7 @@ their common physical USB parent. The legacy PDK1 guards are not weakened.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 import ctypes as C
 from ctypes import wintypes as W
@@ -23,16 +23,17 @@ from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError, VID
 from psp_usb import PspStorage, identify, _volume_serial
 
 PID = 0x01CD
-REVISION = 0x0303  # Firmware version, never inferred from Sony bcdDevice.
+REVISION = 0x0304  # Firmware version, never inferred from Sony bcdDevice.
+FIRMWARE_BUILDS = {0x0303: 0x03030001, 0x0304: 0x03040001}
 RETIRED_REVISIONS = frozenset({0x0300, 0x0301, 0x0302})
-USB_REVISIONS = frozenset({0x0100, 0x0303})
+USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304})
 MAGIC, VERSION = b'PDK2', 3
 STATUS, SET_PHASE, HOST_BEGIN, HOST_PROGRESS = 1, 2, 3, 4
 STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR = 1, 2, 3, 4, 5, 255
 CONNECTED, PENDING, SONY_STORAGE, EXIT_REQUESTED, HOST_CONFIRMED = 1, 2, 4, 8, 16
 FRAME = struct.Struct('<4sBBBB16sIi')
 EXTENSION = struct.Struct('<4sHHIBBHQQ')
-EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', 0x0007, 0x03030001
+EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', 0x0007, FIRMWARE_BUILDS[REVISION]
 REPORT_BYTES = 65
 WAITING, INVENTORY, CHOOSING, SYNC_IN, COPY_GAME, CONTROL_ACTIVITY, SYNC_OUT, SAFE_ACTIVITY = range(8)
 UNKNOWN, BYTES, FILES = 0, 1, 2
@@ -86,12 +87,20 @@ def _progress_valid(phase, activity, unit, completed, total, *, command=False):
         raise NativeDockError('El progreso medido no tiene un total real válido.')
 
 
-def _validate_status_identity(status):
-    if (status.protocol_version, status.firmware_revision, status.capabilities, status.build_id) != (
-            VERSION, REVISION, CAPABILITIES, BUILD_ID):
+def _validate_identity(protocol_version, firmware_revision, capabilities, build_id):
+    identity = (protocol_version, firmware_revision, capabilities, build_id)
+    if (any(type(value) is not int for value in identity) or
+            protocol_version != VERSION or capabilities != CAPABILITIES or
+            FIRMWARE_BUILDS.get(firmware_revision) != build_id):
         raise NativeDockError('Protocolo, firmware, capacidades o compilación nativa no verificados.',
                               message='Esta versión de PSP Dock necesita actualizarse.',
                               hint='Instala la versión de PSP Dock incluida con esta app de Windows.')
+    return identity
+
+
+def _validate_status_identity(status):
+    return _validate_identity(status.protocol_version, status.firmware_revision,
+                              status.capabilities, status.build_id)
 
 
 def decode_status(report: bytes) -> NativeStatus:
@@ -126,7 +135,9 @@ def decode_status(report: bytes) -> NativeStatus:
 
 
 def encode_command(session: str, sequence: int, phase: int, op: int, *,
-                   activity=WAITING, unit=UNKNOWN, completed=0, total=0) -> bytes:
+                   activity=WAITING, unit=UNKNOWN, completed=0, total=0,
+                   firmware_revision=REVISION, build_id=BUILD_ID) -> bytes:
+    _validate_identity(VERSION, firmware_revision, CAPABILITIES, build_id)
     try:
         nonce = bytes.fromhex(session)
     except (ValueError, TypeError) as exc:
@@ -146,7 +157,7 @@ def encode_command(session: str, sequence: int, phase: int, op: int, *,
     elif (activity, unit, completed, total) != (WAITING, UNKNOWN, 0, 0):
         raise NativeDockError('La orden no admite progreso adjunto.')
     return (b'\0' + FRAME.pack(MAGIC, VERSION, op, phase, 0, nonce, sequence, 0) +
-            EXTENSION.pack(EXT_MAGIC, REVISION, CAPABILITIES, BUILD_ID,
+            EXTENSION.pack(EXT_MAGIC, firmware_revision, CAPABILITIES, build_id,
                            activity, unit, 0, completed, total))
 
 
@@ -243,7 +254,7 @@ def probe_native(*, api_factory=NativeHid) -> dict | None:
 def request_command(path: str, session: str, phase: int, op: int, *,
                     activity=WAITING, unit=UNKNOWN, completed=0, total=0,
                     api_factory=NativeHid, timeout: float = 2.0,
-                    clock=time.monotonic, pause=time.sleep) -> dict:
+                    clock=time.monotonic, pause=time.sleep, diagnostics=None) -> dict:
     """One SET_FEATURE, then observe the same handle/session until its ACK.
 
     A timeout is uncertainty, never permission to replay the request. A
@@ -253,8 +264,9 @@ def request_command(path: str, session: str, phase: int, op: int, *,
     encode_command(session, 1, phase, op, **fields)  # Validate before opening HID.
     api = api_factory()
     with api.open(path, write=True) as handle:
-        before = api.get(handle)
-        _validate_status_identity(before)
+        with diagnostics.measure('usb.command.get_initial') if diagnostics else nullcontext():
+            before = api.get(handle)
+        identity = _validate_status_identity(before)
         if before.session != session or not before.connected or not before.sony_storage:
             raise NativeDockError('La sesión de la PSP cambió antes de la orden.')
         if before.pending or before.result < 0 or before.phase == ERROR:
@@ -274,42 +286,56 @@ def request_command(path: str, session: str, phase: int, op: int, *,
                     'session': session, 'sequence': before.sequence, 'operation': op,
                     'exit_requested': before.exit_requested}
         sequence = before.sequence + 1
-        report = encode_command(session, sequence, phase, op, **fields)
-        api.set(handle, report)
+        # Both admitted firmware builds share PDK2/v3. Echo the exact build
+        # verified on this handle; the preferred package is not its identity.
+        report = encode_command(session, sequence, phase, op, **fields,
+                                firmware_revision=before.firmware_revision,
+                                build_id=before.build_id)
+        # Keep diagnostic fsync outside the measured Win32 call. The outer
+        # command span is durable; this active subspan is readable in memory.
+        with diagnostics.measure('usb.command.set_feature') if diagnostics else nullcontext():
+            api.set(handle, report)
         last_observed = before
+        # This is the ACK observation budget, not a deadline for the
+        # synchronous Win32 SET_FEATURE above. Keep those durations separate.
         deadline = clock() + max(0.1, min(float(timeout), 5.0))
-        while clock() < deadline:
-            status = api.get(handle)
-            last_observed = status
-            _validate_status_identity(status)
-            if status.session != session or not status.connected or not status.sony_storage:
-                raise NativeDockError('La conexión cambió durante la confirmación de fase.')
-            if status.sequence > sequence or status.result < 0:
-                raise NativeDockError('La PSP devolvió una confirmación de otra orden o un error.')
-            if status.sequence == sequence and not status.pending and status.result == 2:
-                if status.phase != phase or not status.host_confirmed:
-                    raise NativeDockError('La PSP no confirmó la misma fase y sesión de Windows.')
-                if op == HOST_PROGRESS and (status.activity, status.unit, status.completed, status.total) != (
-                        activity, unit, completed, total):
-                    raise NativeDockError('La PSP confirmó otro progreso.')
-                return {'accepted': True, 'already_applied': False, 'phase': phase,
-                        'session': session, 'sequence': sequence, 'operation': op,
-                        'exit_requested': status.exit_requested}
-            pause(0.025)
-    operation = {HOST_BEGIN: 'HOST_BEGIN', SET_PHASE: 'SET_PHASE', HOST_PROGRESS: 'HOST_PROGRESS'}[op]
-    action = {HOST_BEGIN: 'el inicio de la conexión', SET_PHASE: 'el cambio de modo',
-              HOST_PROGRESS: 'la actualización del progreso'}[op]
-    diagnostics = (
-        f'La PSP no confirmó {action}. {operation}: secuencia enviada {sequence}; '
-        f'último estado: secuencia {last_observed.sequence}, resultado {last_observed.result}, '
-        f'pendiente {int(last_observed.pending)}, fase {last_observed.phase}, '
-        f'Windows confirmado {int(last_observed.host_confirmed)}. '
-        'No se repite automáticamente la orden.')
-    raise NativeDockError(diagnostics,
-        message=f'La PSP no confirmó {action}.',
-        hint='Pulsa Reintentar para comprobar la conexión de nuevo, o cierra PSP Dock.',
-        details={'operation': operation, 'sequence': sequence, 'requested_phase': phase,
-                 'before': asdict(before), 'last_observed': asdict(last_observed)})
+        with diagnostics.measure('usb.command.ack_wait') if diagnostics else nullcontext():
+            while clock() < deadline:
+                # Fast GETs only update in-memory aggregates. A blocked call
+                # remains visible as active; a failed/slow one is persisted.
+                with diagnostics.measure('usb.command.get_poll') if diagnostics else nullcontext():
+                    status = api.get(handle)
+                last_observed = status
+                if _validate_status_identity(status) != identity:
+                    raise NativeDockError('La identidad del firmware cambió durante la confirmación de fase.')
+                if status.session != session or not status.connected or not status.sony_storage:
+                    raise NativeDockError('La conexión cambió durante la confirmación de fase.')
+                if status.sequence > sequence or status.result < 0:
+                    raise NativeDockError('La PSP devolvió una confirmación de otra orden o un error.')
+                if status.sequence == sequence and not status.pending and status.result == 2:
+                    if status.phase != phase or not status.host_confirmed:
+                        raise NativeDockError('La PSP no confirmó la misma fase y sesión de Windows.')
+                    if op == HOST_PROGRESS and (status.activity, status.unit, status.completed, status.total) != (
+                            activity, unit, completed, total):
+                        raise NativeDockError('La PSP confirmó otro progreso.')
+                    return {'accepted': True, 'already_applied': False, 'phase': phase,
+                            'session': session, 'sequence': sequence, 'operation': op,
+                            'exit_requested': status.exit_requested}
+                pause(0.025)
+            operation = {HOST_BEGIN: 'HOST_BEGIN', SET_PHASE: 'SET_PHASE', HOST_PROGRESS: 'HOST_PROGRESS'}[op]
+            action = {HOST_BEGIN: 'el inicio de la conexión', SET_PHASE: 'el cambio de modo',
+                      HOST_PROGRESS: 'la actualización del progreso'}[op]
+            error_text = (
+                f'La PSP no confirmó {action}. {operation}: secuencia enviada {sequence}; '
+                f'último estado: secuencia {last_observed.sequence}, resultado {last_observed.result}, '
+                f'pendiente {int(last_observed.pending)}, fase {last_observed.phase}, '
+                f'Windows confirmado {int(last_observed.host_confirmed)}. '
+                'No se repite automáticamente la orden.')
+            raise NativeDockError(error_text,
+                message=f'La PSP no confirmó {action}.',
+                hint='Pulsa Reintentar para comprobar la conexión de nuevo, o cierra PSP Dock.',
+                details={'operation': operation, 'sequence': sequence, 'requested_phase': phase,
+                         'before': asdict(before), 'last_observed': asdict(last_observed)})
 
 
 def request_phase(path: str, session: str, phase: int, **options) -> dict:
@@ -386,10 +412,12 @@ class NativeDockTransport:
     def __init__(self, *, probe=probe_native, identify_storage=identify,
                  parent_of=composite_parent, serial_of=_volume_serial,
                  change_phase=request_phase, begin=request_begin,
-                 progress=request_progress, eject=eject_bound_parent):
+                 progress=request_progress, eject=eject_bound_parent,
+                 diagnostics=None):
         self._probe, self._identify, self._parent = probe, identify_storage, parent_of
         self._serial, self._change_phase, self._eject = serial_of, change_phase, eject
         self._begin, self._progress = begin, progress
+        self.diagnostics = diagnostics
         self._link = None
         self._storage = None
         self._parent_node = None
@@ -427,13 +455,16 @@ class NativeDockTransport:
                 self._serial(self._storage.drive) == old['volume_serial']):
             storage, parent = self._storage, self._parent_node
         else:
-            hid_parent = self._parent(hid_instance(device['path']))
+            with self.diagnostics.measure('usb.bind_hid_parent') if self.diagnostics else nullcontext():
+                hid_parent = self._parent(hid_instance(device['path']))
             matches, failures = [], []
             for row in roots:
                 drive = str(row.get('root', ''))
                 try:
-                    storage, _ = self._identify(drive)
-                    parent = self._parent(storage.disk_id)
+                    with self.diagnostics.measure('usb.identify_storage') if self.diagnostics else nullcontext():
+                        storage, _ = self._identify(drive)
+                    with self.diagnostics.measure('usb.bind_storage_parent') if self.diagnostics else nullcontext():
+                        parent = self._parent(storage.disk_id)
                 except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
                     failures.append(f'{drive}: {exc}')
                     continue
@@ -493,12 +524,14 @@ class NativeDockTransport:
             raise NativeDockError('No hay una sesión nativa verificada.')
         if root is not None and str(root).rstrip('\\/').casefold() != storage.drive.rstrip('\\/').casefold():
             raise NativeDockError('La operación apunta a otra Memory Stick.')
-        device = self._probe()
+        with self.diagnostics.measure('usb.fresh_probe') if self.diagnostics else nullcontext():
+            device = self._probe()
         if (device is None or device['path'] != old['path'] or
                 device['status']['session'] != old['session_id']):
             self._link = None
             raise NativeDockError('La sesión de la PSP cambió; operación cancelada.')
-        result = self._bind(device, [{'root': storage.drive}], fresh=True)
+        with self.diagnostics.measure('usb.fresh_bind') if self.diagnostics else nullcontext():
+            result = self._bind(device, [{'root': storage.drive}], fresh=True)
         if result['volume_serial'] != old['volume_serial'] or result['usb_parent'] != old['usb_parent']:
             self._link = None
             raise NativeDockError('La Memory Stick o el padre USB cambiaron.')
@@ -541,11 +574,15 @@ class NativeDockTransport:
         """Explicit claim, called only after the worker journals its intent."""
         with self._commands:
             self._assert_context(context)
-            current = self._fresh()
+            with self.diagnostics.measure('usb.begin_recheck_before') if self.diagnostics else nullcontext():
+                current = self._fresh()
             if current['phase'] != STORAGE:
                 raise NativeDockError('La conexión no está preparada para iniciar una sesión nueva.')
-            result = self._begin(current['path'], current['session_id'])
-            after = self._fresh()
+            with self.diagnostics.measure('usb.begin_command', important=True) if self.diagnostics else nullcontext():
+                options = {'diagnostics':self.diagnostics} if self._begin is request_begin else {}
+                result = self._begin(current['path'], current['session_id'], **options)
+            with self.diagnostics.measure('usb.begin_recheck_after') if self.diagnostics else nullcontext():
+                after = self._fresh()
             if not result.get('accepted') or not after['host_confirmed']:
                 raise NativeDockError('La PSP no ha confirmado la conexión con Windows.')
             return result
@@ -593,6 +630,7 @@ class NativeDockTransport:
                 'product_id': PID, 'revision': current['revision'],
                 'usb_revision': current['usb_revision'], 'protocol_version': current['protocol_version'],
                 'firmware_revision': current['firmware_revision'], 'host_confirmed': current['host_confirmed'],
+                'capabilities': current['capabilities'], 'build_id': current['build_id'],
                 'reason': ('Esperando la confirmación de Windows.' if not current['host_confirmed'] else
                            'PSP Dock conectado.' if current['controller_ready'] else
                            'Elige qué quieres sincronizar.' if current['activity'] == CHOOSING else 'Sincronizando PSP.')}

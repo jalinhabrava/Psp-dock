@@ -17,7 +17,7 @@ const ui = {
   appClosing: false, appClosed: false,
   appClientId: '', appHeartbeatTimer: null, appHeartbeatPending: false, appPageHidden: false,
   storageSetupRequested: false,
-  productFlowKey: '', productRequestError: '', connectionRequestError: '',
+  productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
 };
 const bytes = (value) => {
   const n = Number(value) || 0;
@@ -155,7 +155,8 @@ async function mutate(path, body, success) {
   }
 }
 async function refresh() {
-  if (ui.appClosing || ui.appClosed) return;
+  if (ui.appClosing || ui.appClosed || ui.refreshPending) return;
+  ui.refreshPending = true;
   try {
     const state = await request('/api/state');
     if (state.retro_install) {
@@ -178,6 +179,8 @@ async function refresh() {
       $('device-role').textContent = 'RECONEXIÓN PENDIENTE';
       xmbRender();
     }
+  } finally {
+    ui.refreshPending = false;
   }
 }
 function renderDevices() {
@@ -1458,6 +1461,7 @@ function dockLinkView(state) {
   const hasStatus = raw !== null && typeof raw === 'object';
   const stages = {
     waiting: ['Conecta tu PSP', 'Esperando el modo Dock', 'Abre PSP Dock en la consola y conecta el cable cuando indique LISTO.'],
+    searching: ['Buscando tu PSP', 'COMPROBANDO LA CONEXIÓN', 'Windows está comprobando los dispositivos USB.'],
     identifying: ['Identificando tu PSP', 'PSP detectada', 'Estamos comprobando la conexión con PSP Dock. Mantén el cable conectado.'],
     waiting_storage: ['Preparando la Memory Stick', 'Esperando acceso a tu biblioteca', 'La PSP está detectada. Windows está preparando el acceso a la Memory Stick.'],
     verified: ['PSP conectada', 'Conexión comprobada', 'Preparando tu sesión en este PC.'],
@@ -1472,10 +1476,10 @@ function dockLinkView(state) {
     message: value('message', stages[phase][2]), hint: value('hint'),
     diagnostics: value('diagnostics', fallbackError),
     retryable: raw?.retryable === true || !hasStatus && !!fallbackError,
-    working: ['identifying', 'waiting_storage'].includes(phase),
+    working: ['searching', 'identifying', 'waiting_storage'].includes(phase),
     blocked: phase === 'blocked',
     // This is presentation only. It cannot grant a controller or file access.
-    pending: hasStatus && ['identifying', 'waiting_storage', 'blocked'].includes(phase) || !!fallbackError && !hasStatus,
+    pending: hasStatus && ['searching', 'identifying', 'waiting_storage', 'blocked'].includes(phase) || !!fallbackError && !hasStatus,
   };
 }
 function dockProgressView(flow, phase) {
@@ -1517,7 +1521,7 @@ function dockProductFlowView(state, options = {}) {
   const stages = {
     waiting_psp: ['Conecta tu PSP', 'PREPARANDO TU SESIÓN'],
     entering_storage: ['Preparando tu PSP', 'CONECTANDO TU BIBLIOTECA'],
-    inventory: ['Sincronizando PSP', 'COMPARANDO TU BIBLIOTECA'],
+    inventory: ['Preparando tu PSP', 'COMPROBANDO LA CONEXIÓN Y TU BIBLIOTECA'],
     choosing: ['¿Qué quieres sincronizar ahora?', 'TU SESIÓN, A TU MEDIDA'],
     syncing_in: ['Sincronizando PSP', 'PREPARANDO TU SESIÓN'],
     entering_controller: ['Preparando el mando', 'TU BIBLIOTECA ESTÁ LISTA'],
@@ -1621,8 +1625,10 @@ function dockConnectionView(state, options = {}) {
   const product = dockProductFlowView(current, options);
   const link = dockLinkView(current);
   const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
+  const nativeBuild = [[0x0303, 0x03030001], [0x0304, 0x03040001]].some(
+    ([revision, build]) => controller.firmware_revision === revision && controller.build_id === build);
   const nativeIdentity = controller.connected === true && controller.mode === 'native_dock' &&
-    controller.product_id === 0x01cd && controller.protocol_version === 3 && controller.firmware_revision === 0x0303 &&
+    controller.product_id === 0x01cd && controller.protocol_version === 3 && nativeBuild && controller.capabilities === 7 &&
     controller.host_confirmed === true && controller.synthetic_storage === false && (!link.present || link.phase === 'verified');
   const nativeController = nativeIdentity && controller.phase === 2 && product.enabled && product.phase === 'ready';
   const stable = controller.connected === true && controller.mode === 'hid_manual' || nativeController;
@@ -1639,7 +1645,7 @@ function dockConnectionView(state, options = {}) {
     !product.visible && (product.enabled && product.phase === 'waiting_psp' ||
       link.pending && link.phase !== 'waiting' && !protectedWork && !demo || !(demo || connected || protectedWork || storageSetup));
   const kind = options.closed ? 'closed' : options.serviceOffline ? 'offline' : !state ? 'loading' :
-    link.present && ['identifying', 'waiting_storage', 'blocked'].includes(link.phase) ? link.phase :
+    link.present && ['searching', 'identifying', 'waiting_storage', 'blocked'].includes(link.phase) ? link.phase :
     controller.mode === 'usb_storage' || current.selected_device ? 'storage' : 'connect';
   const copy = {
     loading: ['Comprobando conexión…', 'Puedes conectar la consola en cualquier momento.'],
@@ -1649,11 +1655,12 @@ function dockConnectionView(state, options = {}) {
       'Sal del modo USB de Sony y abre PSP Dock en la consola para entrar al menú.'],
     offline: ['La app no puede actualizar la conexión', 'Espera un momento. Si no se recupera, cierra esta ventana y vuelve a abrir PSP Dock en Windows.'],
     closed: ['Esta ventana ya está desconectada', 'Puedes cerrar esta ventana.'],
+    searching: [link.status, link.message],
     identifying: [link.status, link.message],
     waiting_storage: [link.status, link.message],
     blocked: [link.status, link.message],
   }[kind];
-  const partial = ['identifying', 'waiting_storage', 'blocked'].includes(kind);
+  const partial = ['searching', 'identifying', 'waiting_storage', 'blocked'].includes(kind);
   return {
     waiting, screen: waiting ? 'waiting' : product.visible ? 'product' : 'menu', kind, diagnostic: diagnostic && !demo,
     product, nativeController,
@@ -2969,6 +2976,6 @@ setInterval(() => {
   // A session choice may keep its POST open while the worker copies.
   // GET snapshots remain readable and must keep its progress visible.
   if (!document.hidden && (!ui.busy || ui.state?.product_flow?.enabled === true)) refresh();
-}, 3000);
+}, 500);
 requestAnimationFrame(gamepadLoop);
 void pollNativePspInput();

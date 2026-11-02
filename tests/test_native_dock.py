@@ -5,14 +5,17 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 import subprocess
+import threading
 
 import native_dock as native
+from connection_diagnostics import ConnectionDiagnostics
 from bridge_hid import VID
 from psp_usb import PspStorage
 
 SESSION = '1234567890abcdef1234567890abcdef'
 PATH = r'\\?\hid#vid_054c&pid_01cd&mi_01#7&cafe&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}'
 PARENT = r'USB\VID_054C&PID_01CD\DOCK0300'
+FIRMWARES = ((0x0303, 0x03030001), (0x0304, 0x03040001))
 
 
 def status(phase=native.STORAGE, sequence=0, result=0, **changes):
@@ -60,7 +63,12 @@ class FakeApi:
             ext = native.EXTENSION.unpack(payload[33:])
             previous = self.frames[-1]
             changes = {'activity': ext[4], 'unit': ext[5], 'completed': ext[7], 'total': ext[8]} if op == native.HOST_PROGRESS else {}
-            self.frames = [status(phase, sequence, 2, session=session.hex(), exit_requested=previous.exit_requested, **changes)]
+            self.frames = [status(phase, sequence, 2, session=session.hex(),
+                                  exit_requested=previous.exit_requested,
+                                  protocol_version=previous.protocol_version,
+                                  firmware_revision=previous.firmware_revision,
+                                  capabilities=previous.capabilities, build_id=previous.build_id,
+                                  **changes)]
 
 
 class ProtocolTests(unittest.TestCase):
@@ -69,8 +77,13 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(native.decode_status(report(expected)), expected)
 
     def test_exact_firmware_capabilities_and_build_are_required_even_with_sony_usb_revision(self):
-        for changes in ({'firmware_revision': 0x0301}, {'protocol_version': 2},
-                        {'capabilities': 3}, {'capabilities': 15}, {'build_id': 0x03030002}):
+        invalid = [dict(firmware_revision=revision, build_id=build) for revision, build in (
+            (0x0300, 0x03000001), (0x0301, 0x03010001), (0x0302, 0x03020001),
+            (0x0305, 0x03050001), (0x0303, 0x03040001), (0x0304, 0x03030001),
+            (0x0303, 0x03030002), (0x0304, 0x03040002))]
+        invalid += [{'protocol_version': 2}, {'protocol_version': 4},
+                    {'capabilities': 3}, {'capabilities': 15}]
+        for changes in invalid:
             with self.subTest(changes=changes), self.assertRaises(native.NativeDockError):
                 native.decode_status(report(status(**changes)))
         for offset, byte in ((33, ord('X')), (47, 1)):
@@ -80,12 +93,64 @@ class ProtocolTests(unittest.TestCase):
                 native.decode_status(bytes(malformed))
 
     def test_probe_is_read_only_and_does_not_claim_waiting_firmware(self):
-        api = FakeApi([status(host_confirmed=False, activity=native.WAITING)])
-        observation = native.probe_native(api_factory=lambda: api)
-        self.assertEqual(observation['usb_revision'], 0x0100)
-        self.assertEqual(observation['firmware_revision'], 0x0303)
-        self.assertFalse(observation['status']['host_confirmed'])
-        self.assertEqual(api.commands, [])
+        for revision, build in FIRMWARES:
+            with self.subTest(revision=revision):
+                waiting = status(host_confirmed=False, activity=native.WAITING,
+                                 firmware_revision=revision, build_id=build)
+                self.assertEqual(native.decode_status(report(waiting)), waiting)
+                api = FakeApi([waiting])
+                observation = native.probe_native(api_factory=lambda: api)
+                self.assertEqual(observation['usb_revision'], 0x0100)
+                self.assertEqual(observation['firmware_revision'], revision)
+                self.assertEqual(observation['status']['build_id'], build)
+                self.assertFalse(observation['status']['host_confirmed'])
+                self.assertEqual(api.commands, [])
+
+    def test_commands_echo_the_validated_firmware_for_begin_phase_and_progress(self):
+        operations = ((native.HOST_BEGIN, native.STORAGE, {}),
+                      (native.SET_PHASE, native.CONTROLLER, {}),
+                      (native.HOST_PROGRESS, native.STORAGE,
+                       {'activity': native.SYNC_IN, 'unit': native.BYTES, 'completed': 3, 'total': 10}))
+        for revision, build in FIRMWARES:
+            for operation, phase, progress in operations:
+                with self.subTest(revision=revision, operation=operation):
+                    before = status(firmware_revision=revision, build_id=build)
+                    if operation == native.HOST_BEGIN:
+                        before = replace(before, host_confirmed=False, activity=native.WAITING)
+                    api = FakeApi([before])
+                    result = native.request_command(PATH, SESSION, phase, operation,
+                                                    api_factory=lambda: api, **progress)
+                    self.assertTrue(result['accepted'])
+                    self.assertEqual(len(api.commands), 1)
+                    frame = native.FRAME.unpack(api.commands[0][1:33])
+                    self.assertEqual(frame[1:4], (3, operation, phase))
+                    self.assertEqual(native.EXTENSION.unpack(api.commands[0][33:])[:4],
+                                     (b'NAT3', revision, 7, build))
+
+    def test_command_rejects_a_supported_but_different_identity_during_ack(self):
+        for original, changed in (FIRMWARES, tuple(reversed(FIRMWARES))):
+            for pending in (False, True):
+                with self.subTest(original=original, changed=changed, pending=pending):
+                    before = status(firmware_revision=original[0], build_id=original[1])
+                    foreign_ack = status(native.STORAGE if pending else native.CONTROLLER,
+                                         1, 1 if pending else 2, pending=pending,
+                                         firmware_revision=changed[0], build_id=changed[1])
+                    final_ack = status(native.CONTROLLER, 1, 2,
+                                       firmware_revision=original[0], build_id=original[1])
+                    api = FakeApi([before, foreign_ack, final_ack], apply=False)
+                    with self.assertRaisesRegex(native.NativeDockError, 'identidad del firmware'):
+                        native.request_phase(PATH, SESSION, native.CONTROLLER, api_factory=lambda: api)
+                    self.assertEqual(len(api.commands), 1)
+                    self.assertEqual(api.frames, [final_ack])
+
+    def test_unverified_identity_is_rejected_before_sending(self):
+        for revision, build in ((0x0302, 0x03020001), (0x0305, 0x03050001),
+                                (0x0303, 0x03040001), (0x0304, 0x03030001)):
+            with self.subTest(revision=revision, build=build):
+                api = FakeApi([status(firmware_revision=revision, build_id=build)])
+                with self.assertRaises(native.NativeDockError):
+                    native.request_phase(PATH, SESSION, native.CONTROLLER, api_factory=lambda: api)
+                self.assertEqual(api.commands, [])
 
     def test_runtime_enumeration_error_is_reported_before_a_handle_or_command(self):
         api = FakeApi([status()])
@@ -145,7 +210,25 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(native.FRAME.unpack(frame[1:33]),
                          (b'PDK2', 3, 2, 3, 0, bytes.fromhex(SESSION), 8, 0))
         self.assertEqual(native.EXTENSION.unpack(frame[33:]),
-                         (b'NAT3', 0x0303, 7, 0x03030001, 0, 0, 0, 0, 0))
+                         (b'NAT3', 0x0304, 7, 0x03040001, 0, 0, 0, 0, 0))
+
+    def test_command_encoding_admits_only_exact_explicit_firmware_pairs(self):
+        for revision, build in FIRMWARES:
+            with self.subTest(revision=revision):
+                frame = native.encode_command(SESSION, 1, native.STORAGE, native.HOST_BEGIN,
+                                              firmware_revision=revision, build_id=build)
+                self.assertEqual(native.EXTENSION.unpack(frame[33:])[:4],
+                                 (b'NAT3', revision, 7, build))
+        invalid = [dict(firmware_revision=revision, build_id=build) for revision, build in (
+            (0x0302, 0x03020001), (0x0305, 0x03050001),
+            (0x0303, 0x03040001), (0x0304, 0x03030001),
+            (0x0303, 0x03030002), (0x0304, 0x03040002),
+            (float(0x0304), 0x03040001), (0x0304, float(0x03040001)),
+            (True, 0x03040001), (0x0304, None))]
+        invalid += [{'firmware_revision': 0x0303}, {'build_id': 0x03030001}]
+        for identity in invalid:
+            with self.subTest(identity=identity), self.assertRaises(native.NativeDockError):
+                native.encode_command(SESSION, 1, native.STORAGE, native.HOST_BEGIN, **identity)
 
     def test_phase_command_rejects_unknown_or_bool(self):
         for seq, phase in [(0, 1), (True, 1), (2**32, 1), (1, True), (1, 255)]:
@@ -212,7 +295,7 @@ class ProtocolTests(unittest.TestCase):
             native.hid_instance(PATH.replace('01cd', '01cc'))
 
     def test_usb_revision_envelope_is_separate_from_firmware_identity(self):
-        for revision in (0x0300, 0x0100, 0x0302, 0x0301, 0x0303, 0x0304):
+        for revision in (0x0300, 0x0100, 0x0302, 0x0301, 0x0303, 0x0304, 0x0305):
             with self.subTest(revision=revision):
                 api = native.NativeHid.__new__(native.NativeHid)
                 calls = []
@@ -235,7 +318,7 @@ class ProtocolTests(unittest.TestCase):
                     calls.append('set_feature')
                     current[0] = status(native.CONTROLLER, 1, 2)
                 api.set = command
-                if revision in (0x0100, 0x0303):
+                if revision in (0x0100, 0x0303, 0x0304):
                     self.assertIsNotNone(native.probe_native(api_factory=lambda: api))
                     self.assertTrue(native.request_phase(PATH, SESSION, native.CONTROLLER,
                                     api_factory=lambda: api)['accepted'])
@@ -247,6 +330,104 @@ class ProtocolTests(unittest.TestCase):
                         native.request_phase(PATH, SESSION, native.CONTROLLER, api_factory=lambda: api)
                     self.assertNotIn('set_feature', calls)
                 self.assertEqual(calls.count('closed'), 2)
+
+
+class CommandTimingTests(unittest.TestCase):
+    def test_slow_set_is_separate_from_the_full_ack_timeout(self):
+        now = [0.0]
+        saved = []
+        trace = ConnectionDiagnostics(clock=lambda:now[0], persist=lambda value:saved.append(value))
+        api = FakeApi([status(host_confirmed=False, activity=native.WAITING)], apply=False)
+        send = api.set
+        def slow_set(handle, frame):
+            now[0] += 3.0
+            send(handle, frame)
+        api.set = slow_set
+        def pause(delay):
+            now[0] += delay
+        with self.assertRaisesRegex(native.NativeDockError, 'HOST_BEGIN'):
+            native.request_begin(PATH, SESSION, api_factory=lambda:api,
+                timeout=.1, clock=lambda:now[0], pause=pause, diagnostics=trace)
+        spans = trace.snapshot()['stages']
+        self.assertEqual(spans['usb.command.set_feature']['last_ms'], 3000.0)
+        self.assertEqual(spans['usb.command.set_feature']['errors'], 0)
+        self.assertGreaterEqual(spans['usb.command.ack_wait']['last_ms'], 100.0)
+        self.assertLess(spans['usb.command.ack_wait']['last_ms'], 150.0)
+        self.assertEqual(spans['usb.command.ack_wait']['errors'], 1)
+        self.assertGreaterEqual(spans['usb.command.get_poll']['count'], 4)
+        self.assertEqual(spans['usb.command.get_initial']['count'], 1)
+        self.assertEqual(len(api.commands), 1)
+        self.assertFalse(any(row['stage']=='usb.command.get_poll'
+                             for value in saved for row in value['events']))
+
+    def test_synchronous_set_failure_is_timed_without_starting_ack_wait(self):
+        now = [0.0]
+        trace = ConnectionDiagnostics(clock=lambda:now[0])
+        api = FakeApi([status()])
+        def failed_set(handle, frame):
+            now[0] += 4.0
+            raise OSError('Win32 SET_FEATURE failed')
+        api.set = failed_set
+        with self.assertRaisesRegex(OSError, 'SET_FEATURE failed'):
+            native.request_phase(PATH, SESSION, native.CONTROLLER,
+                                 api_factory=lambda:api, diagnostics=trace)
+        spans = trace.snapshot()['stages']
+        self.assertEqual(spans['usb.command.set_feature']['last_ms'], 4000.0)
+        self.assertEqual(spans['usb.command.set_feature']['errors'], 1)
+        self.assertNotIn('usb.command.ack_wait', spans)
+
+    def test_blocked_set_remains_visible_before_ack_budget_starts(self):
+        entered, release = threading.Event(), threading.Event()
+        trace, failures = ConnectionDiagnostics(), []
+        api = FakeApi([status()])
+        send = api.set
+        def blocked_set(handle, frame):
+            entered.set()
+            if not release.wait(2):
+                raise RuntimeError('fixture did not release SET_FEATURE')
+            send(handle, frame)
+        api.set = blocked_set
+        def request():
+            try:
+                native.request_phase(PATH, SESSION, native.CONTROLLER,
+                                     api_factory=lambda:api, diagnostics=trace)
+            except Exception as exc:
+                failures.append(exc)
+        worker = threading.Thread(target=request)
+        worker.start()
+        try:
+            self.assertTrue(entered.wait(1))
+            view = trace.snapshot()
+            self.assertEqual([row['stage'] for row in view['active']], ['usb.command.set_feature'])
+            self.assertNotIn('usb.command.ack_wait', view['stages'])
+        finally:
+            release.set()
+            worker.join(2)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(len(api.commands), 1)
+
+    def test_initial_get_and_poll_get_failures_have_distinct_timings(self):
+        for failure_at, name in ((1, 'usb.command.get_initial'), (2, 'usb.command.get_poll')):
+            with self.subTest(failure_at=failure_at):
+                trace = ConnectionDiagnostics()
+                api = FakeApi([status()], apply=False)
+                read, calls = api.get, [0]
+                def failing_get(handle):
+                    calls[0] += 1
+                    if calls[0] == failure_at:
+                        self.assertIn(name, [row['stage'] for row in trace.snapshot()['active']])
+                        raise OSError('GET_FEATURE failed')
+                    return read(handle)
+                api.get = failing_get
+                with self.assertRaisesRegex(OSError, 'GET_FEATURE failed'):
+                    native.request_phase(PATH, SESSION, native.CONTROLLER,
+                                         api_factory=lambda:api, diagnostics=trace)
+                spans = trace.snapshot()['stages']
+                self.assertEqual(spans[name]['errors'], 1)
+                self.assertEqual(len(api.commands), failure_at-1)
+                if failure_at == 2:
+                    self.assertEqual(spans['usb.command.ack_wait']['errors'], 1)
 
 
 class TransportTests(unittest.TestCase):
@@ -306,6 +487,15 @@ class TransportTests(unittest.TestCase):
         with self.assertRaises(native.NativeDockError):
             self.transport.assert_storage('G:\\')
 
+    def test_controller_snapshot_preserves_the_verified_firmware_pair(self):
+        for revision, build in FIRMWARES:
+            with self.subTest(revision=revision):
+                self.status = replace(self.status, firmware_revision=revision, build_id=build)
+                self.transport.observe([{'root': 'G:\\'}])
+                view = self.transport.controller_status()
+                self.assertEqual((view['protocol_version'], view['firmware_revision'],
+                                  view['capabilities'], view['build_id']), (3, revision, 7, build))
+
     def test_bound_storage_is_not_write_permission_until_explicit_begin(self):
         self.status = replace(self.status, host_confirmed=False, activity=native.WAITING)
         self.transport.observe([{'root': 'G:\\'}])
@@ -316,6 +506,22 @@ class TransportTests(unittest.TestCase):
         self.transport.begin_session(self.context('storage', 'initial'))
         self.assertEqual(self.commands, ['begin'])
         self.assertEqual(self.transport.assert_storage('G:\\'), self.storage)
+
+    def test_default_begin_receives_diagnostics_and_injected_begin_keeps_its_signature(self):
+        trace = ConnectionDiagnostics()
+        self.transport.diagnostics = trace
+        self.status = replace(self.status, host_confirmed=False, activity=native.WAITING)
+        self.transport.begin_session(self.context('storage', 'initial'))
+        self.assertEqual(self.commands, ['begin'])  # self.begin accepts no kwargs.
+        self.status = replace(self.status, host_confirmed=False, activity=native.WAITING)
+        self.transport._begin = native.request_begin
+        observed = []
+        def wire(path, session, phase, operation, **options):
+            observed.append((phase, operation, options.get('diagnostics')))
+            return self.begin(path, session)
+        with patch('native_dock.request_command', side_effect=wire):
+            self.transport.begin_session(self.context('storage', 'initial'))
+        self.assertEqual(observed, [(native.STORAGE, native.HOST_BEGIN, trace)])
 
     def test_waiting_storage_timeout_is_visible_and_never_claims_host(self):
         self.status = replace(self.status, host_confirmed=False, activity=native.WAITING)

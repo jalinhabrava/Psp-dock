@@ -1,4 +1,4 @@
-/* Actual 0303 transport under asynchronous USB/module doubles. These tests
+/* Actual 0304 transport under asynchronous USB/module doubles. These tests
  * establish ownership and order, not Sony USBBus composition on hardware. */
 #include <assert.h>
 #include <stdio.h>
@@ -243,7 +243,7 @@ static void test_guard_and_bootstrap_failures(void){
     assert(stop_usb()==0 && !storage_started && !registered && !bus_owned);
     assert(unload_dependencies()==0 && unload_mask==REQUIRED_MASK);
 }
-static void test_0303_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
+static void test_0304_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
     int result,status=-1;SceUID boot;
     /* Reproduce the photographed 0300 failure in the Sony module double. */
     fixture();boot=sceKernelLoadModule("flash0:/kd/usbstorboot.prx",0,NULL);
@@ -252,9 +252,9 @@ static void test_0303_omits_pc_activation_and_keeps_mandatory_link_failures_fata
     assert(boot_loads==1 && boot_starts==1 && !start_mask);
     assert(sceKernelUnloadModule(boot)==boot);
 
-    /* 0303 must reach the normal transport without ever loading that PRX,
+    /* 0304 must reach the normal transport without ever loading that PRX,
      * Pcact, NPDRM, EFlash or usbdevice redirection. */
-    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0303u);
+    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0304u);
     assert(start_usb()==0 && activated && storage_started);
     assert(load_mask==REQUIRED_MASK && !boot_loads && !boot_starts && !forbidden_loads);
     assert(stop_usb()==0 && unload_dependencies()==0);
@@ -272,18 +272,20 @@ static void test_sony_registration_and_launcher_revision_remain_required(void){
     fixture();suppress_sony_registration=1;
     assert(start_usb()==-3003 && !activated && !registered && !storage_started);
     assert(!operation_count && stop_usb()==0 && unload_dependencies()==0);
-    assert(PDN_LAUNCH_MAGIC==0x334e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
+    assert(PDN_LAUNCH_MAGIC==0x344e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
     old_launch.magic=0x314e4450u;
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
     old_launch.magic=0x324e4450u;
+    assert(module_start(sizeof(old_launch),&old_launch)==-1);
+    old_launch.magic=0x334e4450u;
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
 }
 static void test_identification_and_get_are_read_only(void){
     struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
     struct DeviceRequest descriptor={0x81,6,0x2200,1,sizeof(report_descriptor)};
     struct DeviceRequest legacy_set={0x21,9,0x0300,1,32};
-    const uint8_t identity[12]={'N','A','T','3',3,3,7,0,1,0,3,3};
+    const uint8_t identity[12]={'N','A','T','3',4,3,7,0,1,0,4,3};
     uint8_t before[16];unsigned i;
     connected_fixture();memcpy(before,protocol.session,16);
     assert(sizeof(pdn_wire_prefix)==5 && !memcmp(pdn_wire_prefix,"PDK2\x03",5));
@@ -485,6 +487,52 @@ static void test_progress_requires_valid_current_phase_and_preserves_storage(voi
     progress_message(msg,PDN_ACTIVITY_CONTROLLER,PDN_UNIT_UNKNOWN,0,0,5);
     receive_message(msg);assert(apply_phase()==0 && protocol.phase==PDN_PHASE_CONTROLLER);
 }
+static void test_ep0_diagnostics_distinguish_dispatch_completion_and_parser(void){
+    struct DeviceRequest setup={0x21,9,0x0300,1,PDN_FEATURE_SIZE};
+    struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
+    PdnEp0Diagnostic retained;
+    uint8_t frame[PDN_FEATURE_SIZE];
+    connected_fixture();command(frame,PDN_PHASE_STORAGE,1);frame[5]=PDN_OP_HOST_BEGIN;
+    setup.wLength=65;
+    assert(receive_control(0,1,&setup)<0 && state.ep0.set_seen==1);
+    assert(state.ep0.setup==0x00410921u && state.ep0.value_index==0x00010300u);
+    assert(!state.ep0.recv_submissions && state.ep0.drop_reason==PDN_EP0_DROP_SUBMIT_GATE);
+    setup.wLength=PDN_FEATURE_SIZE;queue_failure=-88;
+    assert(receive_control(0,1,&setup)==-88 && state.ep0.recv_submissions==1);
+    assert(state.ep0.submit_result==-88 && state.ep0.drop_reason==PDN_EP0_DROP_SUBMIT_ERROR);
+    assert(!state.ep0.completions && !protocol.sequence && !ctl_busy);
+    queue_failure=0;
+    assert(receive_control(0,1,&setup)==0);memcpy(ctl_buffer,frame,PDN_FEATURE_SIZE);
+    complete(0,0,0);
+    assert(state.ep0.completions==1 && state.ep0.recvsize==0 && !state.ep0.retcode);
+    assert(state.ep0.drop_reason==PDN_EP0_DROP_SIZE && !state.ep0.parser_calls);
+    assert(state.ep0.parser_result==INT32_MIN && !protocol.sequence && !protocol.pending);
+    assert(!memcmp((const void *)state.ep0.raw,frame,PDN_FEATURE_SIZE));
+    assert(receive_control(0,1,&setup)==0);memcpy(ctl_buffer,frame,PDN_FEATURE_SIZE);
+    complete(0,-9,PDN_FEATURE_SIZE);
+    assert(state.ep0.completions==2 && state.ep0.retcode==-9);
+    assert(state.ep0.drop_reason==PDN_EP0_DROP_RETCODE && !state.ep0.parser_calls);
+    frame[5]=PDN_OP_STATUS;receive_message(frame);
+    assert(state.ep0.parser_calls==1 && state.ep0.parser_result==PDN_ERR_FRAME);
+    assert(state.ep0.drop_reason==PDN_EP0_DROP_PARSER && protocol.rejected==1);
+    assert(!protocol.sequence && !protocol.pending && state.ep0.raw[5]==PDN_OP_STATUS);
+    frame[5]=PDN_OP_HOST_BEGIN;
+    assert(receive_control(0,1,&setup)==0);memcpy(ctl_buffer,frame,PDN_FEATURE_SIZE);
+    link_generation++;complete(0,0,PDN_FEATURE_SIZE);
+    assert(state.ep0.drop_reason==PDN_EP0_DROP_LINK && state.ep0.parser_calls==1);
+    assert(state.ep0.request_generation==0 && state.ep0.live_generation==1);
+    assert(!(state.ep0.gate_flags&PDN_EP0_SAME_GENERATION) && !protocol.sequence);
+    receive_message(frame);
+    assert(state.ep0.parser_calls==2 && state.ep0.parser_result==PDN_QUEUED);
+    assert(state.ep0.drop_reason==PDN_EP0_DROP_NONE && protocol.sequence==1 && protocol.pending);
+    assert(state.ep0.gate_flags&PDN_EP0_PROTOCOL_PENDING);
+    assert(!(state.ep0.generation&1u) && !state.apply_count);
+    memcpy(&retained,(const void *)&state.ep0,sizeof(retained));
+    assert(receive_control(0,1,&status)==0);complete(0,0,PDN_FEATURE_SIZE);
+    assert(!memcmp(&retained,(const void *)&state.ep0,sizeof(retained)));
+    assert(apply_phase()==0 && state.apply_count==1 && protocol.host_confirmed);
+    assert(state.worker_site==PDN_WORKER_COMMIT && activated && storage_started);
+}
 static void test_protocol_replay_malformed_and_terminal_safe(void){
     uint8_t msg[64],status[64];unsigned i;claimed_fixture();
     command(msg,PDN_PHASE_COPYING,2);msg[8]^=1;
@@ -525,7 +573,7 @@ static void test_protocol_replay_malformed_and_terminal_safe(void){
 int main(void){
     test_start_order_and_owned_cleanup();test_borrowed_modules_and_bus_survive();
     test_guard_and_bootstrap_failures();test_begin_ack_and_phase_ack_cancel_old_input_first();
-    test_0303_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
+    test_0304_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
     test_sony_registration_and_launcher_revision_remain_required();
     test_identification_and_get_are_read_only();test_reset_nonce_changes_at_constant_timer();
     test_ep0_cpu_copy_keeps_command_until_protocol_reads_it();
@@ -534,6 +582,7 @@ int main(void){
     test_input_only_after_claim_and_choice_or_controller();
     test_exit_request_before_and_after_handshake_never_cuts_storage();
     test_interface_one_and_transfer_buffer_ownership();test_progress_requires_valid_current_phase_and_preserves_storage();
+    test_ep0_diagnostics_distinguish_dispatch_completion_and_parser();
     test_protocol_replay_malformed_and_terminal_safe();
-    puts("native-dock 0303: EP0 cache, identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
+    puts("native-dock 0304: EP0 cache, identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
 }

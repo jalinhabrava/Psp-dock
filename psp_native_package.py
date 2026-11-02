@@ -1,4 +1,4 @@
-"""Build a new, audited 0303 package on the PC. Never accesses a PSP.
+"""Build a new, audited 0304 package on the PC. Never accesses a PSP.
 
 The four installable files target PSPDockNative only. PDK1/0207 schemas and
 guards are not reused as a substitute for native-storage validation.
@@ -24,9 +24,9 @@ FIRMWARE = BASE / 'homebrew/native-dock'
 ASSETS = FIRMWARE / 'assets'
 REMOTE_FOLDER = 'PSP/GAME/PSPDockNative'
 TITLE = 'PSP Dock'
-USB_IDENTITY = {'vid': '054C', 'pid': '01CD', 'accepted_bcd_device': ['0100', '0303']}
-PROTOCOL_IDENTITY = {'magic': 'PDK2', 'version': 3, 'firmware_revision': '0303',
-                     'build_id': '03030001', 'capabilities': '0007', 'feature_payload_bytes': 64}
+USB_IDENTITY = {'vid': '054C', 'pid': '01CD', 'accepted_bcd_device': ['0100', '0304']}
+PROTOCOL_IDENTITY = {'magic': 'PDK2', 'version': 3, 'firmware_revision': '0304',
+                     'build_id': '03040001', 'capabilities': '0007', 'feature_payload_bytes': 64}
 FILES = ('EBOOT.PBP', 'docknative.prx', 'LICENSE-FuSa-GPL-3.0.txt', 'LICENSE-DejaVu.txt')
 SCHEMA = 'pspdock-native-package-v2'
 
@@ -96,7 +96,7 @@ def _kernel_auditor():
 
 
 def _valid_abi(abi: dict) -> bool:
-    expected = {'revision': '0303', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+    expected = {'revision': '0304', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
                 'mandatory_modules': ['flash0:/kd/semawm.prx', 'flash0:/kd/usbstor.prx',
                                       'flash0:/kd/usbstormgr.prx', 'flash0:/kd/usbstorms.prx'],
                 'optional_bootstrap_modules': [],
@@ -104,7 +104,7 @@ def _valid_abi(abi: dict) -> bool:
                 'hid_input_bytes': 8, 'hid_feature_bytes': 64, 'protocol': 'PDK2/v3',
                 'firmware_identity_in_protocol': True, 'host_begin_required': True,
                 'host_progress_supported': True, 'usb_revision_is_firmware_revision': False,
-                'firmware_build_id': '03030001', 'protocol_capabilities': '0007',
+                'firmware_build_id': '03040001', 'protocol_capabilities': '0007',
                 'storage_backend': 'native Sony USBStor_Driver', 'kernel_filesystem_imports': [],
                 'early_sony_boot_imports': [], 'expected_pid': '01CD',
                 'wire_identity_verified': False, 'sony_composition_physically_verified': False,
@@ -124,7 +124,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
             raise ValueError('Falta una compilación nativa completa: ' + name)
     abi = _kernel_auditor().audit((source / 'docknative.elf').read_bytes())
     if not _valid_abi(abi) or abi['sha256'] != digest(source / 'docknative.elf'):
-        raise ValueError('La auditoría no corresponde al ELF nativo 0303.')
+        raise ValueError('La auditoría no corresponde al ELF nativo 0304.')
     producer = json.loads((source / 'compiled-audit.json').read_text(encoding='utf-8'))
     if (not isinstance(producer, dict) or any(producer.get(k) != v for k, v in abi.items()) or
             producer.get('pbp_sha256') != digest(source / 'EBOOT.PBP') or
@@ -149,7 +149,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
     if (digest(source / 'docknative.elf') != abi['sha256'] or
             records['EBOOT.PBP']['sha256'] != producer['pbp_sha256']):
         raise ValueError('La compilación cambió tras su auditoría.')
-    manifest = {'schema': SCHEMA, 'revision': '0303', 'folder': REMOTE_FOLDER,
+    manifest = {'schema': SCHEMA, 'revision': '0304', 'folder': REMOTE_FOLDER,
                 'built_utc': datetime.now(timezone.utc).isoformat(),
                 'expected_usb_identity': dict(USB_IDENTITY),
                 'expected_protocol_identity': dict(PROTOCOL_IDENTITY), 'synthetic_storage': False,
@@ -180,7 +180,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
         raise FileExistsError('El destino apareció durante el empaquetado.')
     stage.rename(target)
     verify_package(target)
-    return {'package': str(target), 'revision': '0303', 'files': len(FILES), 'xmb': visual,
+    return {'package': str(target), 'revision': '0304', 'files': len(FILES), 'xmb': visual,
             'installed_on_psp': False, 'hardware_execution_verified': False}
 
 
@@ -192,7 +192,7 @@ def verify_package(path: Path) -> dict:
         raise ValueError('Manifiesto nativo ausente o no válido.')
     manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
     if (not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or
-            manifest.get('revision') != '0303' or manifest.get('folder') != REMOTE_FOLDER or
+            manifest.get('revision') != '0304' or manifest.get('folder') != REMOTE_FOLDER or
             manifest.get('expected_usb_identity') != USB_IDENTITY or
             manifest.get('expected_protocol_identity') != PROTOCOL_IDENTITY or
             manifest.get('synthetic_storage') is not False or
@@ -203,7 +203,7 @@ def verify_package(path: Path) -> dict:
             manifest.get('user_module_verified') is not True or
             not _valid_abi(manifest.get('compiled_abi')) or
             not isinstance(manifest.get('files'), dict) or set(manifest['files']) != set(FILES)):
-        raise ValueError('No es el paquete PSP Dock 0303 revisado.')
+        raise ValueError('No es el paquete PSP Dock 0304 revisado.')
     folder = root / REMOTE_FOLDER
     _no_links(folder)
     if not folder.is_dir() or {p.name for p in folder.iterdir()} != set(FILES):

@@ -1,7 +1,7 @@
 """Verified replacement and interruption recovery on real temporary files.
 
 No hardware discovery: only the four fixture hashes replace the reviewed
-0300/0301/0302 constants, and every identity callback is an explicit test double.
+0300/0301/0302/0303 constants, and every identity callback is an explicit test double.
 """
 import hashlib
 import json
@@ -47,7 +47,7 @@ class NativeUpgradeTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('KEEP ' + relative).encode())
             self.kept[path] = path.read_bytes()
-        self.package = fixture_native_package(self.home / 'package0303')
+        self.package = fixture_native_package(self.home / 'package0304')
         self.new_records = json.loads((self.package / 'manifest.json').read_text())['files']
         snapshot = psp_backup.backup(self.psp, self.home / 'critical', 'critical', SERIAL, USB,
                                      verify_identity=lambda: True, reserve_bytes=0)
@@ -83,7 +83,7 @@ class NativeUpgradeTests(unittest.TestCase):
     def test_plan_is_read_only(self):
         before = {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()}
         result = self.plan()
-        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0303'))
+        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0304'))
         self.assertEqual(result['reference_installation_receipt_sha256'],
                          upgrade._reference_receipt(self.previous_revision))
         self.assertFalse(result['installed']);self.assertFalse(result['autorun'])
@@ -361,8 +361,13 @@ class Native0301UpgradeTests(NativeUpgradeTests):
 
 
 class Native0302UpgradeTests(NativeUpgradeTests):
-    """Repeat interruption and identity gates for the exact current source version."""
+    """Retain interruption and identity gates for the reviewed 0302 source."""
     previous_revision = '0302'
+
+
+class Native0303UpgradeTests(NativeUpgradeTests):
+    """Repeat interruption and identity gates for the exact current source version."""
+    previous_revision = '0303'
 
 
 class Historical0301RollbackTests(unittest.TestCase):
@@ -408,6 +413,18 @@ class Historical0300To0302RollbackTests(Historical0301RollbackTests):
 
 class Historical0301To0302RollbackTests(Historical0300To0302RollbackTests):
     previous_revision = '0301'
+
+
+class Historical0300To0303RollbackTests(Historical0301RollbackTests):
+    replacement_revision = '0303'
+
+
+class Historical0301To0303RollbackTests(Historical0300To0303RollbackTests):
+    previous_revision = '0301'
+
+
+class Historical0302To0303RollbackTests(Historical0300To0303RollbackTests):
+    previous_revision = '0302'
 
 
 if __name__ == '__main__':

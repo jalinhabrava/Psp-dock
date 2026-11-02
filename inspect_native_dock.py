@@ -19,7 +19,7 @@ from pathlib import Path
 import subprocess
 
 from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError
-from native_dock import (PID, REVISION, VERSION, USB_REVISIONS, REPORT_BYTES,
+from native_dock import (PID, REVISION, VERSION, FIRMWARE_BUILDS, USB_REVISIONS, REPORT_BYTES,
                          RETIRED_REVISIONS, HID_PATH, USB_PARENT, FRAME,
                          decode_status, hid_instance)
 from psp_usb import identify
@@ -122,7 +122,7 @@ class NativeReadOnlyInspector(_WindowsHid):
                         result['firmware_revision'] = result['status']['firmware_revision']
                         result['supported_revision'] = bool(
                             result['descriptor_matches'] and attrs['revision'] in USB_REVISIONS and
-                            result['protocol_version'] == VERSION and result['firmware_revision'] == REVISION)
+                            result['protocol_version'] == VERSION and result['firmware_revision'] in FIRMWARE_BUILDS)
                         if result['supported_revision']:
                             result['revision_status'] = 'supported'
                             result['retired_revision'] = False
@@ -182,6 +182,8 @@ def inspect_native(*, api_factory=NativeReadOnlyInspector, storage_roots=None,
         'read_only': True, 'writes_authorized': False, 'can_change_phase': False,
         'required_revision_hex': f'{REVISION:04X}', 'devices': [],
         'required_firmware_revision_hex': f'{REVISION:04X}', 'required_protocol_version': VERSION,
+        'accepted_firmware_builds_hex': {f'{revision:04X}':f'{build:08X}'
+                                         for revision,build in sorted(FIRMWARE_BUILDS.items())},
         'accepted_usb_revision_hex': [f'{revision:04X}' for revision in sorted(USB_REVISIONS)],
         'retired_revision_hex': [f'{revision:04X}' for revision in sorted(RETIRED_REVISIONS)],
         'storage_candidates': [], 'errors': [],

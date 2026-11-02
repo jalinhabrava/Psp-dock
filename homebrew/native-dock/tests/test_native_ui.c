@@ -26,8 +26,40 @@ static PdnSharedStatus initial(void) {
     s.phase=PDN_PHASE_STORAGE;s.hid_interface=UINT32_MAX;
     return s;
 }
+static void test_ep0_snapshot_keeps_complete_raw_evidence(void) {
+    volatile PdnEp0Diagnostic shared={0};
+    PdnEp0Diagnostic sample={0},previous;unsigned i;
+    shared.generation=2;shared.recvsize=0;shared.retcode=-3;
+    for(i=0;i<PDN_FEATURE_SIZE;i++)shared.raw[i]=(uint8_t)i;
+    assert(pdn_ui_ep0_snapshot(&sample,&shared));
+    /* recvsize is evidence, not permission to suppress the buffer view. */
+    assert(sample.recvsize==0 && sample.retcode==-3 && sample.raw[63]==63);
+    previous=sample;shared.generation=3;shared.raw[0]=255;
+    assert(!pdn_ui_ep0_snapshot(&sample,&shared));
+    assert(!memcmp(&sample,&previous,sizeof(sample)));
+    shared.generation=4;shared.recvsize=64;shared.retcode=0;
+    assert(pdn_ui_ep0_snapshot(&sample,&shared));
+    assert(sample.raw[0]==255 && sample.recvsize==64 && !sample.retcode);
+}
+static void test_ep0_raw_rows_are_bounded_and_offset_labelled(void) {
+    PdnEp0Diagnostic sample={0};unsigned i;
+    struct {char line[PDN_UI_LINE_SIZE];unsigned char guard[8];} output;
+    memset(&output,0xa5,sizeof(output));
+    for(i=0;i<PDN_FEATURE_SIZE;i++)sample.raw[i]=(uint8_t)i;
+    pdn_ui_ep0_hex(output.line,&sample,0);
+    assert(!strcmp(output.line,"00: 00010203 04050607 08090A0B 0C0D0E0F"));
+    pdn_ui_ep0_hex(output.line,&sample,48);
+    assert(!strcmp(output.line,"30: 30313233 34353637 38393A3B 3C3D3E3F"));
+    assert(strlen(output.line)<PDN_UI_LINE_SIZE);
+    pdn_ui_ep0_hex(output.line,&sample,64);assert(!output.line[0]);
+    pdn_ui_ep0_hex(output.line,&sample,1);assert(!output.line[0]);
+    pdn_ui_ep0_hex(output.line,&sample,UINT32_MAX);assert(!output.line[0]);
+    for(i=0;i<sizeof(output.guard);i++)assert(output.guard[i]==0xa5);
+}
 int main(void) {
     PdnSharedStatus s=initial();PdnUiView v;
+    test_ep0_snapshot_keeps_complete_raw_evidence();
+    test_ep0_raw_rows_are_bounded_and_offset_labelled();
     /* Exact failing 0300 photo: a stale STORAGE phase cannot claim a session.
      * Index 5 is preserved but no longer mislabelled as a 0302 dependency. */
     s.stage=255;s.error=(int32_t)0x8002013cu;s.error_stage=3;s.dependency=5;
@@ -134,6 +166,6 @@ int main(void) {
     s.phase=PDN_PHASE_ERROR;s.error=0;v=pdn_ui_present(&s,0);
     assert(v.warning);assert(!v.exit_hint[0]);no_active_instructions(&v);
 
-    puts("Native 0303 UI: host confirmation, cancel/exit, true progress, errors and close gate PASS");
+    puts("Native 0304 UI: RAM snapshot, raw EP0, host confirmation, progress, errors and close gate PASS");
     return 0;
 }

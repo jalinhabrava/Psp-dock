@@ -22,6 +22,33 @@ typedef struct {
     unsigned progress_percent;
 } PdnUiView;
 
+/* A best-effort RAM snapshot: never spin while the kernel publishes one.
+ * The caller keeps its previous complete sample if this read overlaps it. */
+static inline int pdn_ui_ep0_snapshot(PdnEp0Diagnostic *out,
+                                    const volatile PdnEp0Diagnostic *source) {
+    uint32_t before=source->generation,after;
+    if(before&1u)return 0;
+    __asm__ volatile("" ::: "memory");
+    *out=*source;
+    __asm__ volatile("" ::: "memory");
+    after=source->generation;
+    return before==after && !(after&1u);
+}
+
+static inline void pdn_ui_ep0_hex(char out[PDN_UI_LINE_SIZE],
+                                const PdnEp0Diagnostic *sample,unsigned offset) {
+    static const char digits[]="0123456789ABCDEF";
+    unsigned i,position;
+    if(offset>=PDN_FEATURE_SIZE || offset%16u){out[0]='\0';return;}
+    position=(unsigned)snprintf(out,PDN_UI_LINE_SIZE,"%02X: ",offset);
+    for(i=0;i<16u;i++){
+        uint8_t value=sample->raw[offset+i];
+        if(i && !(i%4u))out[position++]=' ';
+        out[position++]=digits[value>>4];out[position++]=digits[value&15u];
+    }
+    out[position]='\0';
+}
+
 static inline const char *pdn_ui_dependency_name(unsigned dependency) {
     /* Exact mandatory dependency order; Boot is not a dependency. */
     switch(dependency){

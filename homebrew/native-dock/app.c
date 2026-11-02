@@ -13,7 +13,7 @@
 #include "native_common.h"
 #include "native_ui.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,3);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,4);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;
@@ -111,11 +111,55 @@ static void draw_progress_bar(int measured,unsigned percent) {
     for(y=204;y<212;y++)for(x=14;x<466;x++)
         pixels[y*stride+x]=!measured?UI_BACKGROUND:(x-14<filled?UI_TEAL:0xff3d3228u);
 }
+static void diagnostic_result(char out[12],int32_t value,int hexadecimal) {
+    if(value==INT32_MIN)snprintf(out,12,"--");
+    else if(hexadecimal)snprintf(out,12,"%08X",(unsigned)value);
+    else snprintf(out,12,"%d",(int)value);
+}
+static void draw_ep0_diagnostic(const PdnUiView *view) {
+    static PdnEp0Diagnostic retained;
+    PdnEp0Diagnostic sample;char line[PDN_UI_LINE_SIZE],submit[12],retcode[12],parser[12];unsigned row;
+    if(pdn_ui_ep0_snapshot(&sample,&state.ep0))retained=sample;
+    diagnostic_result(submit,retained.submit_result,1);
+    diagnostic_result(retcode,retained.retcode,1);
+    diagnostic_result(parser,retained.parser_result,0);
+    ui_line(40,UI_MUTED,"DIAGNOSTICO RAM / VERSION %04X",(unsigned)PDN_REVISION);
+    ui_line(68,view->warning?UI_ERROR:UI_TEAL,"%s",view->heading);
+    ui_line(80,UI_MUTED,"USB %08X F %u ACK %u/%d H %u",
+        (unsigned)state.usb_state,(unsigned)state.phase,(unsigned)state.sequence,
+        (int)state.phase_result,(unsigned)state.host_confirmed);
+    ui_line(92,view->warning?UI_ERROR:UI_MUTED,"Error %08X paso %u cierre %08X",
+        (unsigned)state.error,(unsigned)state.error_stage,(unsigned)state.cleanup_error);
+    ui_line(104,UI_MUTED,"SET %u ENV %u FIN %u PAR %u",
+        (unsigned)retained.set_seen,(unsigned)retained.recv_submissions,
+        (unsigned)retained.completions,(unsigned)retained.parser_calls);
+    ui_line(116,UI_MUTED,"Setup %08X Valor/IF %08X Envio %s",
+        (unsigned)retained.setup,(unsigned)retained.value_index,submit);
+    ui_line(128,UI_MUTED,"Len %u RX %d RC %s Gen %u/%u",
+        (unsigned)(retained.setup>>16),(int)retained.recvsize,retcode,
+        (unsigned)retained.request_generation,(unsigned)retained.live_generation);
+    ui_line(140,UI_MUTED,"Drop %u Parser %s Flags %02X RAM %u",
+        (unsigned)retained.drop_reason,parser,
+        (unsigned)retained.gate_flags,(unsigned)retained.generation);
+    ui_line(152,UI_MUTED,"CPU %u Sitio %u Aplica %u / Buffer bruto:",
+        (unsigned)state.worker_loops,(unsigned)state.worker_site,(unsigned)state.apply_count);
+    for(row=0;row<4u;row++){
+        pdn_ui_ep0_hex(line,&retained,row*16u);
+        ui_line(164+(int)row*12,UI_MUTED,"%s",line);
+    }
+    ui_line(212,UI_MUTED,"Ctrl %u HID %u Rechazos %u/%d",
+        (unsigned)state.ctrl_requests,(unsigned)state.hid_reports,
+        (unsigned)state.rejected_commands,(int)state.last_rejection);
+    ui_line(230,UI_TEAL,"%s",view->action[0]?view->action:view->footer);
+    ui_line(244,UI_MUTED,"Nota musical: ocultar diagnostico RAM");
+    ui_line(258,UI_TEAL,"%s",view->exit_hint);
+}
 static void draw_status(int module_unloaded) {
     static int last_diagnostic=-1;
     PdnUiView view=pdn_ui_present(&state,module_unloaded);
-    int diagnostic=state.diagnostic_visible || view.warning;
+    int diagnostic=state.diagnostic_visible?2:(view.warning?1:0);
     if(diagnostic!=last_diagnostic){ui_clear_body();last_diagnostic=diagnostic;}
+    if(diagnostic==2){draw_ep0_diagnostic(&view);return;}
     if(diagnostic)ui_line(40,UI_MUTED,"DIAGNOSTICO / VERSION %04X",(unsigned)PDN_REVISION);
     else ui_line(40,UI_MUTED,"");
     ui_line(68,view.warning?UI_ERROR:UI_TEAL,"%s",view.heading);

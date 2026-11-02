@@ -2163,16 +2163,21 @@ class Dock:
         seen = self.snapshot.get('controller_status', {})
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
-        from native_dock import PID as NATIVE_PID, REVISION as NATIVE_REVISION, VERSION as NATIVE_VERSION
+        from native_dock import (PID as NATIVE_PID, VERSION as NATIVE_VERSION,
+                                 CAPABILITIES as NATIVE_CAPABILITIES, FIRMWARE_BUILDS)
         profiles = {'hid_manual': (0x01CB, 0x0104),
                     'msc_diagnostic': (0x01CC, 0x0207)}
         if self.product_flow.enabled and self.product_flow.snapshot()['phase'] not in ('choosing','ready','attention'):
             return idle('La navegación está bloqueada mientras se prepara o copia el contenido.')
         expected = profiles.get(seen.get('mode'))
         if seen.get('mode') == 'native_dock':
+            firmware = seen.get('firmware_revision')
             valid = (seen.get('product_id') == NATIVE_PID and seen.get('protocol_version') == NATIVE_VERSION
-                     and seen.get('firmware_revision') == NATIVE_REVISION and seen.get('host_confirmed') is True)
-            expected = (NATIVE_PID, NATIVE_REVISION) if valid else None
+                     and type(firmware) is int and firmware in FIRMWARE_BUILDS
+                     and seen.get('build_id') == FIRMWARE_BUILDS[firmware]
+                     and seen.get('capabilities') == NATIVE_CAPABILITIES and seen.get('host_confirmed') is True
+                     and seen.get('synthetic_storage') is False)
+            expected = (NATIVE_PID, firmware) if valid else None
         elif expected is not None and (seen.get('product_id'), seen.get('revision')) != expected:
             expected = None
         if expected is None:
@@ -2181,6 +2186,29 @@ class Dock:
             return PSPWinMMReader(expected_product=expected[0]).read()
         except (OSError, ValueError, RuntimeError) as exc:
             return idle(str(exc))
+
+    def waiting_state(self, devices, *, running, controller):
+        """Reuse presentation data while USB has not admitted a session.
+
+        No filesystem, catalog, or identity checks belong here. In particular,
+        empty materialized caches must not trigger a PC inventory on startup
+        or after an unsuccessful HOST_BEGIN. Recovery and copy intent survive;
+        only connection and launch permission are removed from the view.
+        """
+        preflight = self.snapshot.get('preflight')
+        return {**self.snapshot,
+                'devices':devices, 'selected_device':None,
+                'scanning':False, 'error':self.error,
+                'connection_state':'waiting_psp',
+                'controller_status':{**controller, 'connected':False, 'can_play':False},
+                'can_launch_game':False, 'can_launch_retro':False,
+                'session':{**self.session, 'running':running},
+                'copy_queue':dict(self.copy_queue),
+                'recovery_required':self.recovery_required,
+                'product_flow':self.product_session.snapshot(),
+                'preflight':({**preflight, 'connected':False} if preflight else None),
+                'retro_saves':{**self.snapshot.get('retro_saves',{}), 'offline':True},
+                'library_source':('cached_manifest' if self.last_games else 'empty')}
 
     def state(self, *, cached_catalogs=False):
         running = self.running()
@@ -2421,7 +2449,8 @@ class Dock:
                     close_advanced = self.window_close.advance()
                     if self.stop.is_set():
                         break
-                    devices = self.devices()
+                    with self.product_session.diagnostics.measure('usb.devices'):
+                        devices = self.devices()
                     if self.stop.is_set():
                         break
                     product_advanced = self.product_session.tick(devices)
@@ -2432,9 +2461,15 @@ class Dock:
                     if self.product_flow.enabled:
                         self.error = None
                         product = self.product_flow.snapshot()
-                        if (product_advanced or close_advanced or self.snapshot.get('product_flow',{}).get('revision') != product['revision']
+                        current = self.native_transport.current
+                        if not current or not current.get('host_confirmed'):
+                            with self.product_session.diagnostics.measure('ui.publish_native_waiting'):
+                                self.snapshot = self.waiting_state(devices, running=running,
+                                    controller=self.native_transport.controller_status())
+                        elif (product_advanced or close_advanced or self.snapshot.get('product_flow',{}).get('revision') != product['revision']
                                 or self.snapshot.get('session',{}).get('running') != running):
-                            self.snapshot = {**self.state(cached_catalogs=True), 'scanning':False}
+                            with self.product_session.diagnostics.measure('ui.publish'):
+                                self.snapshot = {**self.state(cached_catalogs=True), 'scanning':False}
                         else:
                             controller=self.native_transport.controller_status()
                             self.snapshot={**self.snapshot,'controller_status':controller,
@@ -2517,23 +2552,43 @@ class Dock:
                                 self.events.record('sony_storage_absent', evidence='pc_observed',
                                                    mode='storage_not_visible')
                             self.last_device = None
-                        # Full game + SAVEDATA auditing is deliberately expensive
-                        # over PSP USB. Do it on new storage attachment, on state
-                        # changes and occasionally for freshness, NOT every 3s.
-                        # Mutating API requests publish their own fresh snapshot.
-                        now = time.monotonic()
-                        same_storage = bool(
-                            root and self.last_storage_scan_identity == identity
-                            and self.snapshot.get('selected_device') == str(root)
-                            and self.snapshot.get('scanning') is False
-                            and self.snapshot.get('session', {}).get('running') == running
-                        )
-                        if not (same_storage and not self.error and
-                                now-self.last_storage_scan_at < self.storage_scan_interval):
-                            self.error = None
-                            self.snapshot = {**self.state(),'scanning':False}
-                            self.last_storage_scan_identity = identity if root else ''
-                            self.last_storage_scan_at = time.monotonic()
+                        controller = None
+                        if root is None:
+                            with self.product_session.diagnostics.measure('usb.legacy_controller'):
+                                controller = self.controller_status(False)
+                        if root is None and not controller.get('connected'):
+                            # Waiting for USB must not walk the remembered PC
+                            # library. Even cached_catalogs=True rebuilds empty
+                            # caches on first startup, delaying the next USB poll.
+                            # Reuse presentation data only; keep durable recovery,
+                            # queued copies and the active game intact. No identity
+                            # or launch permission is inferred from that mirror.
+                            with self.product_session.diagnostics.measure('ui.publish_legacy_waiting'):
+                                self.snapshot = self.waiting_state(devices, running=running,
+                                                                   controller=controller)
+                                # Even the same Memory Stick must be audited
+                                # after reattachment, before reusing readiness.
+                                self.last_storage_scan_identity = ''
+                                self.last_storage_scan_at = 0.0
+                        else:
+                            # Full game + SAVEDATA auditing is deliberately expensive
+                            # over PSP USB. Do it on new storage attachment, on state
+                            # changes and occasionally for freshness, NOT every 3s.
+                            # Mutating API requests publish their own fresh snapshot.
+                            now = time.monotonic()
+                            same_storage = bool(
+                                root and self.last_storage_scan_identity == identity
+                                and self.snapshot.get('selected_device') == str(root)
+                                and self.snapshot.get('scanning') is False
+                                and self.snapshot.get('session', {}).get('running') == running
+                            )
+                            if not (same_storage and not self.error and
+                                    now-self.last_storage_scan_at < self.storage_scan_interval):
+                                self.error = None
+                                with self.product_session.diagnostics.measure('ui.publish_legacy'):
+                                    self.snapshot = {**self.state(),'scanning':False}
+                                self.last_storage_scan_identity = identity if root else ''
+                                self.last_storage_scan_at = time.monotonic()
                         if root and not running:
                             self.start_xmb_media_prefetch()
                         # A PSP-first session enumerates PDK1 HID, not the
@@ -2794,6 +2849,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     })
                 if self.path == '/api/state':
                     return self.reply({**dock.snapshot, 'product_flow':dock.product_session.snapshot()})
+                if self.path == '/api/connection-diagnostics':
+                    return self.reply(dock.product_session.diagnostics.snapshot())
                 if self.path == '/api/controller-input':
                     # Safe read-only WinMM frame; no USB commands and no
                     # expensive Dock.lock while rendering the XMB.

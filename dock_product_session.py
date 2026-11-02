@@ -6,6 +6,7 @@ manual workflow and the 0207 synthetic diagnostic retain their own gates.
 from __future__ import annotations
 
 from functools import partial
+from connection_diagnostics import ConnectionDiagnostics
 import hashlib
 import json
 from pathlib import Path
@@ -27,7 +28,9 @@ class DockProductSession:
     def __init__(self, dock, transport=None):
         self.dock = dock
         self.api = sys.modules[type(dock).__module__]
-        self.transport = transport or NativeDockTransport()
+        self.diagnostics = ConnectionDiagnostics(persist=lambda value:self.api.atomic_json(
+            dock.data/'connection-timing.json', value))
+        self.transport = transport or NativeDockTransport(diagnostics=self.diagnostics)
         self.observation = None
         self._callback_state = threading.local()
         self._progress_lock = threading.Lock()
@@ -57,6 +60,14 @@ class DockProductSession:
                 result.update(phase='waiting_game_exit', blocking=True, can_close=False,
                               message='Has pedido salir desde la PSP. Cierra el emulador normalmente para devolver las partidas.')
         result['connection'] = self.transport.connection_status()
+        timing = self.diagnostics.snapshot(events=False)
+        result['connection_timing'] = timing
+        if (result['connection']['phase'] == 'waiting' and
+                any(row['stage'] == 'usb.devices' for row in timing['active'])):
+            result['connection'] = {'phase':'searching',
+                'message':'Comprobando los dispositivos USB de Windows.',
+                'hint':'La conexión aparecerá en cuanto Windows publique la PSP.',
+                'diagnostics':'', 'retryable':False}
         with self._progress_lock:
             result['progress'] = dict(self._progress)
         result['unsupported_state_formats'] = [
@@ -73,7 +84,8 @@ class DockProductSession:
         if self.dock.demo or self.dock.stop.is_set():
             return False
         try:
-            self.observation = self.transport.observe(devices)
+            with self.diagnostics.measure('usb.observe'):
+                self.observation = self.transport.observe(devices)
         except Exception as exc:
             self.observation = None
             self.transport.connection_error(exc)
@@ -123,7 +135,8 @@ class DockProductSession:
                  'verifying' if callback == self.request_role else 'saves')
         self.publish_progress(stage, 'Preparando la operación.', wire=False)
         try:
-            return callback(context)
+            with self.diagnostics.measure('callback.' + callback.__name__, important=True):
+                return callback(context)
         finally:
             self._callback_state.active = False
             self._callback_state.context = None
@@ -307,7 +320,8 @@ class DockProductSession:
 
     def inventory(self, context):
         self.publish_progress('inventory', 'Confirmando la conexión con la PSP.', wire=False)
-        self.transport.begin_session(context)
+        with self.diagnostics.measure('usb.host_begin', important=True):
+            self.transport.begin_session(context)
         self.observation = self.transport.current
         result = self._report(context, capture=True)
         self.publish_progress('inventory', 'El inventario está listo para tu elección.',
@@ -387,7 +401,8 @@ class DockProductSession:
             # Flow required explicit recovery consent and journaled this
             # request_role intent before admitting the callback. Establish
             # only the new claim; preserve the original save comparison.
-            self.transport.begin_session(context)
+            with self.diagnostics.measure('usb.host_begin', important=True):
+                self.transport.begin_session(context)
             self.observation = self.transport.current
         if context['role'] == 'controller':
             d = self.dock

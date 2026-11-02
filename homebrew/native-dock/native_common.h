@@ -8,8 +8,8 @@
 /* Lab identity, not an allocated production Sony VID/PID. */
 #define PDN_PRODUCT 0x01cdu
 #define PDN_REVISION PDN_FIRMWARE_REVISION
-/* PDN3 rejects a mixed launcher/kernel before starting any worker. */
-#define PDN_LAUNCH_MAGIC 0x334e4450u
+/* PDN4 rejects a mixed launcher/kernel before starting any worker. */
+#define PDN_LAUNCH_MAGIC 0x344e4450u
 #define PDN_DEPENDENCIES 4u
 
 enum PdnStage {
@@ -24,6 +24,34 @@ enum PdnStopReason {
     PDN_STOP_NONE=0, PDN_STOP_USER=1, PDN_STOP_CABLE=2,
     PDN_STOP_ERROR=3, PDN_STOP_MODULE=4
 };
+/* RAM-only diagnostics. These values never authorize a protocol action. */
+enum PdnEp0Drop {
+    PDN_EP0_DROP_NONE=0, PDN_EP0_DROP_SUBMIT_GATE=1,
+    PDN_EP0_DROP_SUBMIT_ERROR=2, PDN_EP0_DROP_RETCODE=3,
+    PDN_EP0_DROP_SIZE=4, PDN_EP0_DROP_LINK=5, PDN_EP0_DROP_PARSER=6
+};
+enum PdnEp0Flags {
+    PDN_EP0_ACTIVE=1u, PDN_EP0_CONNECTED=2u, PDN_EP0_QUIESCING=4u,
+    PDN_EP0_RESET_PENDING=8u, PDN_EP0_SAME_GENERATION=16u,
+    PDN_EP0_CTL_BUSY=32u, PDN_EP0_CTL_SUBMITTING=64u,
+    PDN_EP0_PROTOCOL_PENDING=128u
+};
+enum PdnWorkerSite {
+    PDN_WORKER_INIT=0, PDN_WORKER_POLL=1, PDN_WORKER_QUIESCE=2,
+    PDN_WORKER_APPLY=3, PDN_WORKER_LOCK_WAIT=4, PDN_WORKER_EP1_CANCEL=5,
+    PDN_WORKER_EP1_DRAIN=6, PDN_WORKER_COMMIT=7, PDN_WORKER_SLEEP=8,
+    PDN_WORKER_FAULT=9, PDN_WORKER_STOP=10
+};
+typedef struct {
+    uint32_t generation,set_seen,recv_submissions,completions,parser_calls;
+    uint32_t setup,value_index;
+    int32_t submit_result,retcode,recvsize;
+    uint32_t request_generation,live_generation,gate_flags,drop_reason;
+    int32_t parser_result;
+    /* Snapshot of the allocated buffer, not a claim that recvsize bytes
+     * arrived. GET_REPORT does not replace this last-SET evidence. */
+    uint8_t raw[PDN_FEATURE_SIZE];
+} PdnEp0Diagnostic;
 /* Kernel owns every field except request_stop. USER keeps this allocation
  * until safe_to_unload and successful StopModule/UnloadModule. */
 typedef struct {
@@ -43,6 +71,8 @@ typedef struct {
     volatile uint32_t host_confirmed,host_session_seen,activity,progress_unit;
     volatile uint32_t diagnostic_visible;
     volatile uint64_t completed,total;
+    volatile PdnEp0Diagnostic ep0;
+    volatile uint32_t worker_loops,worker_site,apply_count;
 } PdnSharedStatus;
 typedef struct {
     uint32_t magic,size;
