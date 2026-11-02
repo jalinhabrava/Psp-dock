@@ -317,7 +317,7 @@ class DockProductSessionTests(unittest.TestCase):
 
     def test_launcher_input_requires_current_native_revision(self):
         self.ready('none')
-        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+        with patch('dock.linux_host', return_value=False), patch('psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
             self.assertTrue(self.dock.psp_launcher_input()['connected'])
             reader.assert_called_once_with(expected_product=0x01CD)

@@ -253,9 +253,12 @@ class NativeDockTransport:
 
     def __init__(self, *, probe=probe_native, identify_storage=identify,
                  parent_of=composite_parent, serial_of=_volume_serial,
-                 change_phase=request_phase, eject=eject_bound_parent):
+                 change_phase=request_phase, eject=eject_bound_parent,
+                 hid_identity=hid_instance, same_root=None):
         self._probe, self._identify, self._parent = probe, identify_storage, parent_of
         self._serial, self._change_phase, self._eject = serial_of, change_phase, eject
+        self._hid_identity = hid_identity
+        self._same_root = same_root or (lambda a, b: str(a).rstrip('\\/').casefold() == str(b).rstrip('\\/').casefold())
         self._link = None
         self._storage = None
         self._parent_node = None
@@ -271,12 +274,11 @@ class NativeDockTransport:
         old = self._link
         if (not fresh and old and old['session_id'] == status['session'] and
                 old['path'] == device['path'] and self._storage and
-                any(str(d.get('root','')).rstrip('\\/').casefold() ==
-                    self._storage.drive.rstrip('\\/').casefold() for d in roots) and
+                any(self._same_root(d.get('root', ''), self._storage.drive) for d in roots) and
                 self._serial(self._storage.drive) == old['volume_serial']):
             storage, parent = self._storage, self._parent_node
         else:
-            hid_parent = self._parent(hid_instance(device['path']))
+            hid_parent = self._parent(self._hid_identity(device['path']))
             matches = []
             for row in roots:
                 drive = str(row.get('root', ''))
@@ -319,7 +321,7 @@ class NativeDockTransport:
         old, storage = self._link, self._storage
         if old is None or storage is None:
             raise NativeDockError('No hay una sesión nativa verificada.')
-        if root is not None and str(root).rstrip('\\/').casefold() != storage.drive.rstrip('\\/').casefold():
+        if root is not None and not self._same_root(root, storage.drive):
             raise NativeDockError('La operación apunta a otra Memory Stick.')
         device = self._probe()
         if (device is None or device['path'] != old['path'] or

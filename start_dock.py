@@ -1,4 +1,4 @@
-"""Launch or reconnect to the *same* PSP Dock LIVE instance on Windows.
+"""Manually launch or reconnect to the same PSP Dock LIVE instance.
 
 Only one server can hold the LIVE folder's existing OS lock. The launcher
 reads a host-local server record, verifies it with an HTTP health check,
@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import argparse
 import os
+import sys
 from pathlib import Path
 import urllib.error
 import urllib.request
@@ -54,9 +55,17 @@ def existing_server(data: Path, *, opener=None) -> str | None:
 
 
 def launch(data: Path | None = None) -> str:
-    local=Path(os.environ.get('LOCALAPPDATA', str(Path(__file__).parent)))
-    data=(choose_live_dir(local, explicit=data) if data is not None
-          else default_data_path(local))
+    if sys.platform == 'linux':
+        from linux_desktop import default_data_dir
+        if data is not None:
+            from storage_layout import fixed_local_folder
+            fixed_local_folder(Path(data).absolute())
+        data=(choose_live_dir(default_data_dir().parent, explicit=data)
+              if data is not None else default_data_dir())
+    else:
+        local=Path(os.environ.get('LOCALAPPDATA', str(Path(__file__).parent)))
+        data=(choose_live_dir(local, explicit=data) if data is not None
+              else default_data_path(local))
     current=_checked_server(data)
     if current:
         health=current['health']
@@ -65,6 +74,15 @@ def launch(data: Path | None = None) -> str:
             # The first browser is still loading. A second manual click
             # must not create another window before its first heartbeat.
             return 'starting'
+        if sys.platform == 'linux':
+            from linux_desktop import has_connected_ui
+            if has_connected_ui(health):
+                # A second manual click must not open a second XMB. The
+                # compositor controls focus; do not inject global hotkeys.
+                return 'already_running'
+            launch_xmb_window(current['url'], app_window=True,
+                              reuse_existing=False, include_handles=set())
+            return 'already_running'
         # A healthy ordinary tab does not identify a native app window.
         # Only HWNDs observed by this same service can be reused.
         observed=health.get('native_handles')

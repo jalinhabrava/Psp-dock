@@ -1,0 +1,4 @@
+# Only the current native PSP Dock composite. Retired 0300 is not admitted.
+# uaccess grants the active local seat; no world-writable devices or root app.
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="01cd", ATTRS{bcdDevice}=="0301", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="01cd", ATTRS{bcdDevice}=="0301", TAG+="uaccess"

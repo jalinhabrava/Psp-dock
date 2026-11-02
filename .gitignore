@@ -113,6 +113,7 @@ docs/*
 !docs/PRUEBA-INTEGRAL-SIMULADA.md
 !docs/INICIO-AUTOMATICO-WINDOWS.md
 !docs/VIABILIDAD.md
+!docs/LINUX.md
 
 # Reviewed PSP Dock artwork embedded in the composite test EBOOT.
 !homebrew/composite-mscdemo/assets/ICON0.PNG

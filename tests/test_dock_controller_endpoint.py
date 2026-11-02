@@ -9,6 +9,9 @@ from psp_launcher_input import normalize_psp_joystick
 
 class PSPControllerEndpointTests(unittest.TestCase):
     def setUp(self):
+        self.platform = patch('dock.linux_host', return_value=False)
+        self.platform.start()
+        self.addCleanup(self.platform.stop)
         self.temp=tempfile.TemporaryDirectory()
         self.dock=Dock(Path(self.temp.name)/'data')
 

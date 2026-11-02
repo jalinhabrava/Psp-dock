@@ -1,5 +1,13 @@
 # PSP Dock · prototipo para Windows
 
+## Port Linux en esta rama
+
+El host Linux incluye detección nativa 0301 por hidraw/sysfs, la misma sesión
+PDK2, XMB manual, perfiles privados PPSSPP SDL/RetroArch y desmontaje final
+verificado mediante UDisks2. **La aceptación con la PSP física sigue
+pendiente.** Consulta [requisitos, instalación y límites de Linux](docs/LINUX.md)
+y abre `./start-linux.sh`. Esta rama no instala firmware ni crea servicios.
+
 ## Estado actual: 0301 instalada; prueba física pendiente
 
 La revisión actual del controlador nativo es **0301**. El primer arranque

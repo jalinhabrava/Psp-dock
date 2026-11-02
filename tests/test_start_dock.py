@@ -10,6 +10,9 @@ import start_dock
 
 class ExistingDockWindowTests(unittest.TestCase):
     def setUp(self):
+        self.platform = patch('start_dock.sys.platform', 'win32')
+        self.platform.start()
+        self.addCleanup(self.platform.stop)
         self.tmp=tempfile.TemporaryDirectory()
         self.data=Path(self.tmp.name)/'live'
         self.data.mkdir()
