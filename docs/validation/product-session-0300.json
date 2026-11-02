@@ -232,7 +232,7 @@
     "note": "Installation verification, synthetic screenshots, host tests and the earlier 0207 diagnostic session do not establish physical native 0300 functionality."
   },
   "final_application_readiness": {
-    "status": "manual_ui_ready_for_physical_native_test",
+    "status": "startup_verified_then_window_closed_normally",
     "final_startup_verified": true,
     "observed_utc": "2026-11-02T11:06:06.696210+00:00",
     "report": "data/native-dock-0300-evidence/windows-ready-final.json",
@@ -252,7 +252,10 @@
     "physical_native_session_active": false,
     "observational_wrapper": true,
     "wrapper_scope": "Temporary manual launch with timing logs and one completed stack observation. It does not alter lifecycle decisions or device/file operations; its lifetime remains owned by the visible application.",
-    "note": "The PSP is still in ordinary Sony XMB storage mode. This verifies the completed host inventory and waiting window, not native 0300 enumeration."
+    "note": "The PSP is still in ordinary Sony XMB storage mode. This verifies the completed host inventory and waiting window, not native 0300 enumeration.",
+    "current_window_open": false,
+    "closed_utc": "2026-11-02T11:15:24.278428+00:00",
+    "next_start": "Use the updated manual desktop shortcut; it launches start_dock.py without the temporary observation wrapper."
   },
   "artifacts": {
     "data/native-dock-0300-build.log": {
@@ -296,7 +299,9 @@
     "shortcut_updated": true,
     "startup_service_installed": false,
     "usb_arrival_task_installed": false,
-    "lifetime": "The manually opened UI owns the detector and server."
+    "lifetime": "The manually opened UI owns the detector and server.",
+    "window_close_observed": true,
+    "close_observation": "The temporary observed manual launch exited normally after pagehide/native window disappearance and completion of the current read."
   },
   "source_provenance": {
     "integration_branch": "feat/dock-product-session",
@@ -332,9 +337,12 @@
     "native_hardware_timing_verified": false
   },
   "startup_followup": {
-    "previous_normal_launch": "Returned cleanly while the inventory was pending; the initiating close signal was not captured.",
-    "current_launch": "Completed inventory with one visible client, no error and no close request. The earlier close cause is not claimed as resolved.",
+    "previous_normal_launch": "Returned cleanly while the inventory was pending; that earlier initiating close signal was not captured.",
+    "current_launch": "Completed the full inventory and remained open until the browser sent pagehide and its native window disappeared at 11:15:19 UTC. The UI lifetime monitor requested shutdown after its grace interval, drained the active read, and launch() returned normally at 11:15:24 UTC.",
     "temporary_faulthandler_attempt": "A separate instrumented attempt crashed in python312.dll during its faulthandler stack dump. That instrument was removed from the subsequent launch.",
-    "production_native_acceptance_still_pending": true
+    "production_native_acceptance_still_pending": true,
+    "observed_close_reason": "pagehide",
+    "observed_close_initiator": "Browser pagehide plus absent native window; no claim about who or what closed the browser window.",
+    "current_launch_unexpected_product_exception": false
   }
 }
