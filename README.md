@@ -249,6 +249,56 @@ Consulta ONE-CABLE-USB-BULK.md antes de cualquier modificación de
 firmware o ensayo con la Memory Stick original. El antiguo USB Step
 Probe que provocó apagados permanece retirado permanentemente.
 
+## Verificación rigurosa de códecs DZIP (en investigación)
+
+Se puede ejecutar un escaneo read-only de cualquier ISO/CSO PSP local por
+firma DZIP usando el comando
+python -m psp_dzip_compatibility RUTA_DEL_JUEGO.iso
+
+El sistema nunca certifica compatibilidad por compartir la extensión o
+cabecera. El nuevo verificador compara los datos descomprimidos byte a byte
+contra referencias independientes de **al menos dos recursos por juego y
+dos juegos diferentes**, y rechaza salidas truncadas o bytes sin consumir.
+Los resultados sintéticos prueban el verificador, **no el algoritmo DZIP**.
+
+Como resultado real, PPSSPP 1.20.4 generó en una instalación aislada
+un EBOOT MIPS descifrado de Dariusburst y una textura PNG capturada.
+**La rutina DZIP y la compatibilidad entre juegos siguen pendientes**:
+los archivos del laboratorio nunca se añaden a Git.
+Ver [resultados detallados](docs/DZIP-COMPATIBILIDAD.md).
+
+## Motor determinista reutilizable de texturas (investigación)
+
+La extracción de recursos se divide en **detección por firma**, **códec**,
+**decodificación de texeles GE/CLUT**, **correlación con PPSSPP** y posterior
+escalado. La ejecución no depende de un LLM ni del nombre del juego.
+La búsqueda genérica ISO/CSO reconoce DZIP y diferencia otras familias con
+nombre parecido; un DZIP detectado permanece **sin decodificar** hasta
+disponer de un códec confirmado con muestras independientes. Incluye códecs
+comunes y decodificadores reutilizables de formatos de PSP.
+Ver [arquitectura, límites y validaciones](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+
+## Investigación de texturas Dariusburst (ULJM05558)
+
+La PR de investigación sobre el generador HD híbrido permite inventariar
+recursos DZIP de Dariusburst desde su ISO/CSO del PC (TX2, XXI, BXN)
+y comparar huellas de los PNG volcados por PPSSPP en sucesivas partidas.
+Incluye cálculo independiente de la porción **hash de contenido** (XXH64
+con parámetros de PPSSPP) cuando se disponga de bytes gráficos sin comprimir.
+**No contiene todavía un descompresor DZIP ni publica reemplazos inferidos.**
+Ver [resultados, pruebas y siguientes pasos](docs/DARIUSBURST-RE.md).
+
+## Generador HD híbrido de texturas (opt-in, PC)
+
+En el XMB > Gráficos > un juego verificado > Generador HD híbrido puedes
+habilitar captura incremental de texturas mediante PPSSPP y mejora local
+2×/4× en segundo plano. Incluye inventario separado de imágenes dentro de
+ISO/CSO (sin atribuir hashes falsos), shaders GPU PPSSPP con Vulkan, protección
+de packs comunitarios, comprobación de rutas y límites de procesamiento.
+**No extrae automáticamente todas las texturas internas de cualquier juego**
+ni es un remaster visual garantizado. Ver
+[documentación y límites](docs/HD-TEXTURAS-HIBRIDAS.md).
+
 ## New feature branch: media, storage location and graceful shutdown
 
 See MVP-HANDOFF-USB-MEDIA.md for the changes based on Claude's

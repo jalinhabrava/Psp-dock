@@ -14,6 +14,7 @@ server.json
 inventory-cache.json
 runtime-prepared.json
 graphics-profiles.json
+hd-generator.json
 copy-decisions.json
 *.key
 *.pem
@@ -117,6 +118,10 @@ docs/*
 !docs/psp-homebrew-ui-preview.png
 !docs/ARRANQUE-HID-AUTOMATICO.md
 !docs/GRAFICOS-PPSSPP.md
+!docs/HD-TEXTURAS-HIBRIDAS.md
+!docs/DARIUSBURST-RE.md
+!docs/MOTOR-TEXTURAS-DETERMINISTA.md
+!docs/DZIP-COMPATIBILIDAD.md
 !docs/PROTOCOLO-ROLE-BRIDGE-V2.md
 !docs/PPSSPP-WINDOWS-FLOW.md
 !docs/CONTRATO-ADAPTADOR-USB.md
