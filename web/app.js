@@ -121,6 +121,14 @@ async function mutate(path, body, success) {
   if (ui.state?.recovery_required) { toast('Sesión interrumpida: revisa PPSSPP y la recuperación antes de continuar.'); return false; }
   ui.busy = true;
   ui.operation = path;
+  const launchesGame = path === '/api/launch' || path === '/api/retro-launch';
+  if (launchesGame) {
+    // PPSSPP may hide this window before the next state poll. Silence now,
+    // not only when a later render happens to observe session.running.
+    xmb.mediaLaunchPending = true;
+    xmb.mediaLaunchSettled = false;
+    xmbPreviewGame(null);
+  }
   document.body.classList.add('busy');
   document.body.setAttribute('aria-busy', 'true');
   document.querySelectorAll('.mutation-error').forEach((node) => node.remove());
@@ -130,11 +138,18 @@ async function mutate(path, body, success) {
   }
   try {
     await request(path, body);
+    if (launchesGame) xmb.mediaLaunchSettled = true;
     await refresh();
     const message = typeof success === 'function' ? success(ui.state) : success;
     if (message) toast(message);
     return true;
   } catch (error) {
+    if (launchesGame) {
+      // A lost response is not proof the emulator failed to start. Keep
+      // silence until a NEW state request establishes the actual outcome.
+      xmb.mediaLaunchSettled = true;
+      await refresh();
+    }
     if (path === '/api/session-choice' || path === '/api/session-retry') ui.productRequestError = error.message;
     if (path === '/api/prepare-ppsspp' || path === '/api/transfer' ||
         path === '/api/retro-transfer' || path === '/api/retro-save-sync') await refresh();
@@ -164,6 +179,7 @@ async function mutate(path, body, success) {
 async function refresh() {
   if (ui.appClosing || ui.appClosed || ui.refreshPending) return;
   ui.refreshPending = true;
+  const resolvesLaunch = xmb.mediaLaunchPending && xmb.mediaLaunchSettled;
   try {
     const state = await request('/api/state');
     if (state.retro_install) {
@@ -171,12 +187,14 @@ async function refresh() {
       catch { /* XMB still works when an optional status request fails. */ }
     }
     ui.state = state;
+    if (resolvesLaunch) xmb.mediaLaunchPending = false;
     ui.serviceOffline = false;
     $('error').hidden = !state.error && !state.recovery_required;
     $('error').textContent = state.recovery_required ? 'Sesión interrumpida: revisa PPSSPP y la recuperación antes de continuar.' : state.error || '';
     render();
   } catch (error) {
     ui.serviceOffline = true;
+    xmbPreviewGame(null);
     $('error').hidden = false;
     $('error').textContent = `PSP Dock no responde. ${error.message}`;
     if (ui.state) render();
@@ -1287,6 +1305,7 @@ function focusDialogControl(dialog, delta) {
   const index = controls.indexOf(document.activeElement);
   const next = index < 0 ? delta > 0 ? 0 : controls.length - 1 : (index + delta + controls.length) % controls.length;
   controls[next].focus();
+  if (next !== index) xmbMenuClick('cursor');
 }
 function navigateDialogControl(dialog, direction) {
   const current = document.activeElement;
@@ -1809,9 +1828,13 @@ const xmb = {
   sections: [], sub: null, side: null, confirm: null,
   gfx: {}, gfxLoading: new Set(), settings: null, els: new Map(), icons: new Map(),
   theme: 'month', mediaGame: null, mediaTimer: null, mediaSound: true,
+  mediaGeneration: 0, mediaHdTimer: null, mediaHdAbort: null,
+  mediaLaunchPending: false, mediaLaunchSettled: false,
+  menuSound: true, menuSoundAt: 0,
 };
 try { xmb.theme = localStorage.getItem('psp-dock-theme') || 'month'; } catch { /* sin almacenamiento */ }
 try { xmb.mediaSound = localStorage.getItem('psp-dock-xmb-sound') !== 'off'; } catch { /* sin almacenamiento */ }
+try { xmb.menuSound = localStorage.getItem('psp-dock-menu-sound') !== 'off'; } catch { /* sin almacenamiento */ }
 
 function xmbConnectionView() {
   const connection = dockConnectionView(ui.state, {
@@ -2019,37 +2042,94 @@ function productFlowPress(button) {
     const diagnostics = $('dock-session-diagnostics');
     if (diagnostics?.open) { diagnostics.open = false; diagnostics.querySelector('summary').focus(); return; }
     // Circle never submits a skip choice or acknowledges successful exit.
-    if (product.canChoose) panel.querySelector('[data-session-choice="none"]').focus();
+    if (product.canChoose) {
+      const target = panel.querySelector('[data-session-choice="none"]');
+      if (target !== document.activeElement) xmbMenuClick('cancel');
+      target.focus();
+    }
     return;
   }
   const index = controls.indexOf(document.activeElement);
   if (['left', 'right', 'up', 'down'].includes(button)) {
     const delta = ['left', 'up'].includes(button) ? -1 : 1;
-    controls[(index < 0 ? delta > 0 ? 0 : controls.length - 1 : (index + delta + controls.length) % controls.length)].focus();
+    const next = index < 0 ? delta > 0 ? 0 : controls.length - 1 : (index + delta + controls.length) % controls.length;
+    controls[next].focus();
+    if (next !== index) xmbMenuClick('cursor');
   } else if (button === 'accept') {
-    if (index >= 0) controls[index].click();
+    if (index >= 0) { xmbMenuClick('decide'); controls[index].click(); }
     else controls[controls.length - 1].focus();
   }
 }
 
+function xmbPreviewAllowed() {
+  return !document.hidden && !ui.serviceOffline && !ui.appClosing && !ui.appClosed &&
+    !ui.state?.session?.running && !ui.state?.session?.exit_requested &&
+    !xmb.mediaLaunchPending && !['/api/launch', '/api/retro-launch'].includes(ui.operation);
+}
+
+async function xmbLoadHdBackground(gameId, generation, attempt = 0) {
+  if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId || !xmbPreviewAllowed()) return;
+  const controller = new AbortController();
+  xmb.mediaHdAbort = controller;
+  try {
+    // This route only consumes the PC's cached original. It never scans USB,
+    // and its one bounded worker is independent of launch/sync operations.
+    const response = await fetch('/api/media-hd/' + encodeURIComponent(gameId),
+      { cache: 'no-store', signal: controller.signal });
+    if (generation !== xmb.mediaGeneration || !xmbPreviewAllowed()) return;
+    if (response.status === 202 && attempt < 8) {
+      xmb.mediaHdTimer = setTimeout(() => xmbLoadHdBackground(gameId, generation, attempt + 1), 700);
+      return;
+    }
+    if (!response.ok || response.headers.get('Content-Type') !== 'image/png') return;
+    const url = URL.createObjectURL(await response.blob());
+    if (generation !== xmb.mediaGeneration || !xmbPreviewAllowed()) { URL.revokeObjectURL(url); return; }
+    const image = new Image();
+    image.onload = () => {
+      if (generation === xmb.mediaGeneration && xmb.mediaGame === gameId && xmbPreviewAllowed()) {
+        const bg = $('xmb-game-background');
+        if (xmb.mediaHdUrl) URL.revokeObjectURL(xmb.mediaHdUrl);
+        xmb.mediaHdUrl = url;
+        bg.src = url;
+        bg.hidden = false;
+      } else URL.revokeObjectURL(url);
+    };
+    image.onerror = () => URL.revokeObjectURL(url);
+    image.src = url;
+  } catch { /* Optional enhancement never breaks the original preview. */ }
+  finally { if (xmb.mediaHdAbort === controller) xmb.mediaHdAbort = null; }
+}
+
 function xmbPreviewGame(gameId) {
+  if (!xmbPreviewAllowed()) gameId = null;
   if (xmb.mediaGame === gameId) return;
   xmb.mediaGame = gameId;
+  const generation = ++xmb.mediaGeneration;
   clearTimeout(xmb.mediaTimer);
+  clearTimeout(xmb.mediaHdTimer);
+  xmb.mediaHdAbort?.abort();
+  xmb.mediaHdAbort = null;
   const bg = $('xmb-game-background'), overlay = $('xmb-game-overlay');
   const sound = $('xmb-game-audio');
   sound.pause();
+  sound.loop = false;
   sound.removeAttribute('src');
   sound.load();
+  if (xmb.mediaHdUrl) URL.revokeObjectURL(xmb.mediaHdUrl);
+  xmb.mediaHdUrl = null;
   bg.hidden = true; bg.removeAttribute('src');
   overlay.hidden = true; overlay.removeAttribute('src');
-  if (!gameId || ui.serviceOffline) return;
+  if (!gameId || !xmbPreviewAllowed()) return;
   // Debounce fast D-pad movement. Never request all 35 games at once.
   xmb.mediaTimer = setTimeout(() => {
-    if (xmb.mediaGame !== gameId || document.hidden || ui.state?.session?.running) return;
+    if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId || !xmbPreviewAllowed()) return;
     const uri = '/api/media/' + encodeURIComponent(gameId) + '/';
     for (const [kind,element] of [['background',bg],['overlay',overlay]]) {
-      element.onload = () => { if (xmb.mediaGame === gameId) element.hidden = false; };
+      element.onload = () => {
+        if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId || !xmbPreviewAllowed()) return;
+        element.hidden = false;
+        if (kind === 'background' && !xmb.mediaHdUrl) void xmbLoadHdBackground(gameId, generation);
+      };
       element.onerror = () => { element.hidden = true; };
       element.src = uri + kind;
     }
@@ -2057,12 +2137,26 @@ function xmbPreviewGame(gameId) {
       sound.volume = .22;
       sound.loop = true;
       sound.src = uri + 'sound';
-      void sound.play().catch(() => {
+      sound.onplaying = () => { if (!xmbPreviewAllowed() || !xmb.mediaSound || !xmb.mediaGame) sound.pause(); };
+      void sound.play().then(() => {
+        // A delayed play promise must never resurrect audio over a game.
+        if (!xmbPreviewAllowed() || !xmb.mediaSound || !xmb.mediaGame) sound.pause();
+      }).catch(() => {
         // Chrome may require a click before browser audio is unlocked.
         // Never simulate keyboard input or weaken global browser policy.
       });
     }
   }, 350);
+}
+
+function xmbMenuClick(kind = 'cursor') {
+  if (!xmb.menuSound || !xmbPreviewAllowed() || ui.busy || !['cursor', 'decide', 'cancel', 'option'].includes(kind)) return;
+  const now = Date.now();
+  if (now - xmb.menuSoundAt < 65) return;
+  xmb.menuSoundAt = now;
+  // Native playback also works when navigating exclusively with a gamepad:
+  // no browser autoplay bypass and no invented/synthesized fallback sound.
+  void request('/api/ui-sound', { sound: kind, at_ms: now }).catch(() => {});
 }
 
 function xmbText(id) { return ($(id)?.textContent || '').trim(); }
@@ -2173,6 +2267,13 @@ function xmbBuildSections() {
           const previous = xmb.mediaGame;
           xmbPreviewGame(null);
           xmbPreviewGame(previous);
+        }) },
+    { key: 'menu-sound', t: 'Sonidos originales del XMB', icon: 'info',
+      s: () => xmb.menuSound ? 'Activados · cursor, confirmar y volver' : 'Silenciados',
+      activate: () => xmbValues('Sonidos de navegación', [['on','Activados'],['off','Silenciados']],
+        xmb.menuSound ? 'on' : 'off', (value) => {
+          xmb.menuSound = value === 'on';
+          try { localStorage.setItem('psp-dock-menu-sound',value); } catch {}
         }) },
     { key: 'pad', t: 'Mando', s: () => xmbText('gamepad-status') || 'Sin detectar', icon: 'pad', activate: () => toast(xmbText('gamepad-status')) },
     { key: 'session-memory', t: 'Sincronización al conectar esta PSP', icon: 'info',
@@ -2694,6 +2795,7 @@ function xmbGoto(id) {
   if (connection.waiting || connection.product?.blocking) return;
   const cat = XMB_SECTIONS.findIndex(([key]) => key === id);
   if (cat < 0) return;
+  if (cat !== xmb.nav.cat) xmbMenuClick('cursor');
   xmb.nav = { ...xmb.nav, cat, level: 'list', subIdx: 0, side: null, confirm: null };
   xmbRender();
 }
@@ -2725,6 +2827,10 @@ function xmbPress(button) {
   const before = xmb.nav;
   const { nav, effect } = xmbStep(xmb.nav, view, button);
   xmb.nav = nav;
+  if (JSON.stringify(before) !== JSON.stringify(nav) || effect) {
+    xmbMenuClick(['left','right','up','down','pageLeft','pageRight'].includes(button) ? 'cursor' :
+      button === 'back' ? 'cancel' : button === 'menu' ? 'option' : 'decide');
+  }
   if (before.level === 'sub' && nav.level === 'list') xmb.sub = null;
   if (!nav.side && before.side) { const side = xmb.side; xmb.side = null; if (effect?.type === 'pick') side?.pick(effect.index); }
   if (!nav.confirm && before.confirm) { const confirm = xmb.confirm; xmb.confirm = null; if (effect?.yes) confirm?.done(); }
@@ -3002,6 +3108,11 @@ $('dock-session-refresh').addEventListener('click', refresh);
 $('dock-session-cancel').addEventListener('click', cancelProductSession);
 $('dock-session-close').addEventListener('click', closeDockApp);
 window.addEventListener('pagehide', appPageLeaving);
+window.addEventListener('pagehide', () => xmbPreviewGame(null));
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) xmbPreviewGame(null);
+  else if (!ui.appClosed && !ui.appClosing) { void refresh(); if (ui.state) render(); }
+});
 window.addEventListener('pageshow', () => {
   if (!ui.appPageHidden || ui.appClosed) return;
   ui.appPageHidden = false;
@@ -3024,7 +3135,8 @@ refresh();
 setInterval(() => {
   // A session choice may keep its POST open while the worker copies.
   // GET snapshots remain readable and must keep its progress visible.
-  if (!document.hidden && (!ui.busy || ui.state?.product_flow?.enabled === true)) refresh();
+  if ((!document.hidden || xmb.mediaLaunchPending || ui.state?.session?.running) &&
+      (!ui.busy || ui.state?.product_flow?.enabled === true)) refresh();
 }, 500);
 requestAnimationFrame(gamepadLoop);
 void pollNativePspInput();

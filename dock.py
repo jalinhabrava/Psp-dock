@@ -448,6 +448,10 @@ class Dock:
         self.config.setdefault('retro_install_policy', 'ask')
         self.config.setdefault('retro_button_layout','nintendo')
         self.process = None
+        from xmb_sounds import UiSoundPlayer
+        self.ui_sound_player = UiSoundPlayer(self.data / 'xmb-ui-sounds')
+        self._background_cache = None
+        self._background_cache_lock = threading.Lock()
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
         # A previous process may still have the dedicated memstick open.
         self.recovery_required = self.session.get('running', False)
@@ -2419,6 +2423,51 @@ class Dock:
             temporary.unlink(missing_ok=True)
         return artwork
 
+    def play_ui_sound(self, name, at_ms):
+        import math
+        from xmb_sounds import SOUNDS
+        if (not isinstance(name, str) or name not in SOUNDS or type(at_ms) not in (int, float)
+                or not math.isfinite(at_ms)):
+            raise ValueError('Solicitud de sonido inválida.')
+        # Never queue menu sounds behind a game launch or a long sync.
+        if not -250 <= time.time() * 1000 - at_ms <= 750 or not self.lock.acquire(blocking=False):
+            return {'played': False}
+        try:
+            flow = self.product_flow.snapshot()
+            if (self.stop.is_set() or self.running() or self.session.get('exit_requested') or
+                    self.recovery_required or self.transfer_status.get('active') or
+                    (flow['enabled'] and flow['phase'] not in ('choosing', 'ready', 'attention'))):
+                return {'played': False}
+            return {'played': self.ui_sound_player.play(name)}
+        finally:
+            self.lock.release()
+
+    def xmb_background_hd(self, game_id):
+        """Enhance ONLY the original already cached on PC. Never reads PSP."""
+        from psp_xmb_media import XMBAssetCache, media_key
+        if not isinstance(game_id, str) or not re.fullmatch('[0-9a-f]{24}', game_id):
+            raise ValueError('Juego del XMB desconocido.')
+        game = next((g for g in self.last_games if g.get('id') == game_id), None)
+        if game is None or not self.catalog_volume or self.stop.is_set():
+            return None
+        root = Path(self.config.get('storage_root') or self.data)
+        cache = XMBAssetCache(root / 'xmb-assets')
+        original = cache.cached(media_key(volume=self.catalog_volume, game=game), 'background')
+        if original is None:
+            return None
+        with self._background_cache_lock:
+            if self.stop.is_set():
+                return None
+            if self._background_cache is None:
+                try:
+                    from xmb_backgrounds import BackgroundCache
+                except ImportError:
+                    # Artwork enhancement is optional. A missing Pillow
+                    # installation must leave the original preview usable.
+                    return None
+                self._background_cache = BackgroundCache(self.data / 'xmb-backgrounds')
+            return self._background_cache.request(original)
+
     def xmb_media(self, game_id, kind):
         """Read PIC0/PIC1 or browser-safe SND0 from audited game, PC cached.
 
@@ -2935,6 +2984,18 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     return self.reply(dock.psp_launcher_input())
                 if self.path == '/api/media-status':
                     return self.reply(dock.xmb_media_progress)
+                if self.path.startswith('/api/media-hd/'):
+                    data = dock.xmb_background_hd(self.path[len('/api/media-hd/'):])
+                    if data is None:
+                        return self.reply({'status': 'pending_or_unavailable'}, 202)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/png')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
                 if self.path == '/api/retro-install-status':
                     # Network downloads do not own Dock.lock or block USB
                     # scanning, so status can be polled independently.
@@ -2963,7 +3024,9 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     self.send_header('Content-Type',
                                      'audio/mpeg' if kind=='sound' else 'image/png')
                     self.send_header('Content-Length',str(len(data)))
-                    self.send_header('Cache-Control','private, max-age=120')
+                    # The same public game id can exist on another card.
+                    # PC caches remain versioned; browser URLs are not.
+                    self.send_header('Cache-Control','no-store')
                     self.send_header('X-Content-Type-Options','nosniff')
                     self.end_headers()
                     self.wfile.write(data)
@@ -3004,7 +3067,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 self.send_response(200)
                 self.send_header('Content-Type',{'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8'}[name.split('.')[-1]])
                 self.send_header('Content-Length',str(len(content)))
-                self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+                self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
                 self.end_headers()
                 self.wfile.write(content)
             except (OSError, ValueError) as e:
@@ -3032,6 +3095,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         dock, ui, body.get('client_id'), body.get('reason')))
                 if ui is not None and ui.stopping:
                     raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
+                if self.path == '/api/ui-sound':
+                    return self.reply(dock.play_ui_sound(body.get('sound'), body.get('at_ms')))
                 if self.path == '/api/cancel-transfer':
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.
@@ -3094,8 +3159,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     elif self.path == '/api/resolve':
                         save_result = dock.sync(body)
                     elif self.path == '/api/launch':
+                        dock.ui_sound_player.stop()
                         dock.launch(body['id'])
                     elif self.path == '/api/retro-launch':
+                        dock.ui_sound_player.stop()
                         dock.launch_retro(body['id'])
                     elif self.path == '/api/retro-save-sync':
                         dock.sync_retro_save(body.get('id'),body.get('choice'),
@@ -3292,6 +3359,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
     finally:
         lifecycle_done.set()
         dock.stop.set()
+        dock.ui_sound_player.stop()
+        with dock._background_cache_lock:
+            if dock._background_cache is not None:
+                dock._background_cache.close(wait=False)
         server.server_close()
         # No daemon performing an existing copy may outlive our instance
         # lock. Both workers check stop before beginning another item.

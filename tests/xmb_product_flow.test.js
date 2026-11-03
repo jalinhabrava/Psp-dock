@@ -300,6 +300,7 @@ assert(start > 0 && end > start);
 const calls = [];
 const runtime = {
   ui: { state: choose, busy: false, serviceOffline: false },
+  xmbMenuClick: () => {},
   document: { activeElement: null, querySelector: () => null },
   xmbConnectionView: () => connection(runtime.ui.state, { busy: runtime.ui.busy, serviceOffline: runtime.ui.serviceOffline }),
   xmbRender: () => { runtime.renders += 1; }, renders: 0,
