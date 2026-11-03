@@ -10,7 +10,6 @@ import json
 import os
 from pathlib import Path
 import stat
-import time
 
 CHOICES = ('all', 'saves', 'games', 'none')
 
@@ -66,6 +65,7 @@ class DeviceMemory:
         self.write = write
         self.preferences = {}
         self.stats = {'hits':0, 'misses':0}
+        self.fingerprints = {}
         file = self.directory/'device-preferences.json'
         try:
             if file.stat().st_size <= 131072:
@@ -100,26 +100,43 @@ class DeviceMemory:
     def inventory(self, root, serial, kind, scan):
         # Caller checks the root and live card. These are catalog metadata,
         # not a baseline for saves or a substitute for transfer hashes.
-        key = _hash([str(serial), str(Path(root).absolute()), kind])
+        # Windows can assign a different drive letter to the same Memory
+        # Stick. The verified volume serial + fresh metadata fingerprint,
+        # not the letter, identify the read-only catalog. Keep a fallback for
+        # existing caches made by older PSP Dock versions.
+        key = _hash([str(serial), kind]) if serial else _hash([str(serial), str(Path(root).absolute()), kind])
         file = self.directory/'catalog-cache'/(key+'.json')
+        legacy_key = _hash([str(serial), str(Path(root).absolute()), kind])
+        old_file = self.directory/'catalog-cache'/(legacy_key+'.json')
         before = metadata_fingerprint(root)
-        try:
-            if file.stat().st_size <= 8*1024*1024:
-                cached = json.loads(file.read_text(encoding='utf-8'))
-                if (cached.get('schema') == 1 and cached.get('fingerprint') == before
-                        and cached.get('kind') == kind and cached.get('volume') == serial
-                        and type(cached.get('at')) in (int,float)
-                        and 0 <= time.time()-cached['at'] < 86400
-                        and cached.get('checksum') == _hash(cached.get('data'))
-                        and isinstance(cached.get('data'), list if kind=='games' else dict)):
-                    self.stats['hits'] += 1
-                    return deepcopy(cached['data'])
-        except (OSError, ValueError, TypeError, AttributeError):
-            pass
+        self.fingerprints[(str(Path(root).absolute()), str(serial), kind)] = before
+        for candidate in (file, old_file) if file != old_file else (file,):
+            try:
+                if candidate.stat().st_size <= 8*1024*1024:
+                    cached = json.loads(candidate.read_text(encoding='utf-8'))
+                    if (cached.get('schema') == 1 and cached.get('fingerprint') == before
+                            and cached.get('kind') == kind and cached.get('volume') == serial
+                            and cached.get('checksum') == _hash(cached.get('data'))
+                            and isinstance(cached.get('data'), list if kind=='games' else dict)):
+                        self.stats['hits'] += 1
+                        if candidate != file:
+                            try:
+                                self.write(file, cached)
+                            except OSError:
+                                # A failed PC-only migration must not force an
+                                # otherwise unnecessary new PSP scan.
+                                pass
+                        return deepcopy(cached['data'])
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
         self.stats['misses'] += 1
         result = scan()
         if metadata_fingerprint(root) != before:
             raise ValueError('La biblioteca cambió durante el inventario; vuelve a comprobarla.')
         self.write(file, {'schema':1,'fingerprint':before,'kind':kind,'volume':serial,
-            'at':time.time(),'checksum':_hash(result),'data':result})
+            'checksum':_hash(result),'data':result})
         return result
+
+    def fingerprint(self, root, serial, kind):
+        """Fingerprint from the latest complete live enumeration, if any."""
+        return self.fingerprints.get((str(Path(root).absolute()), str(serial), kind))

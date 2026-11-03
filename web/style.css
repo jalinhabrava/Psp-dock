@@ -307,7 +307,7 @@ body{background:#03141c;overflow:hidden}
 .xmb-cat.on span{opacity:1}
 .xmb-badge{position:absolute;top:-.4cqw;right:2.2cqw;min-width:1.5cqw;height:1.5cqw;padding:0 .3cqw;border-radius:1cqw;background:#ffcf7a;color:#2a1b00;font-size:.95cqw;font-style:normal;font-weight:700;display:grid;place-items:center}
 .xmb-list{position:absolute;inset:0}
-.xmb-item{position:absolute;display:flex;align-items:center;gap:1.4cqw;cursor:pointer;white-space:nowrap;max-width:70cqw;transition:top .22s cubic-bezier(.2,.7,.2,1),left .28s,opacity .22s}
+.xmb-item{position:absolute;display:flex;align-items:center;gap:1.4cqw;cursor:pointer;white-space:nowrap;max-width:70cqw;transition:top .28s cubic-bezier(.2,.7,.2,1),left .28s cubic-bezier(.2,.7,.2,1),opacity .24s ease;will-change:top,opacity}
 .xmb-ic{flex:none;width:7.2cqw;height:4cqw;border-radius:.3cqw;position:relative;overflow:hidden;display:grid;place-items:center;background:linear-gradient(135deg,#ffffff30,#ffffff08);box-shadow:0 .3cqw 1cqw #0006;transition:transform .2s,box-shadow .2s}
 .xmb-ic:before{content:attr(data-fallback);font-size:.75cqw;font-weight:700;letter-spacing:.06em;text-align:center;line-height:1.15;padding:0 .4cqw;white-space:normal;opacity:.85}
 .xmb-ic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}
@@ -316,7 +316,7 @@ body{background:#03141c;overflow:hidden}
 .xmb-ic.round:before{content:none}
 .xmb-ic.round svg{width:2.1cqw;height:2.1cqw;stroke:#fff;fill:none;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 .3cqw #ffffff99)}
 .xmb-tx{display:grid;gap:.25cqw;min-width:0}
-.xmb-tx b{font-weight:500;font-size:1.55cqw;text-shadow:0 0 .5cqw #0007;overflow:hidden;text-overflow:ellipsis}
+.xmb-tx b{font-weight:500;font-size:1.55cqw;text-shadow:0 0 .5cqw #0007;overflow:hidden;text-overflow:ellipsis;transition:font-size .2s ease}
 .xmb-tx small{font-size:1.05cqw;color:#d6e8ee;opacity:0;transition:opacity .2s;overflow:hidden;text-overflow:ellipsis;max-width:60cqw}
 .xmb-item.on .xmb-tx b{font-size:1.85cqw}
 .xmb-item.on .xmb-tx small{opacity:.9}

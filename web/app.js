@@ -2861,6 +2861,8 @@ function xmbPress(button) {
 
 // ---------- pintado ----------
 const XMB_CAT_GAP = 12, XMB_CAT_X = 24;
+let xmbRenderedColumn = null;
+let xmbRenderedCategory = null;
 function xmbIconNode(icon) {
   const box = document.createElement('div');
   if (typeof icon === 'string') { box.className = 'xmb-ic round'; box.innerHTML = XMB_ICONS[icon] || XMB_ICONS.info; return box; }
@@ -2913,7 +2915,9 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
   const list = $('xmb-list');
   items.forEach((item, i) => {
     const r = i - focus;
-    if (r < -2 || r > 6 || collapsed && r !== 0) return;
+    // Keep one fully transparent item at each edge of the visible window.
+    // It can then slide out on the next step before its DOM node is recycled.
+    if (r < -3 || r > 7 || collapsed && r !== 0) return;
     const key = prefix + item.key;
     const node = xmbItemNode(key, item);
     used.add(key);
@@ -2922,7 +2926,8 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
     node.setAttribute('aria-selected', String(r === 0 && !collapsed));
     node.style.left = x + 'cqw';
     node.style.top = (r === 0 ? 20.5 : r > 0 ? 21 + r * 5.6 : 7.2 + (r + 1) * 5.2) + 'cqw';
-    node.style.opacity = collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
+    node.style.opacity = r === -3 || r === 7 ? '0' : collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
+    node.style.pointerEvents = r === -3 || r === 7 ? 'none' : '';
     node.onclick = () => {
       if (xmbConnectionView().waiting) return;
       if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
@@ -2945,6 +2950,12 @@ function xmbRender() {
   const focus = Math.max(0, Math.min(section.items.length - 1, nav.idx[section.id] || 0));
   nav.idx[section.id] = focus;
   const inSub = nav.level === 'sub';
+  const column = section.id + (inSub ? ':sub' : ':list');
+  const previousColumn = xmbRenderedColumn;
+  const previousCategory = xmbRenderedCategory;
+  const changingColumn = previousColumn !== null && previousColumn !== column;
+  const movingRight = nav.cat >= (previousCategory ?? nav.cat);
+  const motion = changingColumn && !matchMedia('(prefers-reduced-motion: reduce)').matches;
   const rows = inSub ? xmbGraphicsRows(xmb.sub?.id || null) : [];
   if (inSub) nav.subIdx = Math.max(0, Math.min(rows.length - 1, nav.subIdx));
   if (!inSub) section.items[focus]?.focus?.();
@@ -2984,7 +2995,27 @@ function xmbRender() {
   const used = new Set();
   xmbPlaceColumn('main:' + section.id + ':', section.items, focus, inSub ? 4 : XMB_CAT_X - 3.6, inSub, used);
   if (inSub) xmbPlaceColumn('sub:', rows, nav.subIdx, 26, false, used);
-  for (const [key, node] of xmb.els) if (!used.has(key)) { node.remove(); xmb.els.delete(key); }
+  for (const [key, node] of xmb.els) if (!used.has(key)) {
+    xmb.els.delete(key);
+    if (motion && typeof node.animate === 'function') {
+      node.style.pointerEvents = 'none';
+      const exit = node.animate([
+        { opacity: getComputedStyle(node).opacity, transform: 'translateX(0)' },
+        { opacity: 0, transform: `translateX(${movingRight ? -10 : 10}cqw)` },
+      ], { duration: 230, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' });
+      exit.finished.then(() => node.remove(), () => node.remove());
+    } else node.remove();
+  }
+  if (motion) for (const key of used) {
+    if (!key.startsWith(inSub ? 'sub:' : 'main:' + section.id + ':')) continue;
+    const node = xmb.els.get(key);
+    if (node && typeof node.animate === 'function') node.animate([
+      { opacity: 0, transform: `translateX(${movingRight ? 10 : -10}cqw)` },
+      { opacity: Number(getComputedStyle(node).opacity), transform: 'translateX(0)' },
+    ], { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+  }
+  xmbRenderedColumn = column;
+  xmbRenderedCategory = nav.cat;
 
   $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : connection.storageSetup ? 'PREPARACIÓN · almacenamiento USB' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
   const hid = state.controller_status?.connected === true;

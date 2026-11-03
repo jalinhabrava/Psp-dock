@@ -479,6 +479,7 @@ class Dock:
                             not emulator_profile(Path(entry['title']))):
                         self.last_games.append(entry)
         self.catalog_volume = cached.get('volume_serial', '') if isinstance(cached, dict) else ''
+        self.catalog_fingerprint = cached.get('fingerprint', '') if isinstance(cached, dict) and isinstance(cached.get('fingerprint'), str) else ''
         retro_cache = read_json(self.data / 'retro-inventory-cache.json', {})
         self.last_emulators, self.last_roms, self.retro_volume = [], [], ''
         if isinstance(retro_cache, dict):
@@ -708,17 +709,28 @@ class Dock:
                         if serial == self.catalog_volume else {})
             found = self.device_memory.inventory(inside(root, ''), serial, 'games',
                                                 lambda:game_inventory(root))
+            fingerprint = self.device_memory.fingerprint(root, serial, 'games')
+            unchanged_catalog = serial == self.catalog_volume and fingerprint == self.catalog_fingerprint
             for game in found:
                 # An empty PC library is already proof of absence. Never read
                 # gigabytes over PSP USB just to display an absent game.
                 comparable = any(c['format']==game['format'] and c['size']==game['size'] for c in candidates)
+                prior = previous.get(game['relative'], {})
+                same_file = (prior.get('format') == game['format'] and
+                             prior.get('size') == game['size'] and
+                             prior.get('modified_ns') == game['modified_ns'] and
+                             bool(re.fullmatch('[0-9a-f]{64}', prior.get('signature') or '')))
                 if comparable:
                     source = inside(root,game['relative'])
-                    game['signature'] = tree_signature(source.parent) if game['format'] == 'PBP' else self.hash(source)
-                elif (game['relative'] in previous and
-                      previous[game['relative']].get('size') == game['size'] and
-                      previous[game['relative']].get('modified_ns') == game['modified_ns']):
-                    game['signature'] = previous[game['relative']].get('signature')
+                    # ISO/CSO signatures depend on the file stat. PBP signatures
+                    # include assets in its parent tree, so reuse only when
+                    # the full live catalog fingerprint also matches.
+                    if same_file and (game['format'] != 'PBP' or unchanged_catalog):
+                        game['signature'] = prior['signature']
+                    else:
+                        game['signature'] = tree_signature(source.parent) if game['format'] == 'PBP' else self.hash(source)
+                elif same_file and (game['format'] != 'PBP' or unchanged_catalog):
+                    game['signature'] = prior['signature']
             # Publish a new catalog only after finishing the whole inventory,
             # including signatures. A cable loss or changed source must leave
             # the previous complete mirror intact, not persist a partial one.
@@ -739,10 +751,12 @@ class Dock:
                 | ({'signature': g['signature']} if g.get('signature') else {})
                 for g in self.last_games
             ]
-            if serial != self.catalog_volume or essentials != old_essentials:
+            if serial != self.catalog_volume or fingerprint != self.catalog_fingerprint or essentials != old_essentials:
                 atomic_json(self.data / 'inventory-cache.json',
-                            {'volume_serial': serial, 'games': essentials})
+                            {'volume_serial': serial, 'fingerprint': fingerprint,
+                             'games': essentials})
             self.catalog_volume = serial
+            self.catalog_fingerprint = fingerprint
             self.last_games = found
         result = []
         for game in self.last_games:
@@ -793,7 +807,13 @@ class Dock:
                 local, local_info = local_tree.file(rom['relative'])
                 if local_info is not None and local_info.st_size == rom['size']:
                     # Contents are read only after the original fresh path guard.
-                    rom['signature'] = self.hash(inside(root, rom['relative']))
+                    previous = old.get(rom['relative'], {})
+                    if (previous.get('size') == rom['size'] and
+                            previous.get('modified_ns') == rom['modified_ns'] and
+                            re.fullmatch('[0-9a-f]{64}', previous.get('signature') or '')):
+                        rom['signature'] = previous['signature']
+                    else:
+                        rom['signature'] = self.hash(inside(root, rom['relative']))
                 elif (rom['relative'] in old and
                       old[rom['relative']].get('size') == rom['size'] and
                       old[rom['relative']].get('modified_ns') == rom['modified_ns']):
