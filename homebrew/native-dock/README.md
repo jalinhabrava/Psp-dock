@@ -1,4 +1,95 @@
-# PSP Dock — firmware nativo 0302
+# PSP Dock — firmware nativo 0308
+
+## Revisión actual: sonidos de la propia PSP
+
+0308 prepara una copia local del recurso XMB de la PSP antes de iniciar USB.
+El cliente Windows puede extraer de esa copia los sonidos compatibles durante
+el primer inventario. El paquete distribuible incluye el código de exportación,
+pero no incluye el recurso de Sony ni sonidos extraídos de él.
+
+| Identidad | Valor de 0308 |
+|---|---|
+| Módulos USER / kernel | 3.8 / 3.8 |
+| Revisión / build | `0308` / `03080001` |
+| Launch magic | `PDN8` (`384E4450`) |
+| Estado compartido USER / kernel | 320 bytes |
+| Protocolo USB / FEATURE | PDK2/v3 / 64 bytes, sin cambio de formato |
+| Capacidades | `000F` |
+| Informes HID de entrada / salida | 8 / 4 bytes, sin cambio de formato |
+
+### Exportación previa al almacenamiento USB
+
+El kernel comprueba que USB y almacenamiento estén detenidos, carga las cuatro
+dependencias Sony obligatorias y vuelve a comprobar el estado. Entonces solicita
+por memoria compartida el trabajo al EBOOT USER. Todavía no inicia el bus ni
+`USBStor_Driver`. El EBOOT sólo puede leer esta ruta de origen:
+
+`flash0:/vsh/resource/system_plugin.rco`
+
+No monta ni escribe flash. Acepta un recurso con cabecera RCO y tamaño de hasta
+128 KiB; la validación del perfil concreto y de los sonidos corresponde al
+importador Windows. Publica los bytes originales, sin prefijo ni contenedor, en:
+
+`ms0:/PSP/SYSTEM/PSPDock/xmb/system_plugin.rco`
+
+La ruta queda fuera de `PSP/GAME/PSPDockNative` y de `SAVEDATA`. Si el archivo ya
+coincide byte a byte con el origen, no se vuelve a escribir. En otro caso se crea
+exclusivamente `.system_plugin.rco.pspdock-tmp` dentro de esa misma carpeta,
+se copia y se verifica de nuevo. Después de cerrar todos los descriptores y
+sincronizar la Memory Stick se publica mediante rename, seguido de otra
+sincronización. Nunca se borra previamente el archivo final. Si el filesystem
+rechaza reemplazar un archivo anterior, se conserva y se omite la actualización.
+
+La limpieza sólo elimina el temporal que esta ejecución haya creado con
+`O_EXCL`; un temporal preexistente se conserva y provoca una omisión segura.
+Origen inexistente, inaccesible o incompatible son resultados opcionales: no
+impiden usar el dock cuando toda la limpieza terminó correctamente. Un fallo de
+cierre, eliminación del temporal propio o sincronización bloquea el arranque
+USB. Ningún resultado inseguro se convierte en una omisión válida.
+
+El kernel espera como máximo diez segundos. Timeout, cancelación o respuesta
+inválida revocan la autorización de exportación y nunca arrancan almacenamiento.
+Después de un resultado seguro, vuelve a comprobar que USB y los drivers sigan
+detenidos antes de iniciar el bus. Una respuesta tardía no vuelve a abrir esa
+puerta. Durante USB activo, el EBOOT no realiza operaciones de archivos.
+El kernel conserva cero imports de filesystem.
+
+El FEATURE de estado incluye `UI_SOUNDS_READY` (`0x40`) sólo cuando esta
+ejecución terminó con READY, junto al nonce actual de la sesión. Windows exige
+esa señal antes de importar un recurso nuevo. SKIPPED no la publica: un archivo
+de una PSP anterior que permanezca en la tarjeta no demuestra el origen del
+recurso de la PSP conectada. La caché local previamente validada puede seguir
+usándose sin una nueva extracción. No cambian los 64 bytes ni los opcodes.
+
+### Construcción y evidencia de 0308
+
+`bash homebrew/native-dock/build-wsl.sh` compila en una copia separada en
+`/home/david/projects/psp-dock-build/native-dock-0308` y publica los resultados en
+`homebrew/native-dock/dist`. No instala ni abre una PSP. En WSL donde LeakSanitizer
+no sea compatible se puede usar `ASAN_OPTIONS=detect_leaks=0:halt_on_error=1`;
+AddressSanitizer y UndefinedBehaviorSanitizer siguen ejecutándose.
+
+El harness usa `native_driver.c` real y el exportador real con APIs simuladas.
+Cubre finalización diferida, timeout, ACK tardío, cancelación, resultados
+inseguros, cambios externos de estado USB, lecturas y escrituras parciales,
+verificación de bytes, límites, fallos de cierre/sync y conservación del archivo
+previo. Los tests de transporte y exportación se ejecutan normales y con
+ASan/UBSan; también se ejecutan los de UI. La compilación MIPS y la auditoría ELF
+verifican la ABI PDN8, las rutas compiladas, los contratos `PDEX/1` y `PDXG/1`,
+la lista acotada de imports USER y la ausencia de filesystem en el kernel.
+La auditoría general del EBOOT permanece separada del adaptador de exportación.
+
+La auditoría registra `physical_export_verified=false`: estos tests no prueban
+que el firmware real permita leer ese recurso desde USER ni que la copia y el
+sonido funcionen en hardware. La validación física de 0308 sigue pendiente.
+La identidad de protocolo, la propiedad de almacenamiento Sony y el handshake
+`HOST_BEGIN` continúan siendo obligatorios antes de usar el volumen en Windows.
+
+## Registro histórico: diseño de 0302
+
+Las secciones siguientes conservan la explicación y la evidencia de 0302.
+Sus números de versión y estado compartido son históricos; la tabla anterior
+y los headers/auditoría de 0308 definen la revisión actual.
 
 El nombre visible en XMB y en la aplicación es **PSP Dock**. La revisión, los
 módulos y códigos USB sólo aparecen en diagnóstico o al producirse un error.

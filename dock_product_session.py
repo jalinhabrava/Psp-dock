@@ -23,6 +23,7 @@ from native_dock import (NativeDockTransport, STORAGE, CONTROLLER, COPYING, EXIT
                          SAFE_ACTIVITY, UNKNOWN, BYTES, FILES)
 from retro_runtime import private_save_paths
 from retro_saves import RAW_PROFILES, _baseline_key, copy_sram_verified
+from xmb_sound_import import cache_status as sound_cache_status, import_from_psp
 
 
 class DockProductSession:
@@ -41,6 +42,8 @@ class DockProductSession:
         self._progress_error = None
         self._presentation_plans = None
         self._presentation_identity = None
+        # Cache this PC-only status; UI polling never scans flash or the card.
+        self.ui_sounds = sound_cache_status(dock.ui_sound_player.root)
         self.entry_path = dock.data / 'product-entry.json'
         self.entry = self.api.read_json(self.entry_path, {})
         self.flow = ProductFlow(
@@ -61,6 +64,7 @@ class DockProductSession:
         result['remembered_choice'] = preference.get('choice')
         result['remember_automatic'] = preference.get('automatic', False)
         result['catalog_cache'] = dict(self.dock.device_memory.stats)
+        result['ui_sounds'] = dict(self.ui_sounds)
         if self.dock.recovery_required or self.dock.session.get('running'):
             result['can_choose'] = False
             result['can_retry'] = False
@@ -371,6 +375,15 @@ class DockProductSession:
         with self.diagnostics.measure('usb.host_begin', important=True):
             self.transport.begin_session(context)
         self.observation = self.transport.current
+        self.publish_progress('inventory', 'Preparando los sonidos de tu PSP.')
+        with self.diagnostics.measure('inventory.ui_sounds'):
+            current = self.transport.current or {}
+            if not current.get('root'):
+                raise ProductFlowError('La PSP se desconectó antes de completar el inventario.')
+            self.ui_sounds = import_from_psp(
+                Path(current['root']), self.dock.ui_sound_player.root,
+                device=current,
+                verify_device=lambda: self._context_root(context))
         result = self._report(context, capture=True)
         self.publish_progress('inventory', 'El inventario está listo para tu elección.',
                               completed=result['counts']['psp_games'], activity=CHOOSING)

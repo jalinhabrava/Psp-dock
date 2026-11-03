@@ -1672,7 +1672,7 @@ function dockConnectionView(state, options = {}) {
   const product = dockProductFlowView(current, options);
   const link = dockLinkView(current);
   const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
-  const nativeBuild = [[0x0303, 0x03030001, 7], [0x0304, 0x03040001, 7], [0x0305, 0x03050001, 15], [0x0306, 0x03060001, 15], [0x0307, 0x03070001, 15]].some(
+  const nativeBuild = [[0x0303, 0x03030001, 7], [0x0304, 0x03040001, 7], [0x0305, 0x03050001, 15], [0x0306, 0x03060001, 15], [0x0307, 0x03070001, 15], [0x0308, 0x03080001, 15]].some(
     ([revision, build, capabilities]) => controller.firmware_revision === revision && controller.build_id === build && controller.capabilities === capabilities);
   const nativeIdentity = controller.connected === true && controller.mode === 'native_dock' &&
     controller.product_id === 0x01cd && controller.protocol_version === 3 && nativeBuild &&
@@ -1831,10 +1831,28 @@ const xmb = {
   mediaGeneration: 0, mediaHdTimer: null, mediaHdAbort: null,
   mediaLaunchPending: false, mediaLaunchSettled: false,
   menuSound: true, menuSoundAt: 0,
+  motion: 'on',
 };
 try { xmb.theme = localStorage.getItem('psp-dock-theme') || 'month'; } catch { /* sin almacenamiento */ }
 try { xmb.mediaSound = localStorage.getItem('psp-dock-xmb-sound') !== 'off'; } catch { /* sin almacenamiento */ }
 try { xmb.menuSound = localStorage.getItem('psp-dock-menu-sound') !== 'off'; } catch { /* sin almacenamiento */ }
+try {
+  const storedMotion = localStorage.getItem('psp-dock-xmb-motion');
+  if (['on', 'off', 'system'].includes(storedMotion)) xmb.motion = storedMotion;
+} catch { /* sin almacenamiento */ }
+function xmbReducedMotion() {
+  return xmb.motion === 'off' || xmb.motion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+function xmbSyncMotion() {
+  const reduced = xmbReducedMotion();
+  $('xmb').classList.toggle('xmb-motion-on', !reduced);
+  $('xmb').classList.toggle('xmb-motion-off', reduced);
+  if (reduced) {
+    $('xmb-cats').getAnimations().forEach((animation) => animation.cancel());
+    for (const node of xmb.els.values()) node.getAnimations().forEach((animation) => animation.cancel());
+  }
+  xmbWaves();
+}
 
 function xmbConnectionView() {
   const connection = dockConnectionView(ui.state, {
@@ -2258,6 +2276,15 @@ function xmbBuildSections() {
         try { localStorage.setItem('psp-dock-theme', value); } catch { /* sin almacenamiento */ }
         xmbApplyTheme();
       }) },
+    { key: 'motion', t: 'Animación de menús', icon: 'theme',
+      s: () => ({ on: 'Activada · desplazamiento fluido', off: 'Desactivada · sin movimiento', system: 'Según preferencias de Windows' })[xmb.motion],
+      activate: () => xmbValues('Animación de menús',
+        [['on', 'Activada · desplazamiento fluido'], ['off', 'Desactivada · sin movimiento'],
+          ['system', 'Según preferencias de Windows']], xmb.motion, (value) => {
+          xmb.motion = value;
+          try { localStorage.setItem('psp-dock-xmb-motion', value); } catch { /* sin almacenamiento */ }
+          xmbSyncMotion();
+        }) },
     { key: 'sound', t: 'Música de selección de juegos', icon: 'info',
       s: () => xmb.mediaSound ? 'Activada · audio original PSP' : 'Silenciada',
       activate: () => xmbValues('Música del XMB', [['on','Activada'],['off','Silenciada']],
@@ -2268,8 +2295,19 @@ function xmbBuildSections() {
           xmbPreviewGame(null);
           xmbPreviewGame(previous);
         }) },
-    { key: 'menu-sound', t: 'Sonidos originales del XMB', icon: 'info',
-      s: () => xmb.menuSound ? 'Activados · cursor, confirmar y volver' : 'Silenciados',
+    { key: 'menu-sound', t: 'Sonidos de navegación', icon: 'info',
+      s: () => !xmb.menuSound ? 'Silenciados' : state.product_flow?.ui_sounds?.ready ?
+        'Activados · sonidos originales del XMB' :
+        state.product_flow?.ui_sounds?.status === 'unsupported' ?
+        'Sonidos no compatibles en esta PSP' :
+        state.product_flow?.ui_sounds?.status === 'cache_unavailable' ?
+        'No se pudieron guardar los sonidos en el PC' :
+        state.product_flow?.ui_sounds?.status === 'unavailable' ?
+        'No se pudo leer el recurso de sonidos' :
+        state.product_flow?.ui_sounds?.status === 'missing_export' ?
+        (state.controller_status?.firmware_revision >= 0x0308 ?
+          'No se pudieron obtener de esta PSP' : 'Actualiza PSP Dock en tu PSP') :
+        'Se preparan al conectar tu PSP',
       activate: () => xmbValues('Sonidos de navegación', [['on','Activados'],['off','Silenciados']],
         xmb.menuSound ? 'on' : 'off', (value) => {
           xmb.menuSound = value === 'on';
@@ -2850,6 +2888,9 @@ function xmbPress(button) {
 
 // ---------- pintado ----------
 const XMB_CAT_GAP = 12, XMB_CAT_X = 24;
+let xmbRenderedColumn = null;
+let xmbRenderedCategory = null;
+let xmbRenderedFocus = null;
 function xmbIconNode(icon) {
   const box = document.createElement('div');
   if (typeof icon === 'string') { box.className = 'xmb-ic round'; box.innerHTML = XMB_ICONS[icon] || XMB_ICONS.info; return box; }
@@ -2902,7 +2943,9 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
   const list = $('xmb-list');
   items.forEach((item, i) => {
     const r = i - focus;
-    if (r < -2 || r > 6 || collapsed && r !== 0) return;
+    // Keep one fully transparent item at each edge of the visible window.
+    // It can then slide out on the next step before its DOM node is recycled.
+    if (r < -3 || r > 7 || collapsed && r !== 0) return;
     const key = prefix + item.key;
     const node = xmbItemNode(key, item);
     used.add(key);
@@ -2911,13 +2954,14 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
     node.setAttribute('aria-selected', String(r === 0 && !collapsed));
     node.style.left = x + 'cqw';
     node.style.top = (r === 0 ? 20.5 : r > 0 ? 21 + r * 5.6 : 7.2 + (r + 1) * 5.2) + 'cqw';
-    node.style.opacity = collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
+    node.style.opacity = r === -3 || r === 7 ? '0' : collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
+    node.style.pointerEvents = r === -3 || r === 7 ? 'none' : '';
     node.onclick = () => {
       if (xmbConnectionView().waiting) return;
-      if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
+      if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
       else if (collapsed) xmbPress('back');
       else if (r === 0) xmbPress('accept');
-      else { xmb.nav = { ...xmb.nav, idx: { ...xmb.nav.idx, [xmb.sections[xmb.nav.cat].id]: i } }; xmbRender(); }
+      else { xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, idx: { ...xmb.nav.idx, [xmb.sections[xmb.nav.cat].id]: i } }; xmbRender(); }
     };
     if (node.parentNode !== list) list.append(node);
   });
@@ -2934,6 +2978,21 @@ function xmbRender() {
   const focus = Math.max(0, Math.min(section.items.length - 1, nav.idx[section.id] || 0));
   nav.idx[section.id] = focus;
   const inSub = nav.level === 'sub';
+  const column = section.id + (inSub ? ':sub' : ':list');
+  const previousColumn = xmbRenderedColumn;
+  const previousCategory = xmbRenderedCategory;
+  const changingColumn = previousColumn !== null && previousColumn !== column;
+  const changingFocus = previousColumn === column && xmbRenderedFocus !== (inSub ? nav.subIdx : focus);
+  const movingRight = nav.cat >= (previousCategory ?? nav.cat);
+  const reducedMotion = xmbReducedMotion();
+  const motion = changingColumn && !reducedMotion;
+  // Record the actual on-screen position, including a navigation animation that
+  // is still running. CSS transitions of top/left alone can be skipped when a
+  // fresh frame also mounts or removes XMB entries.
+  const previousPositions = new Map();
+  if (changingFocus && !reducedMotion) for (const [key, node] of xmb.els) {
+    if (node.isConnected) previousPositions.set(key, node.getBoundingClientRect());
+  }
   const rows = inSub ? xmbGraphicsRows(xmb.sub?.id || null) : [];
   if (inSub) nav.subIdx = Math.max(0, Math.min(rows.length - 1, nav.subIdx));
   if (!inSub) section.items[focus]?.focus?.();
@@ -2947,6 +3006,8 @@ function xmbRender() {
   );
 
   const cats = $('xmb-cats');
+  const previousCatsTransform = !reducedMotion && previousCategory !== null && previousCategory !== nav.cat
+    ? getComputedStyle(cats).transform : null;
   if (cats.childElementCount !== xmb.sections.length) {
     cats.replaceChildren(...xmb.sections.map((item, i) => {
       const node = document.createElement('button');
@@ -2956,7 +3017,7 @@ function xmbRender() {
       node.style.left = (XMB_CAT_X + i * XMB_CAT_GAP) + 'cqw';
       node.innerHTML = XMB_ICONS[item.id] + '<span></span><em class="xmb-badge" hidden></em>';
       node.querySelector('span').textContent = item.label;
-      node.addEventListener('click', () => { if (xmbConnectionView().waiting) return; xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
+      node.addEventListener('click', () => { if (xmbConnectionView().waiting) return; if (xmb.nav.cat !== i) xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
       return node;
     }));
   }
@@ -2967,13 +3028,60 @@ function xmbRender() {
     badge.hidden = !xmb.sections[i].badge;
     badge.textContent = xmb.sections[i].badge || '';
   });
-  cats.style.transform = `translateX(${-nav.cat * XMB_CAT_GAP}cqw)`;
+  const categoryTarget = `translateX(${-nav.cat * XMB_CAT_GAP}cqw)`;
+  // Use an explicit interpolated transform. Starting from the computed matrix
+  // also preserves momentum when the player changes direction mid-animation.
+  if (previousCatsTransform) cats.getAnimations().forEach((animation) => animation.cancel());
+  cats.style.transform = categoryTarget;
+  if (previousCatsTransform && previousCatsTransform !== 'none' && typeof cats.animate === 'function') {
+    cats.animate([{ transform: previousCatsTransform }, { transform: categoryTarget }],
+      { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+  }
   cats.classList.toggle('faded', inSub);
 
   const used = new Set();
   xmbPlaceColumn('main:' + section.id + ':', section.items, focus, inSub ? 4 : XMB_CAT_X - 3.6, inSub, used);
   if (inSub) xmbPlaceColumn('sub:', rows, nav.subIdx, 26, false, used);
-  for (const [key, node] of xmb.els) if (!used.has(key)) { node.remove(); xmb.els.delete(key); }
+  // FLIP: animate retained entries between their measured screen coordinates.
+  // This guarantees intermediate frames for up/down movement even if the
+  // browser batches multiple DOM/style updates into one paint.
+  if (changingFocus && !reducedMotion) for (const key of used) {
+    const node = xmb.els.get(key);
+    const before = previousPositions.get(key);
+    if (!node || !before || typeof node.animate !== 'function') continue;
+    node.getAnimations().forEach((animation) => animation.cancel());
+    const after = node.getBoundingClientRect();
+    const dx = before.left - after.left;
+    const dy = before.top - after.top;
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) {
+      node.animate([
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: 'translate(0px, 0px)' },
+      ], { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    }
+  }
+  for (const [key, node] of xmb.els) if (!used.has(key)) {
+    xmb.els.delete(key);
+    if (motion && typeof node.animate === 'function') {
+      node.style.pointerEvents = 'none';
+      const exit = node.animate([
+        { opacity: getComputedStyle(node).opacity, transform: 'translateX(0)' },
+        { opacity: 0, transform: `translateX(${movingRight ? -10 : 10}cqw)` },
+      ], { duration: 230, easing: 'cubic-bezier(.2,.7,.2,1)', fill: 'forwards' });
+      exit.finished.then(() => node.remove(), () => node.remove());
+    } else node.remove();
+  }
+  if (motion) for (const key of used) {
+    if (!key.startsWith(inSub ? 'sub:' : 'main:' + section.id + ':')) continue;
+    const node = xmb.els.get(key);
+    if (node && typeof node.animate === 'function') node.animate([
+      { opacity: 0, transform: `translateX(${movingRight ? 10 : -10}cqw)` },
+      { opacity: Number(getComputedStyle(node).opacity), transform: 'translateX(0)' },
+    ], { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+  }
+  xmbRenderedColumn = column;
+  xmbRenderedCategory = nav.cat;
+  xmbRenderedFocus = inSub ? nav.subIdx : focus;
 
   $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : connection.storageSetup ? 'PREPARACIÓN · almacenamiento USB' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
   const hid = state.controller_status?.connected === true;
@@ -3054,10 +3162,14 @@ function xmbApplyTheme() {
   $('xmb').style.setProperty('--xmb-top', colors.top);
   $('xmb').style.setProperty('--xmb-bottom', colors.bottom);
 }
+let xmbWavesFrameId = null;
 function xmbWaves() {
+  if (xmbWavesFrameId !== null) return;
+  if (document.hidden) return;
   const canvas = $('xmb-waves'), ctx = canvas.getContext('2d');
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const frame = (time) => {
+    xmbWavesFrameId = null;
+    const still = xmbReducedMotion();
     const w = canvas.clientWidth, h = canvas.clientHeight, dpr = devicePixelRatio || 1;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -3076,15 +3188,22 @@ function xmbWaves() {
       ctx.fillStyle = `rgba(255,255,255,${.035 - k * .008})`;
       ctx.fill();
     }
-    if (!still && !document.hidden) requestAnimationFrame(frame);
-    else if (!still) document.addEventListener('visibilitychange', () => requestAnimationFrame(frame), { once: true });
+    if (!still && !document.hidden) xmbWavesFrameId = requestAnimationFrame(frame);
   };
-  requestAnimationFrame(frame);
+  // An existing loop owns the next frame. Re-entering after a setting change
+  // starts one loop only, while reduced motion paints one stationary frame.
+  xmbWavesFrameId = requestAnimationFrame(frame);
 }
 function xmbEscape(text) { return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 xmbApplyTheme();
 setInterval(xmbApplyTheme, 60000);
-xmbWaves();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) xmbWaves();
+});
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+  if (xmb.motion === 'system') xmbSyncMotion();
+});
+xmbSyncMotion();
 xmbLoadSettings();
 
 function appNewClientId() {

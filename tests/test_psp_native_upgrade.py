@@ -1,7 +1,7 @@
 """Verified replacement and interruption recovery on real temporary files.
 
 No hardware discovery: only the four fixture hashes replace the reviewed
-0300/0301/0302/0303/0304 constants, and every identity callback is an explicit test double.
+0300 through 0307 constants, and every identity callback is an explicit test double.
 """
 import hashlib
 import json
@@ -42,12 +42,13 @@ class NativeUpgradeTests(unittest.TestCase):
         self.kept = {}
         for relative in ('PSP/GAME/PSPDock/EBOOT.PBP', 'PSP/GAME/PSPDockStorageTest/EBOOT.PBP',
                          'PSP/SAVEDATA/SLOT/DATA.BIN', 'PSP/GAME/gpSP/SAVES/Game.sav',
-                         'PSP/GAME/gpSP/STATES/Game.svs'):
+                         'PSP/GAME/gpSP/STATES/Game.svs',
+                         'PSP/SYSTEM/PSPDock/xmb/system_plugin.rco'):
             path = self.psp / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('KEEP ' + relative).encode())
             self.kept[path] = path.read_bytes()
-        self.package = fixture_native_package(self.home / 'package0307')
+        self.package = fixture_native_package(self.home / 'package0308')
         self.new_records = json.loads((self.package / 'manifest.json').read_text())['files']
         snapshot = psp_backup.backup(self.psp, self.home / 'critical', 'critical', SERIAL, USB,
                                      verify_identity=lambda: True, reserve_bytes=0)
@@ -83,7 +84,7 @@ class NativeUpgradeTests(unittest.TestCase):
     def test_plan_is_read_only(self):
         before = {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()}
         result = self.plan()
-        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0307'))
+        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0308'))
         self.assertEqual(result['reference_installation_receipt_sha256'],
                          upgrade._reference_receipt(self.previous_revision))
         self.assertFalse(result['installed']);self.assertFalse(result['autorun'])
@@ -379,6 +380,10 @@ class Native0306UpgradeTests(NativeUpgradeTests):
     previous_revision = '0306'
 
 
+class Native0307UpgradeTests(NativeUpgradeTests):
+    previous_revision = '0307'
+
+
 class Native0305UpgradeTests(NativeUpgradeTests):
     """Current installed source retains backup, interruption and rollback guards."""
     previous_revision = '0305'
@@ -475,6 +480,11 @@ class Historical0303To0305RollbackTests(Historical0300To0305RollbackTests):
 
 class Historical0304To0305RollbackTests(Historical0300To0305RollbackTests):
     previous_revision = '0304'
+
+
+class Historical0306To0307RollbackTests(Historical0301RollbackTests):
+    previous_revision = '0306'
+    replacement_revision = '0307'
 
 
 if __name__ == '__main__':

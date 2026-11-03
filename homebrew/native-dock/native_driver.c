@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0307: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0308: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,13 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,7);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,8);
+
+/* Auditable shared-RAM policy, not an extra HID report/opcode. Timeout and
+ * cancellation revoke export permission; they never permit USB startup. */
+static const uint8_t pdn_export_gate_contract[12] __attribute__((used))={
+    'P','D','X','G',1,1,1,1,0x80,0x96,0x98,0 /* 10,000,000 microseconds */
+};
 
 typedef struct {
     const char *path,*name;
@@ -272,6 +278,12 @@ static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *
                 uint32_t encoded=(uint32_t)(value==INT32_MIN?-16:value< -15?-15:value>15?15:value)&31u;
                 uint16_t diagnostic=(uint16_t)(drop|((uint32_t)(rx<0 || rx>127?127:rx)<<4)|(encoded<<11));
                 answer[46]=(uint8_t)diagnostic;answer[47]=(uint8_t)(diagnostic>>8);
+                /* 0308 proves this launch compared/published the staged file
+                 * against this PSP's source. A previous file on the card is
+                 * not evidence when the current export was skipped. This
+                 * status bit travels with the current protocol nonce. */
+                if(ui->export_done && ui->export_result==PDN_EXPORT_READY)
+                    answer[7]|=PDN_FLAG_UI_SOUNDS_READY;
             }
         }else if(r->wValue==0x0100){memcpy(answer,latest_pad,8);length=8;}
         else if(r->wValue==0x0200 && r->wLength==4 && ui){
@@ -590,6 +602,27 @@ static int pdn_safe_to_start(int usb,int storage,int bus) {
     if(usb<0)return 0;
     return hid_lab_safe_to_start(usb&~PSP_USB_CABLE_CONNECTED,storage,bus);
 }
+static int wait_resource_export(void) {
+    uint32_t began=sceKernelGetSystemTimeLow();int result;
+    if(!ui)return -3050;
+    set_stage(PDN_STAGE_RESOURCE_EXPORT);
+    ui->export_done=0;ui->export_result=PDN_EXPORT_PENDING;
+    __sync_synchronize();ui->export_request=PDN_EXPORT_REQUESTED;
+    for(;;){
+        if(ui->request_stop || exit_requested){
+            ui->export_request=PDN_EXPORT_REVOKED;request_exit(PDN_STOP_USER);return 1;
+        }
+        if(ui->export_done){
+            __sync_synchronize();result=ui->export_result;
+            ui->export_request=PDN_EXPORT_REVOKED;
+            return (result==PDN_EXPORT_READY || result==PDN_EXPORT_SKIPPED)?0:-3053;
+        }
+        if((uint32_t)(sceKernelGetSystemTimeLow()-began)>=PDN_EXPORT_WAIT_US){
+            ui->export_request=PDN_EXPORT_REVOKED;return -3051;
+        }
+        sceKernelDelayThread(10000);
+    }
+}
 static int start_usb(void) {
     int usb,storage,bus,result;
     set_stage(PDN_STAGE_GUARD);usb=sceUsbGetState();
@@ -602,6 +635,15 @@ static int start_usb(void) {
     storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);bus=sceUsbGetDrvState(PSP_USBBUS_DRIVERNAME);
     if(!pdn_safe_to_start(usb,storage,bus) || storage!=HID_LAB_DRIVER_STOPPED)return -3003;
     if(ui && ui->request_stop){request_exit(PDN_STOP_USER);return 0;}
+    result=wait_resource_export();
+    if(result<0)return result;
+    if(result>0)return 0; /* Cancelled before any bus/storage activation. */
+    /* USER cannot perform more file IO after its acknowledgement. Recheck
+     * that no foreign USB/storage operation started while exporting. */
+    set_stage(PDN_STAGE_GUARD);usb=sceUsbGetState();
+    storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);bus=sceUsbGetDrvState(PSP_USBBUS_DRIVERNAME);
+    if(!pdn_safe_to_start(usb,storage,bus) || storage!=HID_LAB_DRIVER_STOPPED)return -3054;
+    if(ui && (ui->request_stop || exit_requested)){request_exit(PDN_STOP_USER);return 0;}
     if(bus==HID_LAB_DRIVER_STOPPED){
         set_stage(PDN_STAGE_BUS_START);result=sceUsbStart(PSP_USBBUS_DRIVERNAME,0,NULL);
         if(result<0)return result;
@@ -694,6 +736,7 @@ int module_start(SceSize args,void *argp) {
     memcpy(&launch,argp,sizeof(launch));
     if(launch.magic!=PDN_LAUNCH_MAGIC || launch.size!=sizeof(launch) || !valid_shared(launch.shared))return -1;
     ui=launch.shared;ui->safe_to_unload=0;ui->request_stop=0;
+    ui->export_request=PDN_EXPORT_NOT_REQUESTED;ui->export_done=0;ui->export_result=PDN_EXPORT_PENDING;
     fragment_active=0;fragment_next=0;
     ui->error=0;ui->stage=PDN_STAGE_INIT;ui->hid_interface=UINT32_MAX;
     neutral_pad(latest_pad);

@@ -17,8 +17,9 @@ SESSION = '1234567890abcdef1234567890abcdef'
 PATH = r'\\?\hid#vid_054c&pid_01cd&mi_01#7&cafe&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}'
 PARENT = r'USB\VID_054C&PID_01CD\DOCK0300'
 FIRMWARES = ((0x0303, 0x03030001), (0x0304, 0x03040001),
-             (0x0305, 0x03050001), (0x0306, 0x03060001), (0x0307, 0x03070001))
-FIRMWARE_CAPABILITIES = {0x0303: 7, 0x0304: 7, 0x0305: 15, 0x0306: 15, 0x0307: 15}
+             (0x0305, 0x03050001), (0x0306, 0x03060001), (0x0307, 0x03070001),
+             (0x0308, 0x03080001))
+FIRMWARE_CAPABILITIES = {0x0303: 7, 0x0304: 7, 0x0305: 15, 0x0306: 15, 0x0307: 15, 0x0308: 15}
 
 
 def status(phase=native.STORAGE, sequence=0, result=0, **changes):
@@ -34,6 +35,7 @@ def report(value):
     flags |= (native.SONY_STORAGE if value.sony_storage else 0) | (native.EXIT_REQUESTED if value.exit_requested else 0)
     flags |= native.HOST_CONFIRMED if value.host_confirmed else 0
     flags |= native.SHUTDOWN_REQUESTED if value.shutdown_requested else 0
+    flags |= native.UI_SOUNDS_READY if value.ui_sounds_ready else 0
     return (b'\0' + native.FRAME.pack(native.MAGIC, value.protocol_version, native.STATUS, value.phase,
                                     flags, bytes.fromhex(value.session), value.sequence, value.result) +
             native.EXTENSION.pack(native.EXT_MAGIC, value.firmware_revision, value.capabilities, value.build_id,
@@ -82,10 +84,27 @@ class ProtocolTests(unittest.TestCase):
         expected = status(native.CONTROLLER, 3, 2, exit_requested=True)
         self.assertEqual(native.decode_status(report(expected)), expected)
 
+    def test_current_launch_sound_export_flag_is_0308_only(self):
+        ready = status(ui_sounds_ready=True)
+        self.assertEqual(len(report(ready)), 65)
+        self.assertEqual(native.decode_status(report(ready)), ready)
+        self.assertFalse(native.decode_status(report(status())).ui_sounds_ready)
+        for revision, build in FIRMWARES:
+            if revision == 0x0308:
+                continue
+            old = status(firmware_revision=revision, build_id=build, ui_sounds_ready=True)
+            with self.subTest(revision=revision), self.assertRaises(native.NativeDockError):
+                native.decode_status(report(old))
+        unknown = bytearray(report(ready))
+        unknown[8] |= 128
+        with self.assertRaises(native.NativeDockError):
+            native.decode_status(bytes(unknown))
+
     def test_exact_firmware_capabilities_and_build_are_required_even_with_sony_usb_revision(self):
         invalid = [dict(firmware_revision=revision, build_id=build) for revision, build in (
             (0x0300, 0x03000001), (0x0301, 0x03010001), (0x0302, 0x03020001),
-            (0x0308, 0x03080001), (0x0303, 0x03040001), (0x0304, 0x03030001),
+            (0x0309, 0x03090001), (0x0307, 0x03080001), (0x0308, 0x03070001),
+            (0x0308, 0x03080002), (0x0303, 0x03040001), (0x0304, 0x03030001),
             (0x0303, 0x03050001), (0x0305, 0x03030001),
             (0x0304, 0x03050001), (0x0305, 0x03040001),
             (0x0303, 0x03030002), (0x0304, 0x03040002), (0x0305, 0x03050002))]
@@ -154,7 +173,8 @@ class ProtocolTests(unittest.TestCase):
                     self.assertEqual(api.frames, [final_ack])
 
     def test_unverified_identity_is_rejected_before_sending(self):
-        for revision, build in ((0x0302, 0x03020001), (0x0308, 0x03080001),
+        for revision, build in ((0x0302, 0x03020001), (0x0309, 0x03090001),
+            (0x0307, 0x03080001), (0x0308, 0x03070001), (0x0308, 0x03080002),
                                 (0x0303, 0x03040001), (0x0304, 0x03030001),
                                 (0x0304, 0x03050001), (0x0305, 0x03040001)):
             with self.subTest(revision=revision, build=build):
@@ -221,7 +241,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(native.FRAME.unpack(frame[1:33]),
                          (b'PDK2', 3, 2, 3, 0, bytes.fromhex(SESSION), 8, 0))
         self.assertEqual(native.EXTENSION.unpack(frame[33:65]),
-                         (b'NAT3', 0x0307, 15, 0x03070001, 0, 0, 0, 0, 0))
+                         (b'NAT3', 0x0308, 15, 0x03080001, 0, 0, 0, 0, 0))
 
     def test_command_encoding_admits_only_exact_explicit_firmware_pairs(self):
         for revision, build in FIRMWARES:
@@ -231,7 +251,8 @@ class ProtocolTests(unittest.TestCase):
                 self.assertEqual(native.EXTENSION.unpack(frame[33:65])[:4],
                                  (b'NAT3', revision, FIRMWARE_CAPABILITIES[revision], build))
         invalid = [dict(firmware_revision=revision, build_id=build) for revision, build in (
-            (0x0302, 0x03020001), (0x0308, 0x03080001),
+            (0x0302, 0x03020001), (0x0309, 0x03090001),
+            (0x0307, 0x03080001), (0x0308, 0x03070001), (0x0308, 0x03080002),
             (0x0303, 0x03040001), (0x0304, 0x03030001),
             (0x0303, 0x03050001), (0x0305, 0x03030001),
             (0x0304, 0x03050001), (0x0305, 0x03040001),
@@ -360,7 +381,7 @@ class ProtocolTests(unittest.TestCase):
             native.hid_instance(PATH.replace('01cd', '01cc'))
 
     def test_usb_revision_envelope_is_separate_from_firmware_identity(self):
-        for revision in (0x0300, 0x0100, 0x0302, 0x0301, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307):
+        for revision in (0x0300, 0x0100, 0x0302, 0x0301, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307, 0x0308):
             with self.subTest(revision=revision):
                 api = native.NativeHid.__new__(native.NativeHid)
                 calls = []
@@ -383,7 +404,7 @@ class ProtocolTests(unittest.TestCase):
                     calls.append('set_feature')
                     current[0] = status(native.CONTROLLER, 1, 2)
                 api.set = command
-                if revision in (0x0100, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307):
+                if revision in (0x0100, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307, 0x0308):
                     self.assertIsNotNone(native.probe_native(api_factory=lambda: api))
                     self.assertTrue(native.request_phase(PATH, SESSION, native.CONTROLLER,
                                     api_factory=lambda: api)['accepted'])
@@ -553,6 +574,21 @@ class TransportTests(unittest.TestCase):
         self.assertTrue(self.transport.current['controller_ready'])
         with self.assertRaises(native.NativeDockError):
             self.transport.assert_storage('G:\\')
+
+    def test_bound_sound_export_readiness_is_fresh_and_never_inferred_from_usb(self):
+        self.assertFalse(self.transport.current['ui_sounds_ready'])
+        self.status = status(ui_sounds_ready=True)
+        first = self.transport.observe([{'root': 'G:\\'}])
+        self.assertIs(first['ui_sounds_ready'], True)
+        self.status = replace(self.status, ui_sounds_ready=False)
+        second = self.transport.observe([{'root': 'G:\\'}])
+        self.assertIs(second['ui_sounds_ready'], False)
+        self.status = status(firmware_revision=0x0307, build_id=0x03070001,
+                             ui_sounds_ready=True)
+        # Even an injected observation bypassing the byte decoder cannot
+        # lend this new claim to a legacy firmware's bound storage.
+        legacy = self.transport.observe([{'root': 'G:\\'}])
+        self.assertIs(legacy['ui_sounds_ready'], False)
 
     def test_controller_snapshot_preserves_the_verified_firmware_pair(self):
         for revision, build in FIRMWARES:

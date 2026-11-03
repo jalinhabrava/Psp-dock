@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
+import shutil
 import tempfile
 import unittest
 from unittest.mock import Mock
 
-from device_memory import DeviceMemory
+from device_memory import DeviceMemory, _hash
 from dock import atomic_json
 
 
@@ -57,6 +58,57 @@ class DeviceMemoryTests(unittest.TestCase):
         file.write_text(json.dumps(value))
         self.memory.inventory(self.root,'123','games',scan)
         self.assertEqual(scan.call_count,2)
+
+    def test_old_valid_cache_remains_valid_when_metadata_is_unchanged(self):
+        scan=Mock(return_value=[])
+        self.memory.inventory(self.root,'123','games',scan)
+        cache=next((self.base/'pc/catalog-cache').glob('*.json'))
+        payload=json.loads(cache.read_text())
+        payload['at']=1  # Age alone is not a content change.
+        cache.write_text(json.dumps(payload))
+        self.assertEqual(DeviceMemory(self.base/'pc',atomic_json).inventory(
+            self.root,'123','games',scan),[])
+        scan.assert_called_once()
+
+    def test_same_memory_stick_reuses_catalog_after_drive_letter_changes(self):
+        scan=Mock(return_value=[{'id':'game','title':'Game'}])
+        self.memory.inventory(self.root,'123','games',scan)
+        remounted=self.base/'different-drive-letter'
+        shutil.copytree(self.root,remounted)
+        fresh=DeviceMemory(self.base/'pc',atomic_json)
+        self.assertEqual(fresh.inventory(remounted,'123','games',scan),
+                         [{'id':'game','title':'Game'}])
+        scan.assert_called_once()
+        (remounted/'ISO/Game.iso').write_bytes(b'new game content')
+        fresh.inventory(remounted,'123','games',scan)
+        self.assertEqual(scan.call_count,2, 'A changed file still invalidates the cache')
+
+    def test_previous_path_scoped_cache_is_migrated_without_rescanning(self):
+        scan=Mock(return_value=[])
+        self.memory.inventory(self.root,'123','games',scan)
+        old_name=_hash(['123',str(self.root.absolute()),'games'])+'.json'
+        cache=next((self.base/'pc/catalog-cache').glob('*.json'))
+        legacy=cache.with_name(old_name)
+        cache.rename(legacy)
+        self.assertEqual(DeviceMemory(self.base/'pc',atomic_json).inventory(
+            self.root,'123','games',scan),[])
+        self.assertTrue(cache.is_file(), 'The verified old cache is migrated')
+        scan.assert_called_once()
+
+    def test_emulator_rom_and_eboot_changes_invalidate_catalog(self):
+        scan=Mock(return_value={'emulators':[],'roms':[]})
+        self.memory.inventory(self.root,'123','retro',scan)
+        rom=self.root/'PSP/GAME/gpSP/ROMs/test.gba'
+        rom.parent.mkdir(parents=True)
+        rom.write_bytes(b'rom')
+        self.memory.inventory(self.root,'123','retro',scan)
+        rom.write_bytes(b'changed rom')
+        self.memory.inventory(self.root,'123','retro',scan)
+        rom.unlink()
+        self.memory.inventory(self.root,'123','retro',scan)
+        (rom.parent.parent/'EBOOT.PBP').write_bytes(b'eboot')
+        self.memory.inventory(self.root,'123','retro',scan)
+        self.assertEqual(scan.call_count,5)
 
 
 if __name__=='__main__':unittest.main()

@@ -396,6 +396,59 @@ async function inputs() {
   await runtime.retryProductSession();
   equal(calls.length, 0, 'Retry is unavailable without explicit backend eligibility');
 
+  // 0308 regression: the selector works during STORAGE; a verified READY
+  // response after "none" must reveal the launcher with the same firmware.
+  const soundNative = { ...native, selected_device: null,
+    session: { running: false, pending_return: false, exit_requested: false },
+    controller_status: { ...native.controller_status, firmware_revision: 0x0308,
+      build_id: 0x03080001, capabilities: 15, ui_sounds_ready: true },
+    product_flow: flow('ready', { choice: 'none', use_pc_saves: true,
+      offer_id: 'offer-0308', connection: { phase: 'verified' } }) };
+  runtime.ui = { state: { ...soundNative, selected_device: storage.selected_device,
+    controller_status: { ...soundNative.controller_status, phase: 1, can_play: false },
+    product_flow: { ...soundNative.product_flow, phase: 'choosing', can_choose: true,
+      choice: null, use_pc_saves: false } }, busy: false, serviceOffline: false, productRemember: false };
+  const oldMutate = runtime.mutate, oldClick = buttons[3].click;
+  let deliverReady, acceptedChoice;
+  runtime.mutate = (route, body) => {
+    calls.push({ route, body: normalize(body) });
+    runtime.ui.busy = true;
+    runtime.ui.state = { ...runtime.ui.state,
+      product_flow: { ...runtime.ui.state.product_flow, phase: 'entering_controller', can_choose: false } };
+    return new Promise((resolve) => {
+      deliverReady = () => { runtime.ui.state = soundNative; runtime.ui.busy = false; resolve(true); };
+    });
+  };
+  buttons[3].click = () => { acceptedChoice = runtime.chooseProductSession('none'); return acceptedChoice; };
+  equal(runtime.xmbConnectionView().screen, 'product', '0308 starts in its working synchronization selector');
+  runtime.productFlowPress('back');
+  equal(calls.length, 0, 'Focusing no-copy on 0308 does not submit it');
+  runtime.productFlowPress('accept');
+  assert.deepEqual(calls.pop(), { route: '/api/session-choice',
+    body: { choice: 'none', offer_id: 'offer-0308', automatic: false } }); ++assertions;
+  equal(runtime.xmbConnectionView().screen, 'product', '0308 keeps the preparation screen until confirmed READY');
+  equal(runtime.xmbConnectionView().canPlay, false, 'Submitting no-copy alone cannot authorize a game');
+  deliverReady();
+  await acceptedChoice;
+  const ready0308 = runtime.xmbConnectionView();
+  equal(ready0308.screen, 'menu', 'Confirmed 0308 READY after no-copy must reveal the XMB launcher');
+  equal(ready0308.nativeController, true, '0308 READY uses the verified native controller');
+  equal(ready0308.canPlay, true, '0308 READY after no-copy allows existing PC games');
+  equal(ready0308.product.usePcSaves, true, 'No-copy retains the explicit PC-save policy');
+  equal(ready0308.product.visible, false, 'The synchronization selector no longer covers the launcher');
+  for (const changes of [{ firmware_revision: 0x0309 }, { build_id: 0x03080002 },
+    { capabilities: 7 }, { host_confirmed: false }, { protocol_version: 2 },
+    { phase: 1 }, { synthetic_storage: true }, { can_play: false }]) {
+    equal(connection({ ...soundNative, controller_status: { ...soundNative.controller_status, ...changes } }).canPlay,
+      false, 'Supporting 0308 preserves exact identity, controller phase and launch guards');
+  }
+  equal(connection({ ...soundNative, product_flow: { ...soundNative.product_flow,
+    connection: { phase: 'blocked' } } }).canPlay, false, 'A rejected link still blocks the 0308 launcher');
+  equal(connection({ ...soundNative, controller_status: { ...soundNative.controller_status,
+    ui_sounds_ready: false } }).canPlay, true, 'Optional sounds do not determine native controller eligibility');
+  runtime.mutate = oldMutate;
+  buttons[3].click = oldClick;
+
   // A product exit reviews individual save slots. Its old generic sync
   // button must not offer an endpoint the exit orchestrator rejects.
   const saveNodes = new Map();

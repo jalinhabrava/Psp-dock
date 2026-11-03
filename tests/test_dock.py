@@ -173,6 +173,40 @@ class Integration(unittest.TestCase):
         (self.psp/'ISO/large.iso').write_bytes(b'fixture')
         with patch('dock.digest',side_effect=AssertionError('Must not read missing games')):
             self.assertEqual(self.dock.games()[0]['availability'],'missing')
+
+    def test_reconnect_and_restart_reuse_unchanged_usb_game_signature(self):
+        (self.psp/'ISO').mkdir()
+        source=self.psp/'ISO/game.iso'
+        source.write_bytes(b'unchanged original game')
+        target=Path(self.dock.config['library'])/'ISO/game.iso'
+        target.parent.mkdir(parents=True)
+        target.write_bytes(source.read_bytes())
+        self.assertEqual(self.dock.games()[0]['availability'],'ready')
+        restarted=Dock(self.root/'data')
+        original_digest=digest
+        def no_usb_rehash(path):
+            if Path(path).is_relative_to(self.psp):
+                raise AssertionError('Unchanged PSP game was read again')
+            return original_digest(path)
+        with patch('dock.digest', side_effect=no_usb_rehash):
+            self.assertEqual(restarted.games()[0]['availability'],'ready')
+        source.write_bytes(b'changed original game')
+        self.assertEqual(restarted.games()[0]['availability'],'different')
+
+    def test_homebrew_dependency_change_invalidates_tree_signature(self):
+        folder=self.psp/'PSP/GAME/MyHomebrew'
+        folder.mkdir(parents=True)
+        (folder/'EBOOT.PBP').write_bytes(b'homebrew')
+        asset=folder/'data.bin'
+        asset.write_bytes(b'first asset')
+        local=Path(self.dock.config['library'])/'PSP/GAME/MyHomebrew'
+        local.mkdir(parents=True)
+        (local/'EBOOT.PBP').write_bytes(b'homebrew')
+        (local/'data.bin').write_bytes(b'first asset')
+        self.assertEqual(self.dock.games()[0]['availability'],'ready')
+        self.assertEqual(Dock(self.root/'data').games()[0]['availability'],'ready')
+        asset.write_bytes(b'changed asset bytes')
+        self.assertEqual(Dock(self.root/'data').games()[0]['availability'],'different')
     def test_overlap_rejected(self):
         with self.assertRaises(ValueError):
             self.dock.settings({'library':str(self.psp/'ISO')})
