@@ -261,6 +261,7 @@ body{background:#03141c;overflow:hidden}
 .dock-session-choices #dock-session-remember[aria-pressed="true"]{border-color:#9cd7d3a1;background:#96cbd216}
 .dock-session-choices button:hover:not(:disabled),.dock-session-choices button:focus-visible{border-color:#9cd7d3a1;background:#96cbd216}
 .dock-session-choices button:focus-visible,.dock-session-actions button:focus-visible{outline:2px solid #a8e6e8;outline-offset:3px}
+.dock-session[data-input="controller"] button:focus{outline:3px solid #a8e6e8;outline-offset:4px;border-color:#a8e6e8;background:#96cbd222}
 .dock-session-note{font-size:12px;line-height:1.7;color:#8da8b7;margin:20px 0 0;max-width:800px}
 .dock-session-error{font-size:13px;color:#edc3aa;line-height:1.7;padding:13px 16px;margin:20px 0 0;border-left:2px solid #e5b18b;background:#e0a6750a;overflow-wrap:anywhere}
 .dock-session-progress{margin-top:28px;padding:20px;border:1px solid #91bdc92b;border-radius:7px;background:#a2c5ca05}

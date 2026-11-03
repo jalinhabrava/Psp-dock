@@ -1422,6 +1422,14 @@ async function pollNativePspInput() {
   try {
     if (!document.hidden && !ui.serviceOffline && !ui.appClosing && !ui.appClosed) {
       const frame = await request('/api/controller-input');
+      const controllerNote = $('dock-session-controller');
+      if (controllerNote && ui.state?.product_flow?.phase === 'choosing') {
+        controllerNote.textContent = frame.connected === true ?
+          (frame.button_mask || frame.up || frame.down || frame.left || frame.right ?
+            'Pulsación recibida · cruceta para elegir · ✕ para confirmar' :
+            'Mando conectado · cruceta para elegir · ✕ para confirmar') :
+          `Mando pendiente: ${frame.reason || 'comprobando la entrada'}`;
+      }
       if (frame.connected === true && frame.source === 'psp_winmm') {
         const flowKey = ui.state?.product_flow?.enabled === true ?
           `${ui.state.product_flow.offer_id}:${ui.state.product_flow.phase}:${ui.state.controller_status?.phase}` : '';
@@ -1909,6 +1917,7 @@ function renderProductFlow(product) {
   $('dock-session-message').textContent = product.message;
   $('dock-session-note').textContent = product.note;
   $('dock-session-note').hidden = !product.note;
+  $('dock-session-controller').hidden = !product.choosing;
   $('dock-session-unsupported').textContent = product.unsupportedStatesNote;
   $('dock-session-unsupported').hidden = !product.unsupportedStatesNote;
   $('dock-session-spinner').hidden = !product.working;
@@ -2000,6 +2009,9 @@ function productFlowPress(button) {
   const product = xmbConnectionView().product;
   if (!product?.visible || ui.busy || ui.serviceOffline || document.querySelector('dialog[open]')) return;
   const panel = $('dock-session');
+  // Programmatic gamepad focus must remain visible after a mouse click.
+  // :focus-visible alone follows the browser's previous input modality.
+  if (panel.dataset) panel.dataset.input = 'controller';
   const controls = Array.from(panel.querySelectorAll('button:not(:disabled), summary'))
     .filter((node) => !node.hidden && node.getClientRects().length);
   if (!controls.length) return;

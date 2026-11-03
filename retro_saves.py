@@ -13,10 +13,12 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import uuid
 from collections import Counter
 
-from retro_runtime import private_save_paths
+from retro_runtime import private_save_paths, private_save_relative
+from catalog_paths import ReadOnlyTree
 
 
 MAX_SRAM = 128 * 1024
@@ -72,10 +74,11 @@ def _plausible(system: str, path: Path | None) -> bool:
     return size in (GBA_SIZES if system == 'gba' else SNES_SIZES)
 
 
-def _save_index(root: Path, emulator: dict, roms: list[dict]) -> dict | None:
+def _save_index(root: Path, emulator: dict, roms: list[dict], tree=None) -> dict | None:
     """One bounded enumeration PER emulator, not per ROM over slow PSP FAT."""
     base = _safe(root,root/Path(emulator['relative']).parent)
-    parents = {_safe(root,root/item['relative']).parent for item in roms}
+    tree = tree or ReadOnlyTree(root)
+    parents = {tree.file(item['relative'])[0].parent for item in roms}
     indexed = {}
     count = 0
     for folder, dirs, files in os.walk(base,followlinks=False):
@@ -102,16 +105,18 @@ def _save_index(root: Path, emulator: dict, roms: list[dict]) -> dict | None:
 
 
 def _source(root: Path, emulator: dict, rom: dict, suffix: str,
-            indexed:dict | None) -> tuple[Path | None,str]:
+            indexed:dict | None, tree=None) -> tuple[Path | None,str]:
     """Match ONE PSP SRAM by exact ROM stem; do not scan arbitrary files.
 
     Only SAVES/SAVE/SRAM folders within the PSP homebrew, or ROM sidecars,
     are considered. Missing source gets a conservative *suggested* new slot
     in SAVES; creating it requires a distinct explicit approval.
     """
-    base = _safe(root,root/Path(emulator['relative']).parent)
-    rom_file = _safe(root,root/rom['relative'])
-    if not base.is_dir() or not rom_file.is_relative_to(base):
+    tree = tree or ReadOnlyTree(root)
+    base_relative = Path(emulator['relative']).parent.as_posix()
+    base, base_info = tree.entry(base_relative)
+    rom_file, _ = tree.file(rom['relative'])
+    if base_info is None or not stat.S_ISDIR(base_info.st_mode) or not rom_file.is_relative_to(base):
         return None,'invalid_root'
     stem = rom_file.stem.casefold()
     if indexed is None:
@@ -124,9 +129,10 @@ def _source(root: Path, emulator: dict, rom: dict, suffix: str,
     # Verified on the user's PSP: UO gpSP Kai uses GBA/ROM for cartridges
     # and GBA/SAV for save RAM. Keep the default location accurate when
     # no SRAM exists yet; it remains only a suggestion until user approval.
-    if emulator.get('name') == 'gpSP Kai' and (base/'GBA'/'SAV').is_dir():
-        return _safe(root,base/'GBA'/'SAV'/(rom_file.stem+suffix)),'suggested'
-    return _safe(root,base/'SAVES'/(rom_file.stem+suffix)),'suggested'
+    gba_info = tree.entry(base_relative+'/GBA/SAV')[1] if emulator.get('name') == 'gpSP Kai' else None
+    if gba_info is not None and stat.S_ISDIR(gba_info.st_mode):
+        return tree.entry(base_relative+'/GBA/SAV/'+rom_file.stem+suffix)[0],'suggested'
+    return tree.entry(base_relative+'/SAVES/'+rom_file.stem+suffix)[0],'suggested'
 
 
 def _baseline_key(volume: str, rom_id: str) -> str:
@@ -144,11 +150,12 @@ def plan_retro_saves(*, root: Path, storage_root: Path, volume: str,
                      baselines: dict) -> list[dict]:
     """Small, bounded read-only plan, suitable for XMB status presentation."""
     root = Path(root).absolute()
+    psp_tree, pc_tree = ReadOnlyTree(root), ReadOnlyTree(storage_root)
     index = {e['id']:e for e in emulators}
     by_emulator = {}
     for rom in roms:
         by_emulator.setdefault(rom['emulator_id'],[]).append(rom)
-    locations = {key:_save_index(root,emulator,group)
+    locations = {key:_save_index(root,emulator,group,psp_tree)
                  for key,group in by_emulator.items()
                  if (emulator:=index.get(key)) and
                  any((emulator['name'],rom['system']) in RAW_PROFILES for rom in group)}
@@ -174,7 +181,7 @@ def plan_retro_saves(*, root: Path, storage_root: Path, volume: str,
             rows.append(row)
             continue
         suffix, kind = profile
-        source, origin = _source(root,emulator,rom,suffix,locations[rom['emulator_id']])
+        source, origin = _source(root,emulator,rom,suffix,locations[rom['emulator_id']],psp_tree)
         if source is None:
             row['status'] = 'blocked'
             row['reason'] = 'Varias SRAM con el mismo nombre o ruta PSP no reconocida.'
@@ -182,14 +189,19 @@ def plan_retro_saves(*, root: Path, storage_root: Path, volume: str,
             continue
         row['source_relative'] = source.relative_to(root).as_posix()
         row['suggested_path'] = origin=='suggested'
-        save, _ = private_save_paths(storage_root,volume,rom['id'])
-        _safe(storage_root,save)
-        if not _plausible(kind,source) or not _plausible(kind,save):
+        save, pc_info = pc_tree.entry(private_save_relative(volume,rom['id']))
+        _, psp_info = psp_tree.entry(row['source_relative'])
+        if psp_info is not None:
+            _safe(root, source)
+        if pc_info is not None:
+            _safe(storage_root,save)
+        if ((psp_info is not None and not _plausible(kind,source)) or
+                (pc_info is not None and not _plausible(kind,save))):
             row['status']='blocked'
             row['reason']='SRAM fuera de los tamaños seguros; podría tener cabecera o compresión.'
             rows.append(row)
             continue
-        psp_sha, pc_sha = _sha(source),_sha(save)
+        psp_sha, pc_sha = _sha(source) if psp_info is not None else None, _sha(save) if pc_info is not None else None
         baseline = baselines.get(_baseline_key(volume,rom['id']))
         if not isinstance(baseline,str) or len(baseline)!=64:
             baseline=None

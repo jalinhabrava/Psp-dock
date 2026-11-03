@@ -59,6 +59,13 @@ def _volume_serial(drive: str) -> str:
 
 
 def _physical_disk(drive: str) -> tuple[str, str]:
+    # Fresh native association avoids launching PowerShell for every guard.
+    # The compatibility fallback performs the same independent CIM binding.
+    from windows_storage_identity import physical_disk
+    try:
+        return physical_disk(drive)
+    except (OSError, ValueError):
+        pass
     # No user-supplied paths are interpolated into the PowerShell program.
     # CIM associations bind the exact logical volume to one physical disk.
     script = r'''
@@ -124,6 +131,8 @@ def identify(drive: str) -> tuple[PspStorage, int]:
     serial = _volume_serial(drive)
     disk_id, model = _physical_disk(drive)
     devinst, usb_id = _usb_parent(disk_id)
+    if _volume_serial(drive) != serial:
+        raise UsbTransitionError('La Memory Stick cambió durante la identificación.')
     return validate_identity(drive, serial, model, disk_id, usb_id), devinst
 
 

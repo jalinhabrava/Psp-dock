@@ -201,9 +201,9 @@ class DockProductSession:
             self._progress_error = exc
             self.transport.connection_error(exc)
 
-    def inventory_progress(self, label, completed, current_item=''):
+    def inventory_progress(self, label, completed, current_item='', *, total=None):
         if self.flow.snapshot()['phase'] in ('inventory', 'syncing_in', 'syncing_out'):
-            self.publish_progress('inventory', label, completed=completed, current_item=current_item)
+            self.publish_progress('inventory', label, completed=completed, total=total, current_item=current_item)
             if self.flow.snapshot()['cancel_requested']:
                 raise ProductFlowCancelled('La entrada se canceló durante la comparación, sin iniciar otra copia.')
 
@@ -286,6 +286,17 @@ class DockProductSession:
         self._presentation_identity = (identity.get('session_id'), identity.get('volume_serial'))
         self._presentation_plans = deepcopy((saves, retro))
 
+    def _pc_save_snapshots(self):
+        """Fresh source hashes; missing retro files use a single directory view."""
+        from retro_runtime import snapshot_private_saves
+        d, a = self.dock, self.api
+        root = a.inside(Path(d.config['memstick']), 'PSP/SAVEDATA')
+        if list(root.glob('.dock-journal-*.json')):
+            raise ProductFlowError('Hay una copia de partidas interrumpida en el ordenador.')
+        return {'pc':a.slots(root), 'retro_pc':snapshot_private_saves(
+            Path(d.config['storage_root']), self.entry['identity']['volume_serial'],
+            self.entry['retro_pc'])}
+
     def _save_snapshots(self, root):
         d, a = self.dock, self.api
         psp = a.inside(root, 'PSP/SAVEDATA')
@@ -315,11 +326,14 @@ class DockProductSession:
         root = self._context_root(context)
         d = self.dock
         self.publish_progress('inventory', 'Buscando juegos de PSP.')
-        games = d.games()
+        with self.diagnostics.measure('inventory.games', important=True):
+            games = d.games()
         self.publish_progress('inventory', 'Buscando emuladores y ROMs.', completed=len(games))
-        retro = d.retro_catalog()
+        with self.diagnostics.measure('inventory.retro', important=True):
+            retro = d.retro_catalog()
         self.publish_progress('inventory', 'Comparando partidas guardadas.', completed=len(games) + len(retro['roms']))
-        snapshots = self._save_snapshots(root)
+        with self.diagnostics.measure('inventory.saves', important=True):
+            snapshots = self._save_snapshots(root)
         saves, retro_saves = self.presentation_save_plans()
         missing = [g['id'] for g in games if g['availability'] == 'missing']
         missing += [g['id'] for g in retro['roms'] if g['availability'] == 'missing']
@@ -446,13 +460,17 @@ class DockProductSession:
             root = self._context_root(context)
             self._require_entry(context)
             if context['purpose'] == 'initial':
-                # The outbound comparison starts when entry preparation is
-                # finished. Runtime configuration lives outside SAVEDATA.
-                self.entry.update(self._save_snapshots(root))
+                # PSP baseline was already captured by inventory/sync. Keep
+                # it to detect external PSP changes at return. Refresh only
+                # the PC baseline at entry; this does not authorize a copy.
+                with self.diagnostics.measure('prepare.pc_baseline', important=True):
+                    self.entry.update(self._pc_save_snapshots())
                 self._save_entry()
-            if any(g['availability'] == 'ready' for g in d.games()):
+            catalog = d.cached_game_results if d.cached_game_results is not None else d.games()
+            if any(g['availability'] == 'ready' for g in catalog):
                 try:
-                    d.prepare_runtime()
+                    with self.diagnostics.measure('prepare.runtime', important=True):
+                        d.prepare_runtime()
                 except (OSError, ValueError, subprocess.SubprocessError) as exc:
                     d.runtime_error = str(exc)  # Menu/retro remain available.
         result = self.transport.request_role(context)
@@ -615,10 +633,9 @@ class DockProductSession:
         psp_root = a.inside(root, 'PSP/SAVEDATA')
         if list(pc_root.glob('.dock-journal-*.json')) or list(psp_root.glob('.dock-journal-*.json')):
             raise ProductFlowError('Hay una copia de partidas interrumpida. Revisa el journal antes de continuar.')
-        pc_now = a.slots(pc_root)
-        from retro_saves import _sha
-        retro_now = {key:_sha(private_save_paths(Path(d.config['storage_root']),
-            self.entry['identity']['volume_serial'], key)[0]) for key in self.entry['retro_pc']}
+        with self.diagnostics.measure('return.pc_scan', important=True):
+            pc = self._pc_save_snapshots()
+        pc_now, retro_now = pc['pc'], pc['retro_pc']
         if pc_now == self.entry['pc'] and retro_now == self.entry['retro_pc']:
             self._context_root(context)
             self.entry.update(return_data_verified=True, return_identity=dict(context['identity']),

@@ -17,6 +17,7 @@ import re
 import zipfile
 
 from psp_game_metadata import read_metadata
+from catalog_paths import ReadOnlyTree
 
 
 SYSTEMS = {
@@ -162,6 +163,7 @@ def emulator_inventory(root: Path) -> dict:
     ignored until a future explicitly configured platform adapter exists.
     """
     root = Path(root).absolute()
+    metadata = ReadOnlyTree(root)
     game_root = _safe(root, root / 'PSP' / 'GAME')
     result = {'emulators': [], 'roms': []}
     if not game_root.is_dir():
@@ -202,16 +204,23 @@ def emulator_inventory(root: Path) -> dict:
             if seen > MAX_ENTRIES:
                 raise ValueError('Demasiados archivos en el emulador PSP.')
             for name in files:
-                path = _safe(root, base / name)
-                if not path.is_file() or path.stat().st_size > MAX_ROM_SIZE:
+                candidate = base/name
+                # Metadata-only comparisons share directory entries; payload
+                # inspection keeps a fresh guard before opening ZIP contents.
+                if candidate.suffix.casefold() not in EXTENSIONS and candidate.suffix.casefold() != '.zip':
                     continue
+                path, info = metadata.file(candidate.relative_to(root).as_posix())
+                if info is None or info.st_size > MAX_ROM_SIZE:
+                    continue
+                if path.suffix.casefold() == '.zip':
+                    path = _safe(root, path)
                 system = _rom_system(path, allowed)
                 if system is None:
                     continue
                 if len(result['roms']) >= MAX_ROMS:
                     raise ValueError('Demasiadas ROMs para el catálogo seguro.')
                 relative_rom = path.relative_to(root).as_posix()
-                stat = path.stat()
+                stat = info
                 result['roms'].append({
                     'id': hashlib.sha256(('rom:' + relative_rom).encode('utf-8')).hexdigest()[:24],
                     'relative': relative_rom, 'title': path.stem,

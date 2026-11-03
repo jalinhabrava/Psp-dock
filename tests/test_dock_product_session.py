@@ -234,6 +234,25 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertEqual(pref,{'choice':'none','automatic':False})
         self.assertEqual(self.product.snapshot()['remembered_choice'],'none')
 
+    def test_choosing_uses_confirmed_transport_even_if_ui_snapshot_is_from_inventory(self):
+        self.offer()
+        self.dock.snapshot['controller_status']={'connected':False,'mode':'await_native'}
+        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+            reader.return_value.read.return_value={'connected':True,'source':'psp_winmm','button_mask':1,'accept':True}
+            frame=self.dock.psp_launcher_input()
+        self.assertTrue(frame['connected'])
+        self.assertTrue(frame['accept'])
+        reader.assert_called_once_with(expected_product=0x01CD)
+        self.assertTrue((self.dock.data/'selector-input.json').exists())
+
+    def test_none_entry_does_not_repeat_psp_save_or_game_inventory(self):
+        self.retro_fixture();token=self.offer()
+        self.product.choose('none',token)
+        with patch.object(self.product,'_save_snapshots',side_effect=AssertionError('PSP baseline already captured')), \
+             patch.object(self.dock,'games',side_effect=AssertionError('catalog already verified')):
+            self.product.tick(self.dock.devices())
+        self.assertNotEqual(self.product.snapshot()['phase'],'attention')
+
     def test_opted_in_policy_is_reused_only_after_live_inventory(self):
         self.dock.device_memory.remember(self.transport.current,self.dock.config,'none',True)
         self.product.tick(self.dock.devices())
@@ -444,7 +463,9 @@ class DockProductSessionTests(unittest.TestCase):
             self.tick()
         inventory = [row for row in views if row['stage'] == 'inventory']
         self.assertTrue(any(row['completed'] > 0 for row in inventory))
-        self.assertTrue(all(row['mode'] == 'indeterminate' and row['total'] is None for row in inventory))
+        self.assertTrue(all((row['mode'] == 'indeterminate' and row['total'] is None) or
+                            (row['mode'] == 'determinate' and row['total'] > 0 and
+                             0 <= row['completed'] <= row['total']) for row in inventory))
         saved = [row for row in views if row['stage'] == 'saves' and row['mode'] == 'determinate']
         self.assertTrue(saved)
         self.assertTrue(any(row['completed'] == row['total'] == 3 for row in saved))

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dock_events import EventJournal
 from dock_lifecycle import UiLifecycle
+from catalog_paths import ReadOnlyTree
 from dock_preflight import assess_storage
 from psp_artwork import read_icon, valid_png
 from psp_retro import SYSTEMS, emulator_inventory, emulator_profile, retroarch_core
@@ -777,6 +778,7 @@ class Dock:
         """
         root = self.root()
         library = Path(self.config['library'])
+        local_tree = ReadOnlyTree(library)
         if root is not None:
             serial = volume_identity(root)
             old = ({r['relative']: r for r in self.last_roms}
@@ -784,18 +786,19 @@ class Dock:
             found = self.device_memory.inventory(inside(root, ''), serial, 'retro',
                                                 lambda:emulator_inventory(root))
             for index, rom in enumerate(found['roms'], 1):
-                source = inside(root, rom['relative'])
-                local = inside(library, rom['relative'])
-                if local.is_file() and local.stat().st_size == rom['size']:
-                    rom['signature'] = self.hash(source)
+                local, local_info = local_tree.file(rom['relative'])
+                if local_info is not None and local_info.st_size == rom['size']:
+                    # Contents are read only after the original fresh path guard.
+                    rom['signature'] = self.hash(inside(root, rom['relative']))
                 elif (rom['relative'] in old and
                       old[rom['relative']].get('size') == rom['size'] and
                       old[rom['relative']].get('modified_ns') == rom['modified_ns']):
                     rom['signature'] = old[rom['relative']].get('signature')
-                self.product_session.inventory_progress('Comprobando ROMs de la PSP.', index, rom['title'])
+                self.product_session.inventory_progress('Comprobando ROMs de la PSP.', index, rom['title'], total=len(found['roms']))
+            source_tree = ReadOnlyTree(root)
             if volume_identity(root) != serial or any(
-                (lambda stat: stat.st_size != rom['size'] or stat.st_mtime_ns != rom['modified_ns'])(
-                    inside(root, rom['relative']).stat()) for rom in found['roms']
+                (lambda info: info is None or info.st_size != rom['size'] or info.st_mtime_ns != rom['modified_ns'])(
+                    source_tree.file(rom['relative'])[1]) for rom in found['roms']
             ):
                 raise ValueError('Las ROMs cambiaron durante el inventario PSP; vuelve a comparar.')
             if (serial != self.retro_volume or found['emulators'] != self.last_emulators or
@@ -811,17 +814,18 @@ class Dock:
                 # PSP USB scan or the /api/state HTTP thread.
                 self.start_retro_install(automatic=True)
         roms = []
+        cores = {system:retroarch_core(self.config['retroarch'],system) for system in SYSTEMS}
         for index, rom in enumerate(self.last_roms, 1):
-            local = inside(library, rom['relative'])
+            local, local_info = local_tree.entry(rom['relative'])
             status = 'missing'
-            if local.exists():
+            if local_info is not None:
                 status = 'different'
-                if (local.is_file() and local.stat().st_size == rom['size'] and
+                if (local_tree.file(rom['relative'])[1] is not None and local_info.st_size == rom['size'] and
                         re.fullmatch('[0-9a-f]{64}', rom.get('signature') or '') and
-                        self.hash(local) == rom['signature']):
+                        self.hash(inside(library, rom['relative'])) == rom['signature']):
                     status = 'ready'
-            core = retroarch_core(self.config['retroarch'],rom['system'])
-            self.product_session.inventory_progress('Comparando ROMs con el ordenador.', index, rom['title'])
+            core = cores[rom['system']]
+            self.product_session.inventory_progress('Comparando ROMs con el ordenador.', index, rom['title'], total=len(self.last_roms))
             roms.append({**{k:v for k,v in rom.items() if k!='signature'},
                          'availability':status,'local_relative':rom['relative'],
                          'windows_emulator':'RetroArch · ' + SYSTEMS[rom['system']][1].replace('_libretro.dll',''),
@@ -1633,10 +1637,11 @@ class Dock:
         if not root or self.session.get('prepared_volume') != volume_identity(root) and not use_pc:
             raise ValueError('Primero confirma la sincronización de esta PSP en almacenamiento.')
         self.validate_layout(root)
-        saves = self.save_plan()
+        saves = self.save_plan() if not use_pc else {'actions':[], 'conflicts':[]}
         if (saves['actions'] or saves['conflicts']) and not use_pc:
             raise ValueError('Resuelve y prepara primero las partidas.')
-        if not any(g['availability'] == 'ready' for g in self.games()):
+        catalog = self.cached_game_results if product['enabled'] and self.cached_game_results is not None else self.games()
+        if not any(g['availability'] == 'ready' for g in catalog):
             raise ValueError('Copia al PC al menos un juego verificado.')
         spec = self.emulator_spec()
         if not spec:
@@ -2164,6 +2169,30 @@ class Dock:
                 'reason': 'Mando HID PDK1 confirmado; no es prueba del bridge USB automático.'}
 
     def psp_launcher_input(self):
+        frame = self._psp_launcher_input()
+        flow = self.product_flow.snapshot()
+        if flow['phase'] == 'choosing':
+            # Bounded selector-only trace, PC metadata only. Do not silently
+            # turn a blocked reader into a generic 'controller connected'.
+            current = self.native_transport.current or {}
+            item = {key:frame.get(key) for key in ('connected','source','reason','button_mask','up','down','left','right','accept')}
+            item.update(firmware_phase=current.get('phase'), activity=current.get('activity'),
+                        host_confirmed=current.get('host_confirmed'))
+            previous = getattr(self, '_selector_input_last', None)
+            if previous != item:
+                self._selector_input_last = dict(item)
+                rows = getattr(self, '_selector_input_events', [])
+                rows = (rows + [{'utc':datetime.now(timezone.utc).isoformat(), **item}])[-64:]
+                self._selector_input_events = rows
+                now = time.monotonic()
+                if now - getattr(self, '_selector_input_saved_at', 0.0) >= 0.25:
+                    self._selector_input_saved_at = now
+                    try:atomic_json(self.data/'selector-input.json', {'events':rows})
+                    except OSError:pass
+            frame = {**frame, 'selector_diagnostic':item}
+        return frame
+
+    def _psp_launcher_input(self):
         """Read a single WinMM PSP gamepad frame for the XMB, never launch.
 
         This GET is intentionally outside Dock.lock so an expensive optional
@@ -2175,6 +2204,10 @@ class Dock:
         if self.demo or self.storage_polling_paused or self.native_shutdown_pending():
             return idle("El mando PSP HID no está disponible en esta fase.")
         seen = self.snapshot.get('controller_status', {})
+        if self.product_flow.enabled and self.product_flow.snapshot()['phase'] == 'choosing':
+            # CHOOSING input becomes available after the last progress ACK.
+            # A presentation snapshot from inventory can lag behind that ACK.
+            seen = self.native_transport.controller_status()
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
         from native_dock import (PID as NATIVE_PID, VERSION as NATIVE_VERSION,

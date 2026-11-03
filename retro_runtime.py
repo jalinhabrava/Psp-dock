@@ -128,6 +128,28 @@ def private_save_paths(storage_root: Path, volume: str, rom_id: str) -> tuple[Pa
     return _safe_tree(root,saves/(rom_id+'.srm')), _safe_tree(root,states/(rom_id+'.state'))
 
 
+def private_save_relative(volume: str, rom_id: str) -> str:
+    """Lexical metadata lookup only. Actual reads/writes still guard paths."""
+    if not isinstance(volume,str) or not volume or len(volume)>512:
+        raise ValueError('Memory Stick sin identidad para guardados retro.')
+    if not isinstance(rom_id,str) or len(rom_id)!=24 or any(c not in '0123456789abcdef' for c in rom_id):
+        raise ValueError('Identificador retro inválido.')
+    key = hashlib.sha256(volume.encode('utf-8')).hexdigest()[:24]
+    return 'retro-saves/'+key+'/'+rom_id+'.srm'
+
+
+def snapshot_private_saves(storage_root: Path, volume: str, rom_ids) -> dict:
+    from catalog_paths import ReadOnlyTree
+    from retro_saves import _sha
+    tree = ReadOnlyTree(storage_root)
+    result = {}
+    for rom_id in rom_ids:
+        path, info = tree.entry(private_save_relative(volume, rom_id))
+        result[rom_id] = (_sha(private_save_paths(storage_root, volume, rom_id)[0])
+                          if info is not None else None)
+    return result
+
+
 def retroarch_arguments(exe: Path, core: Path, rom: Path, overlay: Path,
                         save: Path, state: Path) -> list[str]:
     """RetroArch CLI: per-game SRAM and core-bound savestate never mixed."""
