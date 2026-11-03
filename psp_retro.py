@@ -23,15 +23,21 @@ SYSTEMS = {
     'gba': ('Game Boy Advance', 'mgba_libretro.dll'),
     'gb': ('Game Boy', 'gambatte_libretro.dll'),
     'gbc': ('Game Boy Color', 'gambatte_libretro.dll'),
-    'snes': ('Super Nintendo', 'snes9x_libretro.dll'),
+    # GPL alternatives to cores carrying noncommercial license terms.
+    'snes': ('Super Nintendo', 'bsnes_libretro.dll'),
     'nes': ('NES / Famicom', 'mesen_libretro.dll'),
-    'md': ('Mega Drive / Genesis', 'genesis_plus_gx_libretro.dll'),
-    'sms': ('Master System', 'genesis_plus_gx_libretro.dll'),
-    'gg': ('Game Gear', 'genesis_plus_gx_libretro.dll'),
-    '32x': ('Sega 32X', 'picodrive_libretro.dll'),
+    'md': ('Mega Drive / Genesis', 'blastem_libretro.dll'),
+    'sms': ('Master System', 'gearsystem_libretro.dll'),
+    'gg': ('Game Gear', 'gearsystem_libretro.dll'),
+    '32x': ('Sega 32X', 'blastem_libretro.dll'),
     'n64': ('Nintendo 64', 'mupen64plus_next_libretro.dll'),
     'pce': ('PC Engine', 'mednafen_pce_fast_libretro.dll'),
     'a2600': ('Atari 2600', 'stella_libretro.dll'),
+    'cps1': ('Arcade CPS-1', 'fbneo_libretro.dll'),
+    'cps2': ('Arcade CPS-2', 'fbneo_libretro.dll'),
+    'neogeo': ('Neo Geo MVS', 'fbneo_libretro.dll'),
+    'arcade': ('Arcade MAME', 'mame2003_plus_libretro.dll'),
+    'ngp': ('Neo Geo Pocket', 'race_libretro.dll'),
 }
 
 # Prefixes are normalized to letters/digits. Keep them unambiguous: folder
@@ -39,17 +45,22 @@ SYSTEMS = {
 EMULATORS = (
     ('gpSP Kai', ('uogpspkai', 'gpspkai', 'gpsp'), ('gba',)),
     ('TempGBA4PSP', ('tempgba4psp', 'tempgba'), ('gba',)),
-    ('Snes9xTYL', ('snes9xtyl', 'snes9xme', 'snes9xcm'), ('snes',)),
+    ('Snes9xTYL', ('snes9xtyl', 'snes9xme', 'snes9xcm', 's9xtylmecm'), ('snes',)),
     ('Snes9x Euphoria', ('snes9xeuphoria',), ('snes',)),
     ('NesterJ', ('nesterjaoex', 'nesterj'), ('nes',)),
     ('FCEUltra PSP', ('fceultrapsp', 'fceultra'), ('nes',)),
-    ('MasterBoy', ('masterboy',), ('gb', 'gbc')),
+    ('MasterBoy', ('masterboy',), ('gb', 'gbc', 'sms', 'gg')),
     ('RIN / PSP GnuBoy', ('homerin', 'rinpsp', 'pspgnuboy', 'gnuboypsp'), ('gb', 'gbc')),
     ('PicoDrive', ('picodrive',), ('md', 'sms', 'gg', '32x')),
     ('SMS Plus PSP', ('smspluspsp', 'smsplus'), ('sms', 'gg')),
     ('DaedalusX64', ('daedalusx64', 'daedalus'), ('n64',)),
-    ('PCE for PSP', ('pceforpsp', 'pcepsp'), ('pce',)),
+    ('PCE for PSP', ('pceforpsp', 'pcepsp', 'psphugo'), ('pce',)),
     ('PSP2600', ('psp2600', 'stellapsp'), ('a2600',)),
+    ('CPS1PSP', ('cps1psp',), ('cps1',)),
+    ('CPS2PSP', ('cps2psp',), ('cps2',)),
+    ('MVSPSP', ('mvspsp',), ('neogeo',)),
+    ('MAME4ALL PSP', ('mame4all', 'mamemame4all'), ('arcade',)),
+    ('RACE! PSP', ('racepsp',), ('ngp',)),
 )
 
 EXTENSIONS = {
@@ -60,10 +71,11 @@ EXTENSIONS = {
     '.sms': 'sms', '.gg': 'gg', '.32x': '32x',
     '.z64': 'n64', '.n64': 'n64', '.v64': 'n64',
     '.pce': 'pce', '.a26': 'a2600',
+    '.ngp': 'ngp', '.ngc': 'ngp',
 }
 
 SKIP_DIRS = frozenset({
-    'saves', 'save', 'savestates', 'savestate', 'states', 'state',
+    'saves', 'save', 'sav', 'ss', 'savestates', 'savestate', 'states', 'state',
     'config', 'configs', 'settings', 'bios', 'system', 'cheats',
     'screenshots', 'images', 'assets', 'skins', 'media', 'cache',
 })
@@ -111,6 +123,19 @@ def _rom_system(path: Path, allowed: tuple[str, ...]) -> str | None:
     system = EXTENSIONS.get(suffix)
     if system in allowed:
         return system
+    # Arcade ROMsets are usually many files inside a ZIP and require a
+    # matching FBNeo/MAME ROMset/BIOS. Never unpack or infer its compatibility.
+    if suffix == '.zip' and len(allowed) == 1 and allowed[0] in ('cps1','cps2','neogeo','arcade'):
+        try:
+            with zipfile.ZipFile(path) as archive:
+                entries=archive.infolist()
+                if (not 1 <= len(entries) <= 4096 or
+                        any(info.flag_bits & 1 or info.file_size > MAX_ROM_SIZE or
+                            '..' in Path(info.filename).parts for info in entries)):
+                    return None
+                return allowed[0] if any(not entry.is_dir() for entry in entries) else None
+        except (OSError,ValueError,zipfile.BadZipFile,RuntimeError):
+            return None
     if suffix != '.zip' or path.stat().st_size > MAX_ROM_SIZE:
         return None
     # A ZIP of one ROM (+README etc.) is common on PSP. Check the central

@@ -12,13 +12,17 @@ sistema. No se ejecuta el EBOOT PSP como si fuera una ISO de PPSSPP.
 | --- | --- | --- |
 | gpSP / gpSP Kai, TempGBA4PSP | GBA | `mgba_libretro.dll` |
 | MasterBoy, RIN / PSP GnuBoy | Game Boy, Game Boy Color | `gambatte_libretro.dll` |
-| Snes9xTYL, Snes9x Euphoria | SNES | `snes9x_libretro.dll` |
+| Snes9xTYL, Snes9x Euphoria | SNES | `bsnes_libretro.dll` (GPL) |
 | NesterJ, FCEUltra PSP | NES | `mesen_libretro.dll` |
-| PicoDrive | Mega Drive, Master System, Game Gear, 32X | `genesis_plus_gx_libretro.dll` (MD/SMS/GG), `picodrive_libretro.dll` (32X) |
-| SMS Plus PSP | Master System, Game Gear | `genesis_plus_gx_libretro.dll` |
+| PicoDrive | Mega Drive, Master System, Game Gear, 32X | `blastem_libretro.dll` (MD/32X), `gearsystem_libretro.dll` (SMS/GG), GPL |
+| SMS Plus PSP | Master System, Game Gear | `gearsystem_libretro.dll` (GPL) |
 | DaedalusX64 | Nintendo 64 | `mupen64plus_next_libretro.dll` |
 | PCE for PSP | PC Engine | `mednafen_pce_fast_libretro.dll` |
 | PSP2600 | Atari 2600 | `stella_libretro.dll` |
+| CPS1PSP, CPS2PSP, MVSPSP | CPS1, CPS2, Neo Geo MVS | `fbneo_libretro.dll` (**licencia no comercial, descarga automática bloqueada**) |
+| MAME4All PSP | Arcade | `mame2003_plus_libretro.dll` (**licencia no comercial, descarga automática bloqueada**) |
+| PSPHugo | PC Engine | `mednafen_pce_fast_libretro.dll` |
+| RACE! PSP | Neo Geo Pocket | `race_libretro.dll` |
 
 Esta equivalencia es por **plataforma**, no por la compatibilidad binaria de
 los emuladores. No implica que sus estados o partidas sean intercambiables.
@@ -37,9 +41,14 @@ mediante heurísticas de nombres de ROM o por extensiones ambiguas.
    el progreso. El archivo se copia en `Biblioteca del PC/PSP/GAME/...`.
    Se verifican SHA-256 del origen y del destino; nunca se sobrescribe un
    archivo local diferente. La ROM original no se modifica.
-4. En **Ajustes**, introduce la ruta absoluta a `retroarch.exe` de Windows.
-   Descarga de manera independiente RetroArch e instala desde su interfaz los
-   núcleos correspondientes: deben estar en `cores/` junto al ejecutable.
+4. En **Ajustes → Instalación de emuladores retro** elige `Preguntar`,
+   `Automática` o `No instalar`. Si la PSP conectada tiene emuladores
+   reconocidos, Dock podrá instalar RetroArch portable y los núcleos de
+   licencia aprobada en `<storage_root>/emulators/retroarch/`. También se
+   puede indicar un RetroArch externo, que **no se modificará**.
+   Los núcleos arcade con licencia no comercial se muestran como pendientes
+   de licencia; no se incluyen en el instalador. Más detalles en
+   [RETRO-AUTO-INSTALL.md](RETRO-AUTO-INSTALL.md).
 5. Prepara la comparación de partidas normal del Dock. Cambia manualmente la
    PSP al **mando HID PDK1** (el cambio físico automático USB↔HID sigue
    pendiente). En Retro → ROM pulsa Jugar; PSP Dock comprueba de nuevo PDK1 y
@@ -49,9 +58,11 @@ mediante heurísticas de nombres de ROM o por extensiones ambiguas.
 
 ## Seguridad y compatibilidad
 
-- **Nunca** se descargan ROMs, BIOS, ejecutables de PSP, núcleos o juegos.
-  Solo se lanza un `retroarch.exe` seleccionado por el usuario y un core local
-  con nombre concreto de la lista soportada.
+- **Nunca** se descargan ROMs, BIOS, ejecutables de PSP ni juegos. RetroArch
+  portable y sus núcleos aprobados pueden descargarse exclusivamente desde
+  el servidor oficial cuando el usuario habilita la instalación automática
+  o confirma su instalación. Los núcleos sujetos a licencia no comercial
+  están excluidos de ese flujo.
 - Los `.gba`, `.gb`, `.gbc`, `.sfc`, `.smc`, `.nes`, `.md`, `.smd`, `.sms`, `.gg`,
   `.32x`, `.z64`, `.n64`, `.v64`, `.pce`, `.a26` y ZIPs con **una sola ROM
   reconocible** se clasifican exclusivamente si corresponden a la plataforma
@@ -60,15 +71,14 @@ mediante heurísticas de nombres de ROM o por extensiones ambiguas.
 - Los ZIPs se inspeccionan mediante su directorio central, sin extraerlos.
   La capacidad real de ejecutar un ZIP depende del núcleo de RetroArch.
 - Los guardados internos de **PPSSPP/PSP** conservan su sincronización normal.
-  Los `.sav`, `.srm`, SRAM y *savestates* de emuladores retro NO se importan,
-  renombran ni devuelven automáticamente a la PSP: existen diferencias de
-  formato entre gpSP, mGBA, Snes9xTYL, Snes9x, Daedalus y RetroArch. Hacerlo
-  sin un conversor probado podría corromper partidas. RetroArch guardará sus
-  propios datos según su configuración en Windows.
-- El mando HID PDK1 está verificado por PSP Dock para el selector XMB y para
-  PPSSPP. **El perfil de botones dentro de RetroArch puede requerir una
-  configuración inicial manual**, según su controlador DirectInput y los
-  perfiles instalados. No se modifica el perfil global de RetroArch en esta PR.
+  Las SRAM compatibles de gpSP Kai/TempGBA y Snes9xTYL/Euphoria pueden
+  copiarse con confirmación explícita, comparación SHA-256 y respaldo;
+  no se convierten *savestates*. Ver
+  [RETRO-CONTROLS-SAVES.md](RETRO-CONTROLS-SAVES.md).
+- El mando HID PDK1 está verificado para el XMB y PPSSPP. Dock crea un perfil
+  DirectInput aislado para RetroArch, pero **su uso en juegos retro reales
+  necesita validación física** y puede requerir ajustes según el controlador.
+  No se modifica la configuración global de RetroArch.
 - Algunos núcleos pueden necesitar BIOS o configuración adicional; PSP Dock
   no los obtiene. El runtime de RetroArch y sus cores se comprueba por
   existencia de archivo; no es prueba de compatibilidad de cada ROM.

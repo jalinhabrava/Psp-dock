@@ -34,7 +34,7 @@ scope.xmbRetroEmulatorMenu(emulator);
 assert.equal(scope.options.length,1);
 assert.equal(events.filter(v=>v.startsWith('copy')).length,0);
 scope.pick(0); // opens the ROM contextual menu, no copying
-assert.equal(scope.options.length,3);
+assert.equal(scope.options.length,4);
 assert.equal(events.filter(v=>v.startsWith('copy')).length,0);
 scope.pick(1); // explicitly choose Copiar
 assert.equal(events.filter(v=>v.startsWith('copy')).length,1);

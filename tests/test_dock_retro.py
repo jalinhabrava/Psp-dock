@@ -130,6 +130,7 @@ class RetroBridgeTests(unittest.TestCase):
         ready = self.copy()
         exe,core = self.install_pc_emulator()
         self.dock.session['prepared_volume'] = self.dock.retro_volume
+        self.dock.retro_save_plan()
         with patch.object(self.dock,'root',return_value=None), \
              patch('ppsspp_hid_session.validate_hid_only',side_effect=['stable','stable']) as hid, \
              patch('dock.subprocess.Popen') as launch, \
@@ -137,8 +138,13 @@ class RetroBridgeTests(unittest.TestCase):
             self.dock.launch_retro(ready['id'])
         self.assertEqual(hid.call_count,2)
         cmd = launch.call_args.args[0]
-        self.assertEqual(cmd[:4],[str(exe),'-L',str(core),'-f'])
-        self.assertTrue(cmd[4].endswith('Example.gba'))
+        self.assertEqual(cmd[0],str(exe))
+        self.assertIn('--appendconfig',cmd)
+        self.assertIn('--save',cmd)
+        self.assertIn('--savestate',cmd)
+        self.assertEqual(cmd[-4:-2],['-L',str(core)])
+        self.assertEqual(cmd[-2],'-f')
+        self.assertTrue(cmd[-1].endswith('Example.gba'))
         self.assertTrue(self.dock.session['pending_return'])
         self.assertEqual(self.dock.session['launcher'],'retroarch')
 

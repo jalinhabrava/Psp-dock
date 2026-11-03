@@ -23,7 +23,9 @@ class StorageLocationError(ValueError):
     pass
 
 
-CONTENT_DIRS = ('artwork','xmb-assets','profile-backups','backups')
+CONTENT_DIRS = ('artwork','xmb-assets','profile-backups','backups',
+                'retro-profiles','retro-saves','retro-states',
+                'retro-save-backups','retro-save-journals','emulators')
 
 
 def choose_pc_storage_parent(*, run=subprocess.run)->str | None:
@@ -109,22 +111,25 @@ def file_manifest(sources: dict[str,Path]) -> dict:
 
 
 def migrate_pc_data(*, target:Path, library:Path, memstick:Path,
-                    old_data:Path) -> dict:
+                    old_data:Path, old_storage:Path | None = None) -> dict:
     """Copy into a NEW empty root; leave source untouched for rollback."""
     root=fixed_local_folder(target)
     old_data=Path(old_data).resolve()
+    old_storage=Path(old_storage).resolve() if old_storage is not None else old_data
     library=Path(library).resolve()
     memstick=Path(memstick).resolve()
     if (root == old_data or root.is_relative_to(old_data) or
+            root == old_storage or root.is_relative_to(old_storage) or
             root.is_relative_to(library) or root.is_relative_to(memstick)
-            or old_data.is_relative_to(root) or library.is_relative_to(root)
+            or old_data.is_relative_to(root) or old_storage.is_relative_to(root)
+            or library.is_relative_to(root)
             or memstick.is_relative_to(root)):
         raise StorageLocationError('La nueva carpeta no puede solaparse con los datos actuales.')
     if root.exists():
         raise StorageLocationError('El destino debe ser una carpeta nueva, todavía inexistente.')
     sources={'library':library,'memstick':memstick}
     for name in CONTENT_DIRS:
-        sources[name]=old_data/name
+        sources[name]=old_storage/name
     files=file_manifest(sources)
     total=sum(f.stat().st_size for f in files.values())
     root.parent.mkdir(parents=True,exist_ok=True)

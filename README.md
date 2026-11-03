@@ -1,5 +1,28 @@
 # PSP Dock · prototipo para Windows
 
+## Descarga de emuladores detectados en la PSP (preparación del instalador .exe)
+
+PSP Dock reconoce homebrew de la PSP y prepara en Windows RetroArch portable
+con **solo los núcleos necesarios** dentro de la carpeta de almacenamiento
+seleccionada. El XMB permite configurar la política `ask / auto / off`.
+La futura instalación `.exe` podrá establecer `storage_root` y activar
+`retro_install_policy=auto` con consentimiento al elegir carpeta.
+Por compatibilidad comercial se bloquean núcleos con licencia de uso no
+comercial y se prefieren alternativas GPL. El prototipo no descarga ROMs ni
+BIOS y no sobrescribe emuladores instalados por el usuario. La descarga real
+está pendiente de habilitar red en el entorno Windows; ver detalles en
+[RETRO-AUTO-INSTALL.md](RETRO-AUTO-INSTALL.md).
+
+## Controles PSP HID y continuidad de partidas retro (PR siguiente a #4)
+
+Perfil RetroArch DirectInput PDK1 privado y reversible, selección de
+distribución de ✕/○, menú SELECT+△ y rutas por juego para SRAM y estados.
+Las SRAM raw de gpSP/TempGBA y Snes9xTYL/Euphoria cuentan con importación
+y devolución individual previa comparación SHA-256, con backups, journals y
+resolución explícita de conflictos; no se convierten estados de emulación.
+La salida del Dock espera la revisión de guardados retro antes de devolver
+las partidas PSP. Ver [RETRO-CONTROLS-SAVES.md](RETRO-CONTROLS-SAVES.md).
+
 ## Emuladores retro de PSP → Windows (nueva sección XMB)
 
 La categoría **Retro** reconoce homebrew de emulación en `PSP/GAME`,
