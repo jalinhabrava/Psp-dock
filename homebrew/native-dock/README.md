@@ -64,7 +64,7 @@ usándose sin una nueva extracción. No cambian los 64 bytes ni los opcodes.
 ### Construcción y evidencia de 0308
 
 `bash homebrew/native-dock/build-wsl.sh` compila en una copia separada en
-`/home/david/projects/psp-dock-build/native-dock-0308` y publica los resultados en
+`/home/<usuario>/projects/psp-dock-build/native-dock-0308` y publica los resultados en
 `homebrew/native-dock/dist`. No instala ni abre una PSP. En WSL donde LeakSanitizer
 no sea compatible se puede usar `ASAN_OPTIONS=detect_leaks=0:halt_on_error=1`;
 AddressSanitizer y UndefinedBehaviorSanitizer siguen ejecutándose.
@@ -260,7 +260,7 @@ el analógico para armar nuevamente el mando.
 ## Construcción y verificación
 
 `bash homebrew/native-dock/build-wsl.sh` compila una copia separada en
-`/home/david/projects/psp-dock-build/native-dock-0302`. No instala ni abre la PSP.
+`/home/<usuario>/projects/psp-dock-build/native-dock-0302`. No instala ni abre la PSP.
 Incluye título exacto **PSP Dock**, ICON0/PIC0/PIC1 locales y sus licencias. No lee
 arte desde ms0 cuando Sony USBSTOR ya está activo.
 

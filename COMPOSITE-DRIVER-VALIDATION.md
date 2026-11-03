@@ -191,7 +191,7 @@ comportamiento de caso 5 requiere la siguiente comprobación física.
 
 Recibo: `data/msc-0207-evidence/installation.json`. Build y tests están
 en esa misma carpeta. La 0206 anterior queda archivada y verificada en
-`C:\Users\ladir\Documents\PSP-Dock-Backups\msc-0206-before-0207-20261101-220716`.
+`%USERPROFILE%\Documents\PSP-Dock-Backups\msc-0206-before-0207-20261101-220716`.
 El título SFO es **PSP Dock - USB Storage + HID 0207**; ICON0, PIC0 y PIC1
 coinciden byte a byte con las fuentes revisadas de 0206.
 
@@ -276,7 +276,7 @@ carpeta de prueba.
   si falla el journal tras mover la versión anterior.
 - Backup crítico renovado y verificado antes del upgrade: **42 archivos,
   4.908.072 bytes**, en
-  `C:\Users\ladir\Documents\PSP-Dock-Backups\20261101-223608-84466104`.
+  `%USERPROFILE%\Documents\PSP-Dock-Backups\20261101-223608-84466104`.
 
 Estos tests de 0206 verifican software en PC; no equivalen a su
 aceptación física. La suite histórica de 104 casos Windows pertenece a
@@ -296,7 +296,7 @@ Storage + HID 0206**. El recibo está en
 | `dockmsc.prx` | 28.954 bytes | `40e710910b20c76fe1230254abc74070b085734e5f859b004980c188039cd6a7` |
 
 La instalación anterior 0205 se verificó y quedó archivada en
-`C:\Users\ladir\Documents\PSP-Dock-Backups\msc-0205-before-0206-20261101-214211`.
+`%USERPROFILE%\Documents\PSP-Dock-Backups\msc-0205-before-0206-20261101-214211`.
 El journal del upgrade conserva las fases de la sustitución. El PSP Dock
 estable permanece en su carpeta independiente. Estos datos prueban la
 instalación y su integridad; el montaje, la lectura y el movimiento HID
