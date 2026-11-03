@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/hrydgard/ppsspp.git",
+  "version": "1.20.4",
+  "commit": "fa50bb1976065c4f8b1b47af227d367fe9771555",
+  "activity_sha256": "67c857669e32ab4b4f0695f5f6f4c792cbccaf6b1a07d8b01539633f2f4d1b5b",
+  "document_proxy_sha256": "1a0ab50f16312829691dd8a9e024274102019851df0364b1e03f1caed9ebc51f",
+  "content_uri_sha256": "a12f4f0e4484cb87c9e4490f3981ae988f1101ff6b28cba00f34f6b682dc0212"
+}
