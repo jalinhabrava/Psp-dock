@@ -1,5 +1,20 @@
 # PSP Dock
 
+## Sonidos originales desde tu propia PSP (0308)
+
+Esta rama prepara la importación automática de los sonidos del XMB desde la
+PSP conectada. La distribución contiene el lector y el decodificador; los
+sonidos se obtienen de la consola y permanecen en la caché privada del PC.
+La primera versión reconoce el recurso original de PSP 6.61 non-Go.
+
+El homebrew 0308 prepara el recurso antes de activar USB; Windows lo valida e
+importa durante el inventario inicial. Se reutiliza cualquier caché válida y
+un recurso ausente o no compatible no bloquea la biblioteca ni las partidas.
+La prueba física de este nuevo paso sigue pendiente: preparar o compilar el
+paquete no significa que ya esté instalado en una PSP.
+
+[Flujo, compatibilidad y validación](docs/XMB-SONIDOS-DESDE-PSP.md).
+
 ## Estado actual: PSP Dock instalado; aceptación física pendiente
 
 La aplicación se llama **PSP Dock** en Windows y en la PSP. Conserva el nombre,

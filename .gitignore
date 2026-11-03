@@ -49,6 +49,11 @@ copy-decisions.json
 *.webp
 *.mp3
 *.wav
+*.rco
+*.RCO
+*.vag
+*.VAG
+xmb-ui-sounds/
 *.bak
 *.dmp
 *.sqlite
@@ -113,6 +118,7 @@ docs/*
 !docs/PRUEBA-INTEGRAL-SIMULADA.md
 !docs/INICIO-AUTOMATICO-WINDOWS.md
 !docs/VIABILIDAD.md
+!docs/XMB-SONIDOS-DESDE-PSP.md
 
 # Reviewed PSP Dock artwork embedded in the composite test EBOOT.
 !homebrew/composite-mscdemo/assets/ICON0.PNG

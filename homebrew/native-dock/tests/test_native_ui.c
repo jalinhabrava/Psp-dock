@@ -188,6 +188,6 @@ int main(void) {
     s.phase=PDN_PHASE_ERROR;s.error=0;v=pdn_ui_present(&s,0);
     assert(v.warning);assert(!v.exit_hint[0]);no_active_instructions(&v);
 
-    puts("Native 0307 UI: RAM snapshot, raw EP0, host confirmation, progress, errors and close gate PASS");
+    puts("Native 0308 UI: RAM snapshot, raw EP0, host confirmation, progress, errors and close gate PASS");
     return 0;
 }

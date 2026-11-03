@@ -1,4 +1,4 @@
-"""Product artwork, protocol identity and independent 0307 package gates."""
+"""Product artwork, protocol identity and independent 0308 package gates."""
 import hashlib
 import json
 from pathlib import Path
@@ -19,7 +19,7 @@ def pbp(title=package.TITLE, *, sfo_data=None, replacements=None):
 
 
 def abi_for(raw=b'NATIVE-ELF-FIXTURE'):
-    return {'revision': '0307', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+    return {'revision': '0308', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
             'mandatory_modules': ['flash0:/kd/semawm.prx', 'flash0:/kd/usbstor.prx',
                                   'flash0:/kd/usbstormgr.prx', 'flash0:/kd/usbstorms.prx'],
             'optional_bootstrap_modules': [],
@@ -28,8 +28,10 @@ def abi_for(raw=b'NATIVE-ELF-FIXTURE'):
             'firmware_identity_in_protocol': True, 'host_begin_required': True,
             'host_progress_supported': True, 'host_shutdown_supported': True,
             'usb_revision_is_firmware_revision': False,
-            'firmware_build_id': '03070001', 'protocol_capabilities': '000F',
+            'firmware_build_id': '03080001', 'protocol_capabilities': '000F',
             'command_transport': 'output4-fragments-crc16',
+            'resource_export_gate': 'PDXG/1-before-usb-start',
+            'ui_sounds_ready_supported': True,
             'storage_backend': 'native Sony USBStor_Driver', 'kernel_filesystem_imports': [],
             'early_sony_boot_imports': [], 'expected_pid': '01CD',
             'wire_identity_verified': False, 'sony_composition_physically_verified': False,
@@ -46,12 +48,13 @@ def fixture_native_package(root: Path) -> Path:
     for name, raw in blobs.items():
         (folder / name).write_bytes(raw)
         records[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
-    manifest = {'schema': package.SCHEMA, 'revision': '0307', 'folder': package.REMOTE_FOLDER,
+    manifest = {'schema': package.SCHEMA, 'revision': '0308', 'folder': package.REMOTE_FOLDER,
                 'expected_usb_identity': dict(package.USB_IDENTITY),
                 'expected_protocol_identity': dict(package.PROTOCOL_IDENTITY), 'synthetic_storage': False,
                 'storage_backend': 'native Sony USBStor_Driver', 'storage_read_only': False,
                 'real_memory_stick_access_requested': True, 'installed_on_psp': False,
                 'hardware_execution_verified': False, 'compiled_abi': abi_for(),
+                'resource_export': dict(package.RESOURCE_EXPORT),
                 'user_module_verified': True, 'files': records,
                 'xmb': package.audit_pbp(blobs['EBOOT.PBP'])}
     (root / 'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
@@ -63,8 +66,8 @@ class NativeCompiledPolicyTests(unittest.TestCase):
         self.auditor = package._kernel_auditor()
         self.blobs = {
             'pdn_wire_prefix': b'PDK2\x03',
-            'pdn_identity': struct.pack('<4sHHI', b'NAT3', 0x0307, 0x000F, 0x03070001),
-            'pdn_protocol_abi': bytes.fromhex('50444e4103400804010203043f01010005'),
+            'pdn_identity': struct.pack('<4sHHI', b'NAT3', 0x0308, 0x000F, 0x03080001),
+            'pdn_protocol_abi': bytes.fromhex('50444e4103400804010203047f01010005'),
             'pdn_transport_abi': b'PDF4' + bytes((32, 2, 0xc0, 64, 0xe0, 16)),
         }
 
@@ -76,13 +79,14 @@ class NativeCompiledPolicyTests(unittest.TestCase):
     def test_shutdown_policy_is_derived_from_compiled_identity_and_abi(self):
         abi, policy = self.auditor._compiled_protocol(self.compiled())
         self.assertEqual(len(abi), 17)
-        self.assertEqual(policy['revision'], '0307')
-        self.assertEqual(policy['firmware_build_id'], '03070001')
+        self.assertEqual(policy['revision'], '0308')
+        self.assertEqual(policy['firmware_build_id'], '03080001')
         self.assertEqual(policy['protocol_capabilities'], '000F')
         self.assertIs(policy['host_shutdown_supported'], True)
+        self.assertIs(policy['ui_sounds_ready_supported'], True)
 
     def test_compiled_shutdown_opcode_and_status_flag_are_mandatory(self):
-        for offset, value in ((16, 0), (16, 4), (16, 6), (12, 31), (12, 127)):
+        for offset, value in ((16, 0), (16, 4), (16, 6), (12, 31), (12, 63), (12, 255)):
             changed = bytearray(self.blobs['pdn_protocol_abi'])
             changed[offset] = value
             with self.subTest(offset=offset, value=value), self.assertRaises(ValueError):
@@ -90,7 +94,7 @@ class NativeCompiledPolicyTests(unittest.TestCase):
 
     def test_compiled_capabilities_are_exact_not_just_shutdown_bit(self):
         for capabilities in (0x0007, 0x0008, 0x001F):
-            identity = struct.pack('<4sHHI', b'NAT3', 0x0307, capabilities, 0x03070001)
+            identity = struct.pack('<4sHHI', b'NAT3', 0x0308, capabilities, 0x03080001)
             with self.subTest(capabilities=capabilities), self.assertRaises(ValueError):
                 self.auditor._compiled_protocol(self.compiled(pdn_identity=identity))
 
@@ -136,6 +140,36 @@ class NativePackageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             package.audit_pbp(pbp(title=package.TITLE, replacements={'ICON0.PNG': changed}))
 
+    def test_packaged_homebrew_never_embeds_system_sound(self):
+        raw = pbp()
+        offsets = list(struct.unpack_from('<8I', raw, 8))
+        sound_at = offsets[5]
+        # Synthetic placeholder only; no Sony fixture is used in this test.
+        audio = b'SYNTHETIC-SOUND-MUST-NOT-SHIP'
+        changed = bytearray(raw[:sound_at] + audio + raw[sound_at:])
+        offsets[6] += len(audio)
+        offsets[7] += len(audio)
+        struct.pack_into('<8I', changed, 8, *offsets)
+        with self.assertRaisesRegex(ValueError, 'audio SND0'):
+            package.audit_pbp(bytes(changed))
+
+    def test_export_contract_is_exact_and_does_not_claim_physical_verification(self):
+        root = fixture_native_package(self.root / 'package')
+        file = root / 'manifest.json'
+        original = json.loads(file.read_text())
+        for changes in ({'source': 'flash1:/system_plugin.rco'},
+                        {'destination': 'ms0:/PSP/SAVEDATA/system_plugin.rco'},
+                        {'max_bytes': 131073}, {'user_io_imports_reviewed': 1},
+                        {'usb_start_gate': 'none'}, {'physical_export_verified': True}):
+            changed = {**original, 'resource_export': {**package.RESOURCE_EXPORT, **changes}}
+            file.write_text(json.dumps(changed))
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                package.verify_package(root)
+        file.write_text(json.dumps({key: value for key, value in original.items()
+                                    if key != 'resource_export'}))
+        with self.assertRaises(ValueError):
+            package.verify_package(root)
+
     def test_native_schema_rejects_legacy_identity_or_fake_physical_acceptance(self):
         root = fixture_native_package(self.root / 'package')
         file = root / 'manifest.json'
@@ -148,9 +182,9 @@ class NativePackageTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 package.verify_package(root)
         file.write_text(json.dumps(original))
-        self.assertEqual(package.verify_package(root)['revision'], '0307')
+        self.assertEqual(package.verify_package(root)['revision'], '0308')
 
-    def test_old_or_optional_bootstrap_is_not_a_valid_0307_audit(self):
+    def test_old_or_optional_bootstrap_is_not_a_valid_0308_audit(self):
         root = fixture_native_package(self.root / 'package')
         file = root / 'manifest.json'
         original = json.loads(file.read_text())
@@ -163,6 +197,8 @@ class NativePackageTests(unittest.TestCase):
                         {'usb_revision_is_firmware_revision': True}, {'firmware_build_id': '03020001'},
                         {'firmware_build_id': '03030001'}, {'firmware_build_id': '03040001'},
                         {'protocol_capabilities': '0001'}, {'protocol_capabilities': '0007'},
+                        {'resource_export_gate': None}, {'resource_export_gate': 'none'},
+                        {'ui_sounds_ready_supported': False}, {'ui_sounds_ready_supported': 1},
                         {'host_shutdown_supported': False}, {'host_shutdown_supported': 1}):
             changed = {**original, 'compiled_abi': {**original['compiled_abi'], **changes}}
             file.write_text(json.dumps(changed))
@@ -180,7 +216,7 @@ class NativePackageTests(unittest.TestCase):
         file = root / 'manifest.json'
         original = json.loads(file.read_text())
         for key, value in (
-                ('expected_usb_identity', {'vid': '054C', 'pid': '01CD', 'revision': '0307'}),
+                ('expected_usb_identity', {'vid': '054C', 'pid': '01CD', 'revision': '0308'}),
                 ('expected_protocol_identity', None),
                 ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'version': 2}),
                 ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'firmware_revision': '0301'}),
@@ -212,7 +248,8 @@ class NativePackageTests(unittest.TestCase):
         raw = b'NATIVE-ELF-FIXTURE';(source / 'docknative.elf').write_bytes(raw)
         abi = abi_for(raw)
         producer = {**abi, 'pbp_sha256': package.digest(source / 'EBOOT.PBP'),
-                    'user_app': {'user_module_verified': True, 'privileged_usb_or_kernel_imports': []}}
+                    'user_app': {'user_module_verified': True, 'privileged_usb_or_kernel_imports': [],
+                                 'resource_export': dict(package.RESOURCE_EXPORT)}}
         (source / 'compiled-audit.json').write_text(json.dumps(producer))
         auditor = SimpleNamespace(audit=Mock(return_value=abi))
         with patch.object(package, '_kernel_auditor', return_value=auditor):
@@ -221,6 +258,12 @@ class NativePackageTests(unittest.TestCase):
         self.assertFalse(result['hardware_execution_verified'])
         self.assertEqual(result['files'], 4)
         package.verify_package(self.root / 'native')
+        producer['user_app'].pop('resource_export')
+        (source / 'compiled-audit.json').write_text(json.dumps(producer))
+        with patch.object(package, '_kernel_auditor', return_value=auditor), self.assertRaises(ValueError):
+            package.make_package(self.root / 'no-export-audit', dist=source)
+        self.assertFalse((self.root / 'no-export-audit').exists())
+        producer['user_app']['resource_export'] = dict(package.RESOURCE_EXPORT)
         producer['pbp_sha256'] = '0'*64
         (source / 'compiled-audit.json').write_text(json.dumps(producer))
         with patch.object(package, '_kernel_auditor', return_value=auditor), self.assertRaises(ValueError):

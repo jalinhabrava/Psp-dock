@@ -3,13 +3,14 @@
 #define PSPDOCK_NATIVE_COMMON_H
 #include <stdint.h>
 #include "native_protocol.h"
+#include "native_resource_export.h"
 
 #define PDN_DRIVER_NAME "PSPDockNativeHID"
 /* Lab identity, not an allocated production Sony VID/PID. */
 #define PDN_PRODUCT 0x01cdu
 #define PDN_REVISION PDN_FIRMWARE_REVISION
-/* PDN7 rejects a mixed launcher/kernel before starting any worker. */
-#define PDN_LAUNCH_MAGIC 0x374e4450u
+/* PDN8 adds a USER-owned, pre-USB resource-export acknowledgement. */
+#define PDN_LAUNCH_MAGIC 0x384e4450u
 #define PDN_DEPENDENCIES 4u
 
 enum PdnStage {
@@ -18,7 +19,7 @@ enum PdnStage {
     PDN_STAGE_HID_START=6, PDN_STAGE_STORAGE_START=7, PDN_STAGE_ACTIVATE=8,
     PDN_STAGE_READY=9, PDN_STAGE_CONNECTED=10, PDN_STAGE_RECONNECT=11,
     PDN_STAGE_WAIT_UNPLUG=12, PDN_STAGE_STOPPING=13, PDN_STAGE_STOPPED=14,
-    PDN_STAGE_ERROR=255
+    PDN_STAGE_RESOURCE_EXPORT=15, PDN_STAGE_ERROR=255
 };
 enum PdnStopReason {
     PDN_STOP_NONE=0, PDN_STOP_USER=1, PDN_STOP_CABLE=2,
@@ -53,9 +54,13 @@ typedef struct {
      * arrived. GET_REPORT does not replace this last-SET evidence. */
     uint8_t raw[PDN_FEATURE_SIZE];
 } PdnEp0Diagnostic;
-/* Kernel owns every field except request_stop. USER keeps this allocation
+/* Kernel owns every field except request_stop, export_done and export_result.
+ * USER writes export_result then export_done only after all file handles have
+ * closed and Memory Stick changes have synced. Kernel may revoke permission
+ * but can never start USB on timeout or a missing/unsafe acknowledgement.
+ * USER keeps this allocation
  * until safe_to_unload and successful StopModule/UnloadModule. */
-typedef struct {
+typedef struct PdnSharedStatus {
     uint32_t magic,size;
     volatile uint32_t request_stop,stage,safe_to_unload;
     volatile int32_t error,cleanup_error;
@@ -74,6 +79,8 @@ typedef struct {
     volatile uint64_t completed,total;
     volatile PdnEp0Diagnostic ep0;
     volatile uint32_t worker_loops,worker_site,apply_count;
+    volatile uint32_t export_request,export_done;
+    volatile int32_t export_result;
 } PdnSharedStatus;
 typedef struct {
     uint32_t magic,size;

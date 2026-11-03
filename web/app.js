@@ -2268,8 +2268,19 @@ function xmbBuildSections() {
           xmbPreviewGame(null);
           xmbPreviewGame(previous);
         }) },
-    { key: 'menu-sound', t: 'Sonidos originales del XMB', icon: 'info',
-      s: () => xmb.menuSound ? 'Activados · cursor, confirmar y volver' : 'Silenciados',
+    { key: 'menu-sound', t: 'Sonidos de navegación', icon: 'info',
+      s: () => !xmb.menuSound ? 'Silenciados' : state.product_flow?.ui_sounds?.ready ?
+        'Activados · sonidos originales del XMB' :
+        state.product_flow?.ui_sounds?.status === 'unsupported' ?
+        'Sonidos no compatibles en esta PSP' :
+        state.product_flow?.ui_sounds?.status === 'cache_unavailable' ?
+        'No se pudieron guardar los sonidos en el PC' :
+        state.product_flow?.ui_sounds?.status === 'unavailable' ?
+        'No se pudo leer el recurso de sonidos' :
+        state.product_flow?.ui_sounds?.status === 'missing_export' ?
+        (state.controller_status?.firmware_revision >= 0x0308 ?
+          'No se pudieron obtener de esta PSP' : 'Actualiza PSP Dock en tu PSP') :
+        'Se preparan al conectar tu PSP',
       activate: () => xmbValues('Sonidos de navegación', [['on','Activados'],['off','Silenciados']],
         xmb.menuSound ? 'on' : 'off', (value) => {
           xmb.menuSound = value === 'on';
@@ -2914,10 +2925,10 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
     node.style.opacity = collapsed ? '.45' : r < 0 ? (r === -1 ? '.55' : '.25') : '';
     node.onclick = () => {
       if (xmbConnectionView().waiting) return;
-      if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
+      if (prefix === 'sub:') { if (r === 0) xmbPress('accept'); else { xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, subIdx: i }; xmbRender(); } }
       else if (collapsed) xmbPress('back');
       else if (r === 0) xmbPress('accept');
-      else { xmb.nav = { ...xmb.nav, idx: { ...xmb.nav.idx, [xmb.sections[xmb.nav.cat].id]: i } }; xmbRender(); }
+      else { xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, idx: { ...xmb.nav.idx, [xmb.sections[xmb.nav.cat].id]: i } }; xmbRender(); }
     };
     if (node.parentNode !== list) list.append(node);
   });
@@ -2956,7 +2967,7 @@ function xmbRender() {
       node.style.left = (XMB_CAT_X + i * XMB_CAT_GAP) + 'cqw';
       node.innerHTML = XMB_ICONS[item.id] + '<span></span><em class="xmb-badge" hidden></em>';
       node.querySelector('span').textContent = item.label;
-      node.addEventListener('click', () => { if (xmbConnectionView().waiting) return; xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
+      node.addEventListener('click', () => { if (xmbConnectionView().waiting) return; if (xmb.nav.cat !== i) xmbMenuClick('cursor'); xmb.nav = { ...xmb.nav, cat: i, level: 'list', side: null, confirm: null }; xmb.sub = null; xmbRender(); });
       return node;
     }));
   }

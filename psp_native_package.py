@@ -1,4 +1,4 @@
-"""Build a new, audited 0307 package on the PC. Never accesses a PSP.
+"""Build a new, audited 0308 package on the PC. Never accesses a PSP.
 
 The four installable files target PSPDockNative only. PDK1/0207 schemas and
 guards are not reused as a substitute for native-storage validation.
@@ -24,9 +24,16 @@ FIRMWARE = BASE / 'homebrew/native-dock'
 ASSETS = FIRMWARE / 'assets'
 REMOTE_FOLDER = 'PSP/GAME/PSPDockNative'
 TITLE = 'PSP Dock'
-USB_IDENTITY = {'vid': '054C', 'pid': '01CD', 'accepted_bcd_device': ['0100', '0307']}
-PROTOCOL_IDENTITY = {'magic': 'PDK2', 'version': 3, 'firmware_revision': '0307',
-                     'build_id': '03070001', 'capabilities': '000F', 'feature_payload_bytes': 64}
+USB_IDENTITY = {'vid': '054C', 'pid': '01CD', 'accepted_bcd_device': ['0100', '0308']}
+PROTOCOL_IDENTITY = {'magic': 'PDK2', 'version': 3, 'firmware_revision': '0308',
+                     'build_id': '03080001', 'capabilities': '000F', 'feature_payload_bytes': 64}
+RESOURCE_EXPORT = {
+    'source': 'flash0:/vsh/resource/system_plugin.rco',
+    'destination': 'ms0:/PSP/SYSTEM/PSPDock/xmb/system_plugin.rco',
+    'temporary': 'ms0:/PSP/SYSTEM/PSPDock/xmb/.system_plugin.rco.pspdock-tmp',
+    'max_bytes': 131072, 'contract': 'PDEX/1', 'user_io_imports_reviewed': True,
+    'usb_start_gate': 'shared-ram-before-usb-start', 'physical_export_verified': False,
+}
 FILES = ('EBOOT.PBP', 'docknative.prx', 'LICENSE-FuSa-GPL-3.0.txt', 'LICENSE-DejaVu.txt')
 SCHEMA = 'pspdock-native-package-v2'
 
@@ -49,6 +56,8 @@ def audit_pbp(raw: bytes, *, assets: Path = ASSETS) -> dict:
         raise ValueError('Secciones PBP nativas no válidas.')
     if raw[offsets[6]:offsets[6]+4] not in (b'\x7fELF', b'~PSP'):
         raise ValueError('Falta el ejecutable PSP dentro del paquete nativo.')
+    if offsets[5] != offsets[6]:
+        raise ValueError('El paquete no debe incluir audio SND0: se importa desde la PSP del usuario.')
     sfo = raw[offsets[0]:offsets[1]]
     if len(sfo) < 20 or sfo[:4] != b'\0PSF':
         raise ValueError('Falta PARAM.SFO nativo.')
@@ -96,7 +105,7 @@ def _kernel_auditor():
 
 
 def _valid_abi(abi: dict) -> bool:
-    expected = {'revision': '0307', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+    expected = {'revision': '0308', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
                 'mandatory_modules': ['flash0:/kd/semawm.prx', 'flash0:/kd/usbstor.prx',
                                       'flash0:/kd/usbstormgr.prx', 'flash0:/kd/usbstorms.prx'],
                 'optional_bootstrap_modules': [],
@@ -105,8 +114,10 @@ def _valid_abi(abi: dict) -> bool:
                 'firmware_identity_in_protocol': True, 'host_begin_required': True,
                 'host_progress_supported': True, 'host_shutdown_supported': True,
                 'usb_revision_is_firmware_revision': False,
-                'firmware_build_id': '03070001', 'protocol_capabilities': '000F',
+                'firmware_build_id': '03080001', 'protocol_capabilities': '000F',
                 'command_transport': 'output4-fragments-crc16',
+                'resource_export_gate': 'PDXG/1-before-usb-start',
+                'ui_sounds_ready_supported': True,
                 'storage_backend': 'native Sony USBStor_Driver', 'kernel_filesystem_imports': [],
                 'early_sony_boot_imports': [], 'expected_pid': '01CD',
                 'wire_identity_verified': False, 'sony_composition_physically_verified': False,
@@ -114,6 +125,13 @@ def _valid_abi(abi: dict) -> bool:
                 'safe_phase_is_windows_eject_proof': False}
     return (isinstance(abi, dict) and all(type(abi.get(k)) is type(v) and abi.get(k) == v for k, v in expected.items())
             and isinstance(abi.get('sha256'), str) and bool(re.fullmatch('[0-9a-f]{64}', abi['sha256'])))
+
+
+def _valid_resource_export(value: dict) -> bool:
+    # This is a compiled contract/import audit, not hardware execution proof.
+    return (isinstance(value, dict) and set(value) == set(RESOURCE_EXPORT) and
+            all(type(value.get(key)) is type(expected) and value.get(key) == expected
+                for key, expected in RESOURCE_EXPORT.items()))
 
 
 def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
@@ -126,13 +144,14 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
             raise ValueError('Falta una compilación nativa completa: ' + name)
     abi = _kernel_auditor().audit((source / 'docknative.elf').read_bytes())
     if not _valid_abi(abi) or abi['sha256'] != digest(source / 'docknative.elf'):
-        raise ValueError('La auditoría no corresponde al ELF nativo 0307.')
+        raise ValueError('La auditoría no corresponde al ELF nativo 0308.')
     producer = json.loads((source / 'compiled-audit.json').read_text(encoding='utf-8'))
     if (not isinstance(producer, dict) or any(producer.get(k) != v for k, v in abi.items()) or
             producer.get('pbp_sha256') != digest(source / 'EBOOT.PBP') or
             not isinstance(producer.get('user_app'), dict) or
             producer.get('user_app', {}).get('user_module_verified') is not True or
-            producer.get('user_app', {}).get('privileged_usb_or_kernel_imports') != []):
+            producer.get('user_app', {}).get('privileged_usb_or_kernel_imports') != [] or
+            not _valid_resource_export(producer.get('user_app', {}).get('resource_export'))):
         raise ValueError('El informe de compilación no acredita este ELF/PBP y su launcher USER.')
     visual = audit_pbp((source / 'EBOOT.PBP').read_bytes())
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -151,13 +170,14 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
     if (digest(source / 'docknative.elf') != abi['sha256'] or
             records['EBOOT.PBP']['sha256'] != producer['pbp_sha256']):
         raise ValueError('La compilación cambió tras su auditoría.')
-    manifest = {'schema': SCHEMA, 'revision': '0307', 'folder': REMOTE_FOLDER,
+    manifest = {'schema': SCHEMA, 'revision': '0308', 'folder': REMOTE_FOLDER,
                 'built_utc': datetime.now(timezone.utc).isoformat(),
                 'expected_usb_identity': dict(USB_IDENTITY),
                 'expected_protocol_identity': dict(PROTOCOL_IDENTITY), 'synthetic_storage': False,
                 'storage_backend': 'native Sony USBStor_Driver', 'storage_read_only': False,
                 'real_memory_stick_access_requested': True, 'installed_on_psp': False,
                 'hardware_execution_verified': False, 'compiled_abi': abi,
+                'resource_export': dict(RESOURCE_EXPORT),
                 'user_module_verified': True, 'xmb': visual, 'files': records}
     with (stage / 'manifest.json').open('x', encoding='utf-8') as writer:
         json.dump(manifest, writer, ensure_ascii=False, indent=2);writer.write('\n')
@@ -172,6 +192,8 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
         'Abrir PSP Dock en Windows y salir de Conexion USB en el XMB de la PSP.\n'
         'El cable puede permanecer conectado si el USB del XMB ya esta inactivo.\n'
         'Abrir PSP Dock en la PSP y pulsar X para iniciar la conexion.\n'
+        'Antes de activar USB, la app puede preparar una copia local del recurso de sonidos de esta PSP.\n'
+        'El paquete no incluye sonidos del sistema; Windows importa y verifica los cuatro efectos compatibles.\n'
         'Windows comprueba la conexión y muestra el inventario y el avance real de cada operación.\n'
         'Elegir partidas, juegos, todo o no copiar; al terminar se activa la navegación con la PSP.\n'
         'Las copias bloquean el mando; al salir se devuelven sólo partidas y datos de emuladores compatibles; los estados sin formato verificado se conservan en el PC.\n'
@@ -184,7 +206,7 @@ def make_package(destination: Path, *, dist: Path = FIRMWARE / 'dist') -> dict:
         raise FileExistsError('El destino apareció durante el empaquetado.')
     stage.rename(target)
     verify_package(target)
-    return {'package': str(target), 'revision': '0307', 'files': len(FILES), 'xmb': visual,
+    return {'package': str(target), 'revision': '0308', 'files': len(FILES), 'xmb': visual,
             'installed_on_psp': False, 'hardware_execution_verified': False}
 
 
@@ -196,7 +218,7 @@ def verify_package(path: Path) -> dict:
         raise ValueError('Manifiesto nativo ausente o no válido.')
     manifest = json.loads(manifest_file.read_text(encoding='utf-8'))
     if (not isinstance(manifest, dict) or manifest.get('schema') != SCHEMA or
-            manifest.get('revision') != '0307' or manifest.get('folder') != REMOTE_FOLDER or
+            manifest.get('revision') != '0308' or manifest.get('folder') != REMOTE_FOLDER or
             manifest.get('expected_usb_identity') != USB_IDENTITY or
             manifest.get('expected_protocol_identity') != PROTOCOL_IDENTITY or
             manifest.get('synthetic_storage') is not False or
@@ -205,9 +227,10 @@ def verify_package(path: Path) -> dict:
             manifest.get('real_memory_stick_access_requested') is not True or
             manifest.get('hardware_execution_verified') is not False or
             manifest.get('user_module_verified') is not True or
+            not _valid_resource_export(manifest.get('resource_export')) or
             not _valid_abi(manifest.get('compiled_abi')) or
             not isinstance(manifest.get('files'), dict) or set(manifest['files']) != set(FILES)):
-        raise ValueError('No es el paquete PSP Dock 0307 revisado.')
+        raise ValueError('No es el paquete PSP Dock 0308 revisado.')
     folder = root / REMOTE_FOLDER
     _no_links(folder)
     if not folder.is_dir() or {p.name for p in folder.iterdir()} != set(FILES):

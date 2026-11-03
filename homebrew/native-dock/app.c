@@ -13,7 +13,7 @@
 #include "native_common.h"
 #include "native_ui.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,7);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,8);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;
@@ -231,9 +231,9 @@ int main(void) {
     memset(&state,0,sizeof(state));state.magic=PDN_LAUNCH_MAGIC;state.size=sizeof(state);
     launch.magic=PDN_LAUNCH_MAGIC;launch.size=sizeof(launch);launch.shared=&state;
     ui_clear_body();ui_line(68,UI_TEAL,"Preparando PSP Dock...");
-    /* Last Memory Stick access by this launcher: every UI asset is already
-     * resident. The kernel loads only native read-only flash PRXs before
-     * activating Sony USBSTOR. No file opens occur during the USB session.
+    /* UI assets are resident. The kernel's idle preflight grants one bounded
+     * USER resource export before starting the USB bus. No file opens occur
+     * after the shared export acknowledgement or during the USB session.
      */
     module=sceKernelLoadModule("ms0:/PSP/GAME/PSPDockNative/docknative.prx",0,NULL);
     if(module<0){
@@ -248,6 +248,11 @@ int main(void) {
         wait_cancel();sceKernelExitGame();return 0;
     }
     for(;;){
+        if(state.export_request==PDN_EXPORT_REQUESTED && !state.export_done){
+            int exported=pdn_export_user(&state);
+            state.export_result=exported;
+            __sync_synchronize();state.export_done=1;
+        }
         sceCtrlPeekBufferPositive(&pad,1);
         if((pad.Buttons&(PSP_CTRL_START|PSP_CTRL_SELECT))==(PSP_CTRL_START|PSP_CTRL_SELECT)){
             if(++hold>=10)state.request_stop=1;

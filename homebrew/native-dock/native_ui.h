@@ -169,6 +169,10 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         PDN_UI_TEXT(heading,"Cerrando PSP Dock");
         PDN_UI_TEXT(context,"Espera a que termine el cierre de la conexion.");
         PDN_UI_TEXT(action,"Volver al XMB aparecera cuando sea posible.");
+    }else if(s->stage==PDN_STAGE_RESOURCE_EXPORT){
+        PDN_UI_TEXT(heading,"Preparando PSP Dock");
+        PDN_UI_TEXT(context,"Preparando los sonidos de tu PSP.");
+        PDN_UI_TEXT(action,"Espera un momento.");
     }else if(s->stage<PDN_STAGE_READY){
         PDN_UI_TEXT(heading,"Preparando PSP Dock");
         PDN_UI_TEXT(context,"Espera un momento.");

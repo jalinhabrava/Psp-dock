@@ -1,6 +1,6 @@
-"""Explicit, recoverable replacement of reviewed native 0300/0301/0302/0303/0304 applications.
+"""Explicit, recoverable replacement of reviewed native 0300 through 0307 applications.
 
-Only four pinned files of a known revision may be replaced by audited 0307.
+Only four pinned files of a known revision may be replaced by audited 0308.
 The old application is copied to a new fixed-PC backup before any PSP write.
 Directory parking and staging stay outside PSP/GAME; no old launcher can
 accidentally load the new PRX from its hard-coded PSPDockNative pathname.
@@ -24,14 +24,15 @@ from psp_native_package import FILES, REMOTE_FOLDER, digest, verify_package
 from psp_usb import identify, UsbTransitionError
 
 
-TO_REVISION = '0307'
+TO_REVISION = '0308'
 REVIEWED_TRANSITIONS = frozenset({('0300', '0301'), ('0300', '0302'), ('0301', '0302'),
                                 ('0300', '0303'), ('0301', '0303'), ('0302', '0303'),
                                 ('0300', '0304'), ('0301', '0304'), ('0302', '0304'), ('0303', '0304'),
                                 ('0300', '0305'), ('0301', '0305'), ('0302', '0305'), ('0303', '0305'),
                                 ('0304', '0305'), ('0300', '0306'), ('0301', '0306'),
                                 ('0302', '0306'), ('0303', '0306'), ('0304', '0306'), ('0305', '0306'),
-                                *((old, '0307') for old in ('0300','0301','0302','0303','0304','0305','0306'))})
+                                *((old, '0307') for old in ('0300','0301','0302','0303','0304','0305','0306')),
+                                *((old, '0308') for old in ('0300','0301','0302','0303','0304','0305','0306','0307'))})
 SCHEMA = 'pspdock-native-upgrade-receipt-v1'
 BACKUP_SCHEMA = 'pspdock-native-application-backup-v1'
 OLD_RECEIPT_SHA256 = 'e608ccd22a96bf82c6ae88ddf8a364740c602c40d0c04c66010c51055670dab2'
@@ -41,6 +42,7 @@ RECEIPT_0303_SHA256 = '17bbdd13c46763a3edac4a498385015f8075a58ff17103bbba6047b6e
 RECEIPT_0304_SHA256 = '4d3eddbc92fa355669d492ac751e3f32d9f227d2093685fa66fc56eb14a40c86'
 RECEIPT_0305_SHA256 = 'b4baab9905dd25b22bd72bdc1441a4da13f61b6c054b10c3606252b84586ac0b'
 RECEIPT_0306_SHA256 = 'c4a14f2d00e8f8ac439a69db10b6b9a6b1646199e8bec5a73c48907436ed7418'
+RECEIPT_0307_SHA256 = 'e4d317530265826bde9dae7c8bfd531ebb4480115fef4818504e3502d18e2ca4'
 # Reviewed installation receipt, not hashes inferred from the mounted PSP.
 KNOWN_0300_FILES = {
     'EBOOT.PBP': {'size': 301968, 'sha256': '5c981962c4eef43f0ce604df89070776217cb548f57f7e65e4cfc766c81983fd'},
@@ -106,6 +108,16 @@ KNOWN_0306_FILES = {
 }
 
 
+# Installed 0307 receipt, verified 2026-11-02T21:53:47.886000Z. These are
+# retained PC receipt/package anchors, never adopted from a connected PSP.
+KNOWN_0307_FILES = {
+    'EBOOT.PBP': {'size': 313161, 'sha256': '92c8c683f2975d11530b18c6e88212a9e77bc0b7c49948d8dfe017b39fde609e'},
+    'docknative.prx': {'size': 27146, 'sha256': '15847cada01843359d9b8b9910f34874e376157252e05723229ed16c7ca55b3c'},
+    'LICENSE-FuSa-GPL-3.0.txt': {'size': 35823, 'sha256': '230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809'},
+    'LICENSE-DejaVu.txt': {'size': 2510, 'sha256': '3011f92125603da8baa900d59a6ee3cb981d6bbf0fa0c3d9767690aa92c8439c'},
+}
+
+
 def _known_files(revision: str) -> dict:
     if revision == '0300':
         return KNOWN_0300_FILES
@@ -121,6 +133,8 @@ def _known_files(revision: str) -> dict:
         return KNOWN_0305_FILES
     if revision == '0306':
         return KNOWN_0306_FILES
+    if revision == '0307':
+        return KNOWN_0307_FILES
     raise ValueError('La revisión anterior no pertenece a las aplicaciones verificadas.')
 
 
@@ -129,7 +143,7 @@ def _reference_receipt(revision: str) -> str:
     return {'0300': OLD_RECEIPT_SHA256, '0301': RECEIPT_0301_SHA256,
             '0302': RECEIPT_0302_SHA256, '0303': RECEIPT_0303_SHA256,
             '0304': RECEIPT_0304_SHA256, '0305': RECEIPT_0305_SHA256,
-            '0306': RECEIPT_0306_SHA256}[revision]
+            '0306': RECEIPT_0306_SHA256, '0307': RECEIPT_0307_SHA256}[revision]
 
 
 def _same(same_device) -> None:
@@ -301,13 +315,13 @@ def plan_upgrade(package: Path, root: Path, snapshot: Path, serial: str, usb_id:
         no_links(path)
     manifest = verify_package(package)
     if manifest['revision'] != TO_REVISION:
-        raise ValueError('La actualización sólo admite el paquete nativo 0307.')
+        raise ValueError('La actualización sólo admite el paquete nativo 0308.')
     target = root / REMOTE_FOLDER
     observed = _observed_files(target)
-    candidates = [revision for revision in ('0300', '0301', '0302', '0303', '0304', '0305', '0306')
+    candidates = [revision for revision in ('0300', '0301', '0302', '0303', '0304', '0305', '0306', '0307')
                   if observed == _records(_known_files(revision))]
     if len(candidates) != 1:
-        raise ValueError('La aplicación no coincide con los cuatro archivos revisados de 0300 a 0306.')
+        raise ValueError('La aplicación no coincide con los cuatro archivos revisados de 0300 a 0307.')
     source_revision = candidates[0]
     matching_backup(root, snapshot, serial, usb_id)
     size = sum(record['size'] for record in manifest['files'].values())
@@ -402,7 +416,7 @@ def _upgrade_record(receipt: Path, root: Path, serial: str, usb_id: str) -> dict
             not isinstance(saved.get('app_backup'), str)):
         raise ValueError('El recibo no pertenece a una actualización conocida de esta PSP.')
     _records(saved.get('to_files'))
-    if replacement in ('0301', '0302', '0303', '0304', '0305', '0306') and saved['to_files'] != _known_files(replacement):
+    if replacement in ('0301', '0302', '0303', '0304', '0305', '0306', '0307') and saved['to_files'] != _known_files(replacement):
         raise ValueError('El recibo histórico no conserva la aplicación ' + replacement + ' verificada.')
     _verify_app_backup(saved, root)
     return saved
@@ -496,7 +510,7 @@ def rollback_package(upgrade_receipt: Path, root: Path, serial: str, usb_id: str
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description='Actualizar sólo PSP Dock 0300–0306 conocido a 0307, o restaurar su versión anterior explícitamente')
+    parser = argparse.ArgumentParser(description='Actualizar sólo PSP Dock 0300–0307 conocido a 0308, o restaurar su versión anterior explícitamente')
     parser.add_argument('--drive', required=True)
     action = parser.add_mutually_exclusive_group()
     action.add_argument('--upgrade', action='store_true', help='Ejecutar la actualización; por defecto sólo se muestra el plan')

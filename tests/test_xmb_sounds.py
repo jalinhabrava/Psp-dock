@@ -76,6 +76,12 @@ class UiSoundsTests(unittest.TestCase):
             self.assertFalse(self.player.play('cursor'))
         self.native.assert_not_called()
 
+    def test_deep_manifest_is_optional_failure_not_startup_recursion(self):
+        (self.root / 'manifest.json').write_text('[' * 20000 + '0' + ']' * 20000, encoding='utf-8')
+        self.assertIsNone(self.player.asset('cursor'))
+        self.assertFalse(self.player.play('cursor'))
+        self.native.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

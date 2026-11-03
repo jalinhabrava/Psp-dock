@@ -75,7 +75,7 @@ class UiSoundPlayer:
                 return None
             validate_wav(data)
             return file, data
-        except (OSError, ValueError, TypeError, AttributeError):
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError):
             return None
 
     def play(self, name: str) -> bool:

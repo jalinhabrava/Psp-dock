@@ -1,4 +1,4 @@
-/* Actual 0307 transport under asynchronous USB/module doubles. These tests
+/* Actual 0308 transport under asynchronous USB/module doubles. These tests
  * establish ownership and order, not Sony USBBus composition on hardware. */
 #include <assert.h>
 #include <stdio.h>
@@ -28,6 +28,9 @@ static int override_state_after_load,usb_after_load,storage_after_load,bus_after
 static unsigned boot_loads,boot_starts,forbidden_loads;
 static void (*cancel_hook)(unsigned);
 static void (*delay_hook)(int);
+static void (*export_hook)(void);
+static int auto_export;
+static unsigned export_waits;
 /* Two-view cache fixture. Sony may copy EP0 OUT bytes with the CPU before
  * invoking our callback. Such bytes live in the cached view; a subsequent
  * invalidate discards them and reloads the old backing-store contents.
@@ -93,6 +96,14 @@ int sceUsbbdStall(struct UsbEndpoint *ep){(void)ep;assert(0);return -1;}
 unsigned sceKernelGetSystemTimeLow(void){return fake_time;}
 int sceKernelDelayThread(int t){
     fake_time+=(unsigned)t;
+    if(ui && ui->export_request==PDN_EXPORT_REQUESTED){
+        assert(!activated && !storage_started && !hid_started && !registered && !bus_owned);
+        assert(!operation_count && (start_mask|borrow_mask)==REQUIRED_MASK);
+        export_waits++;
+        if(export_hook)export_hook();
+        if(auto_export){ui->export_result=PDN_EXPORT_SKIPPED;ui->export_done=1;}
+        return 0;
+    }
     if(stop_pad_loop_after_delay){running=0;stop_pad_loop_after_delay=0;}
     if(delay_hook)delay_hook(t);
     return 0;
@@ -118,6 +129,8 @@ int sceUsbGetDrvState(const char *n){
 }
 int sceUsbStart(const char *n,int size,void *arg){
     (void)size;(void)arg;log_operation(n);
+    assert(export_waits && state.export_done && state.export_request==PDN_EXPORT_REVOKED);
+    assert(state.export_result==PDN_EXPORT_READY || state.export_result==PDN_EXPORT_SKIPPED);
     if(!strcmp(n,PSP_USBBUS_DRIVERNAME)){fake_bus=1;return 0;}
     if(!strcmp(n,PSP_USBSTOR_DRIVERNAME)){
         assert((start_mask|borrow_mask)==REQUIRED_MASK && fake_bus==1 && !activated);
@@ -216,6 +229,7 @@ static void fixture(void){
     fail_load=fail_start=-1;fail_usb_start=hold_cancel=queue_failure=0;cancel_hook=NULL;
     start_failure_code=-601;suppress_sony_registration=0;
     fail_deactivate=fail_stop_storage=detach_after_terminal_apply=0;delay_hook=NULL;
+    auto_export=1;export_hook=NULL;export_waits=0;
     override_state_after_load=usb_after_load=storage_after_load=bus_after_load=0;
     boot_loads=boot_starts=forbidden_loads=0;
     memset(submitted_control,0,sizeof(submitted_control));
@@ -340,7 +354,7 @@ static void test_native_start_rechecks_busy_unknown_and_error_states(void){
         }
     }
 }
-static void test_0307_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
+static void test_0308_omits_pc_activation_and_keeps_mandatory_link_failures_fatal(void){
     int result,status=-1;SceUID boot;
     /* Reproduce the photographed 0300 failure in the Sony module double. */
     fixture();boot=sceKernelLoadModule("flash0:/kd/usbstorboot.prx",0,NULL);
@@ -349,9 +363,9 @@ static void test_0307_omits_pc_activation_and_keeps_mandatory_link_failures_fata
     assert(boot_loads==1 && boot_starts==1 && !start_mask);
     assert(sceKernelUnloadModule(boot)==boot);
 
-    /* 0307 must reach the normal transport without ever loading that PRX,
+    /* 0308 must reach the normal transport without ever loading that PRX,
      * Pcact, NPDRM, EFlash or usbdevice redirection. */
-    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0307u);
+    fixture();assert(PDN_DEPENDENCIES==4u && PDN_REVISION==0x0308u);
     assert(start_usb()==0 && activated && storage_started);
     assert(load_mask==REQUIRED_MASK && !boot_loads && !boot_starts && !forbidden_loads);
     assert(stop_usb()==0 && unload_dependencies()==0);
@@ -369,7 +383,7 @@ static void test_sony_registration_and_launcher_revision_remain_required(void){
     fixture();suppress_sony_registration=1;
     assert(start_usb()==-3003 && !activated && !registered && !storage_started);
     assert(!operation_count && stop_usb()==0 && unload_dependencies()==0);
-    assert(PDN_LAUNCH_MAGIC==0x374e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
+    assert(PDN_LAUNCH_MAGIC==0x384e4450u && PDN_LAUNCH_MAGIC!=old_launch.magic);
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
     old_launch.magic=0x314e4450u;
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
@@ -379,12 +393,14 @@ static void test_sony_registration_and_launcher_revision_remain_required(void){
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
     old_launch.magic=0x344e4450u;
     assert(module_start(sizeof(old_launch),&old_launch)==-1);
+    old_launch.magic=0x374e4450u;
+    assert(module_start(sizeof(old_launch),&old_launch)==-1);
 }
 static void test_identification_and_get_are_read_only(void){
     struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
     struct DeviceRequest descriptor={0x81,6,0x2200,1,sizeof(report_descriptor)};
     struct DeviceRequest legacy_set={0x21,9,0x0300,1,32};
-    const uint8_t identity[12]={'N','A','T','3',7,3,15,0,1,0,7,3};
+    const uint8_t identity[12]={'N','A','T','3',8,3,15,0,1,0,8,3};
     uint8_t before[16];unsigned i;
     connected_fixture();memcpy(before,protocol.session,16);
     assert(sizeof(pdn_wire_prefix)==5 && !memcmp(pdn_wire_prefix,"PDK2\x03",5));
@@ -814,9 +830,9 @@ static void test_shutdown_is_terminal_only_after_apply_and_does_not_claim_host(v
         {PDN_PHASE_STORAGE,0},{PDN_PHASE_SAFE,1},{PDN_PHASE_ERROR,0},{PDN_PHASE_ERROR,1}
     };
     uint8_t frame[64],other[64],status[64];unsigned i,op,before;
-    const uint8_t abi[17]={'P','D','N','A',3,64,8,4,1,2,3,4,63,1,1,0,5};
+    const uint8_t abi[17]={'P','D','N','A',3,64,8,4,1,2,3,4,127,1,1,0,5};
     assert(sizeof(pdn_protocol_abi)==sizeof(abi) && !memcmp(pdn_protocol_abi,abi,sizeof(abi)));
-    assert(PDN_CAPABILITIES==15 && sizeof(PdnSharedStatus)==304 && sizeof(PdnProtocol)==120);
+    assert(PDN_CAPABILITIES==15 && sizeof(PdnSharedStatus)==320 && sizeof(PdnProtocol)==120);
     for(i=0;i<sizeof(allowed)/sizeof(allowed[0]);i++){
         connected_fixture();protocol.phase=allowed[i].phase;protocol.host_confirmed=allowed[i].claimed;
         shutdown_message(frame,1);receive_message(frame);before=operation_count;
@@ -1032,12 +1048,80 @@ static void test_output_diagnostic_never_executes_or_discards_a_partial_frame(vo
     complete(0,0,4);assert(!memcmp(&before,(const void *)&state.ep0,sizeof(before)));
     assert(fragment_active && fragment_next==1 && !protocol.sequence && !protocol.pending);
 }
+static void export_unsafe(void){state.export_result=PDN_EXPORT_UNSAFE;state.export_done=1;}
+static void export_unknown(void){state.export_result=99;state.export_done=1;}
+static void export_cancel(void){state.request_stop=1;}
+static void export_foreign_usb(void){
+    state.export_result=PDN_EXPORT_READY;state.export_done=1;fake_usb=0x222;
+}
+static void export_complete_after_delay(void){
+    assert(!activated && !storage_started && !registered && !operation_count);
+    if(export_waits==4){state.export_result=PDN_EXPORT_READY;state.export_done=1;}
+}
+static void test_resource_export_gate_waits_fails_closed_and_rechecks(void){
+    fixture();auto_export=0;export_hook=export_complete_after_delay;
+    assert(start_usb()==0 && activated && export_waits==4);
+    assert(state.export_result==PDN_EXPORT_READY && state.export_request==PDN_EXPORT_REVOKED);
+    assert(stop_usb()==0 && unload_dependencies()==0);
+    fixture();auto_export=0;
+    assert(start_usb()==-3051 && export_waits==PDN_EXPORT_WAIT_US/10000u);
+    assert(state.export_request==PDN_EXPORT_REVOKED && !state.export_done && !operation_count);
+    assert(!activated && !registered && !storage_started && !hid_started && !bus_owned);
+    /* A late USER completion after timeout cannot restart this invocation. */
+    state.export_result=PDN_EXPORT_READY;state.export_done=1;
+    assert(!operation_count && stop_usb()==0 && unload_dependencies()==0);
+    fixture();auto_export=0;export_hook=export_unsafe;
+    assert(start_usb()==-3053 && !operation_count && !activated && !storage_started);
+    assert(stop_usb()==0 && unload_dependencies()==0);
+    fixture();auto_export=0;export_hook=export_unknown;
+    assert(start_usb()==-3053 && !operation_count);
+    fixture();auto_export=0;export_hook=export_cancel;
+    assert(start_usb()==0 && !activated && !operation_count && exit_requested);
+    assert(state.export_request==PDN_EXPORT_REVOKED && stop_usb()==0 && unload_dependencies()==0);
+    fixture();auto_export=0;export_hook=export_foreign_usb;
+    assert(start_usb()==-3054 && !activated && !storage_started && !operation_count);
+    fixture();fake_storage=1;
+    assert(start_usb()==-3002 && !export_waits && state.export_request==PDN_EXPORT_NOT_REQUESTED);
+}
+static void test_resource_ready_status_requires_completed_export_this_launch(void){
+    struct DeviceRequest status={0xa1,1,0x0300,1,PDN_FEATURE_SIZE};
+    const int not_ready[]={PDN_EXPORT_PENDING,PDN_EXPORT_SKIPPED,PDN_EXPORT_UNSAFE,99};
+    uint8_t previous_session[16],old_command[PDN_FEATURE_SIZE];unsigned i;
+    connected_fixture();
+    /* SKIPPED can leave a prior console's file intact on the card. GET_REPORT
+     * must not infer its origin from existence, nor from an unfinished result. */
+    assert(state.export_done && state.export_result==PDN_EXPORT_SKIPPED);
+    for(i=0;i<sizeof(not_ready)/sizeof(not_ready[0]);i++){
+        state.export_result=not_ready[i];
+        assert(receive_control(0,1,&status)==0 && pending[0]->size==PDN_FEATURE_SIZE);
+        assert(!(ctl_buffer[7]&PDN_FLAG_UI_SOUNDS_READY));complete(0,0,PDN_FEATURE_SIZE);
+    }
+    state.export_result=PDN_EXPORT_READY;state.export_done=0;
+    assert(receive_control(0,1,&status)==0 && !(ctl_buffer[7]&PDN_FLAG_UI_SOUNDS_READY));
+    complete(0,0,PDN_FEATURE_SIZE);
+    state.export_done=1;
+    assert(receive_control(0,1,&status)==0 && (ctl_buffer[7]&PDN_FLAG_UI_SOUNDS_READY));
+    assert(!memcmp(ctl_buffer+8,protocol.session,16) && !protocol.sequence && !protocol.host_confirmed);
+    memcpy(previous_session,ctl_buffer+8,16);complete(0,0,PDN_FEATURE_SIZE);
+    command(old_command,PDN_PHASE_STORAGE,1);old_command[5]=PDN_OP_HOST_BEGIN;
+    make_session();assert(memcmp(previous_session,protocol.session,16));
+    assert(pdn_protocol_receive(&protocol,old_command,PDN_FEATURE_SIZE)==PDN_ERR_SESSION);
+    assert(receive_control(0,1,&status)==0 && (ctl_buffer[7]&PDN_FLAG_UI_SOUNDS_READY));
+    assert(!memcmp(ctl_buffer+8,protocol.session,16));complete(0,0,PDN_FEATURE_SIZE);
+    /* A new startup clears even stale RAM acknowledgement before the gate;
+     * the default USER double now skips and cannot reuse a previous READY. */
+    fixture();state.export_done=1;state.export_result=PDN_EXPORT_READY;
+    assert(start_usb()==0 && state.export_done && state.export_result==PDN_EXPORT_SKIPPED);
+    fake_usb=0x222;assert(attach(2,NULL,NULL)==0 && connected);
+    assert(receive_control(0,1,&status)==0 && !(ctl_buffer[7]&PDN_FLAG_UI_SOUNDS_READY));
+    complete(0,0,PDN_FEATURE_SIZE);
+}
 int main(void){
     test_start_order_and_owned_cleanup();test_borrowed_modules_and_bus_survive();
     test_guard_and_bootstrap_failures();test_begin_ack_and_phase_ack_cancel_old_input_first();
     test_native_start_accepts_passive_cable_with_known_idle_drivers();
     test_native_start_rechecks_busy_unknown_and_error_states();
-    test_0307_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
+    test_0308_omits_pc_activation_and_keeps_mandatory_link_failures_fatal();
     test_sony_registration_and_launcher_revision_remain_required();
     test_identification_and_get_are_read_only();test_reset_nonce_changes_at_constant_timer();
     test_ep0_cpu_copy_keeps_command_until_protocol_reads_it();
@@ -1058,5 +1142,7 @@ int main(void){
     test_short_reports_preserve_the_full_protocol_and_commit_last();
     test_fragmented_abort_mix_corruption_and_nonce_never_act();
     test_output_diagnostic_never_executes_or_discards_a_partial_frame();
-    puts("native-dock 0307: passive cable, EP0 control, identity, handshake, progress, replay, ownership and async lifecycle PASS");return 0;
+    test_resource_export_gate_waits_fails_closed_and_rechecks();
+    test_resource_ready_status_requires_completed_export_this_launch();
+    puts("native-dock 0308: optional resource gate, idle recheck, EP0, identity, handshake, progress, replay and lifecycle PASS");return 0;
 }

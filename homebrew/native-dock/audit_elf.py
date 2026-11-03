@@ -1,4 +1,4 @@
-"""Audit 0307's actual MIPS ELF and USER PBP; never opens USB or a PSP.
+"""Audit 0308's actual MIPS ELF and USER PBP; never opens USB or a PSP.
 
 The default device descriptor chosen by Sony's composed USB bus is a hardware
 question. This audit proves our descriptor and imports, not that composition
@@ -100,13 +100,13 @@ def _compiled_protocol(elf) -> tuple[bytes, dict]:
     require(wire_prefix == b"PDK2\x03", "Compiled wire prefix must be exactly PDK2/v3")
     identity = elf.data("pdn_identity", 12)
     require(elf.symbols["pdn_identity"][1] == 12, "Compiled firmware identity symbol has the wrong width")
-    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0307, 0x000F, 0x03070001),
+    require(identity == struct.pack("<4sHHI", b"NAT3", 0x0308, 0x000F, 0x03080001),
             "Compiled firmware identity differs from reviewed PDK2/v3 build")
     _, firmware_revision, capabilities, build_id = struct.unpack("<4sHHI", identity)
     protocol_abi = elf.data("pdn_protocol_abi", 17)
     require(elf.symbols["pdn_protocol_abi"][1] == 17, "Compiled protocol policy symbol has the wrong width")
-    require(protocol_abi == bytes.fromhex("50444e4103400804010203043f01010005"),
-            "Compiled protocol policy differs from explicit host/progress/shutdown contract")
+    require(protocol_abi == bytes.fromhex("50444e4103400804010203047f01010005"),
+            "Compiled protocol policy differs from host/progress/shutdown/resource-ready contract")
     require(protocol_abi[4] == wire_prefix[4], "Wire version differs from compiled protocol ABI")
     transport_abi = elf.data("pdn_transport_abi", 10)
     require(elf.symbols["pdn_transport_abi"][1] == 10 and
@@ -120,6 +120,7 @@ def _compiled_protocol(elf) -> tuple[bytes, dict]:
         "host_progress_supported": bool(protocol_abi[14]),
         "host_shutdown_supported": bool(capabilities & 0x0008 and protocol_abi[12] & 0x20
                                         and protocol_abi[16] == 5),
+        "ui_sounds_ready_supported": bool(protocol_abi[12] & 0x40),
         "usb_revision_is_firmware_revision": bool(protocol_abi[15]),
         "firmware_build_id": f"{build_id:08X}", "protocol_capabilities": f"{capabilities:04X}",
         "command_transport": "output4-fragments-crc16",
@@ -130,7 +131,7 @@ def audit(raw: bytes) -> dict:
     elf = MipsElf(raw)
     require(elf.module_attributes() & 0x1000, "Native USB controller must be kernel PRX")
     module_info = elf.section_bytes(elf.section_names[".rodata.sceModuleInfo"])
-    require(module_info[2:4] == b"\x07\x03", "Expected kernel module version 3.7")
+    require(module_info[2:4] == b"\x08\x03", "Expected kernel module version 3.8")
     required_modules = (
         ("flash0:/kd/semawm.prx", "sceSemawm"),
         ("flash0:/kd/usbstor.prx", "sceUSB_Stor_Driver"),
@@ -141,10 +142,10 @@ def audit(raw: bytes) -> dict:
     for index, expected in enumerate(required_modules):
         path, name, uid, owned, started = struct.unpack_from("<IIiII", dependencies, index * 20)
         require((_cstring_at(elf, path), _cstring_at(elf, name)) == expected,
-                "Native dependency order/name differs from reviewed 0307 bootstrap")
+                "Native dependency order/name differs from reviewed 0308 bootstrap")
         require((uid, owned, started) == (-1, 0, 0), "Dependency ownership must start empty")
     for forbidden_path in (b"usbstorboot.prx", b"pcact.prx", b"npdrm.prx", b"usbstoreflash.prx", b"usbdevice.prx"):
-        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0307: " + forbidden_path.decode())
+        require(forbidden_path not in raw, "Forbidden optional/redirection module in 0308: " + forbidden_path.decode())
     require(elf.data("pdn_interface", 12) == struct.pack("<iii", -1, 0, 1),
             "HID must request one automatically assigned interface")
     require(elf.data("pdn_endpoints", 24) == struct.pack("<6I", 0, 0, 0, 1, 0, 0),
@@ -152,8 +153,8 @@ def audit(raw: bytes) -> dict:
     for speed, interval in (("hi", 6), ("full", 4)):
         device = elf.data("pdn_device_" + speed, 20)
         require(device[:8] == b"\x12\x01\x00\x02\0\0\0\x40", "Invalid USB 2.0 device/EP0")
-        require(struct.unpack_from("<H", device, 12)[0] == 0x0307 and device[17] == 1,
-                "Wrong 0307 descriptor revision/configuration")
+        require(struct.unpack_from("<H", device, 12)[0] == 0x0308 and device[17] == 1,
+                "Wrong 0308 descriptor revision/configuration")
         interfaces, endpoints = "pdn_interfaces_" + speed, "pdn_endpoint_" + speed
         settings, config_name = "pdn_settings_" + speed, "pdn_configdesc_" + speed
         require(elf.data(settings, 12) == struct.pack("<3I", elf.address(interfaces), 0, 1),
@@ -191,6 +192,9 @@ def audit(raw: bytes) -> dict:
                  "sceKernelStopModule", "sceKernelUnloadModule", "sceKernelFindModuleByName"):
         elf.address(name)
     protocol_abi, protocol_policy = _compiled_protocol(elf)
+    require(elf.symbols['pdn_export_gate_contract'][1] == 12 and
+            elf.data('pdn_export_gate_contract', 12) == b'PDXG' + bytes((1,1,1,1)) + struct.pack('<I',10000000),
+            'Missing reviewed pre-USB USER export gate contract')
     report_sizes = hid_report_sizes(report)
     require(report_sizes == {"input": 8, "output": 4, "feature": 64},
             "Compiled HID report sizes disagree with PDK2/v3 identity")
@@ -203,6 +207,7 @@ def audit(raw: bytes) -> dict:
         "hid_input_bytes": report_sizes["input"], "hid_output_bytes": report_sizes["output"],
         "hid_feature_bytes": report_sizes["feature"],
         "storage_backend": "native Sony USBStor_Driver", "kernel_filesystem_imports": [],
+        "resource_export_gate": "PDXG/1-before-usb-start",
         "early_sony_boot_imports": [], "expected_pid": "01CD",
         "wire_identity_verified": False, "sony_composition_physically_verified": False,
         "real_memory_stick_access_physically_verified": False,
@@ -211,23 +216,60 @@ def audit(raw: bytes) -> dict:
     }
 
 
+def audit_resource_export(user_raw: bytes, core_object: bytes, adapter_object: bytes) -> dict:
+    """Inspect the two new objects without relaxing the shared USER auditor.
+
+    Compiled paths/imports/policy establish bounded intent. Portable C tests
+    separately exercise ordering and failures; physical export remains unproved.
+    """
+    elf, core, adapter = MipsElf(user_raw), MipsElf(core_object), MipsElf(adapter_object)
+    paths = {
+        'source': ('pdn_export_source_path', 'flash0:/vsh/resource/system_plugin.rco'),
+        'destination': ('pdn_export_final_path', 'ms0:/PSP/SYSTEM/PSPDock/xmb/system_plugin.rco'),
+        'temporary': ('pdn_export_temp_path', 'ms0:/PSP/SYSTEM/PSPDock/xmb/.system_plugin.rco.pspdock-tmp'),
+    }
+    for symbol, expected in paths.values():
+        raw = expected.encode('ascii') + b'\0'
+        require(elf.symbols[symbol][1] == len(raw) and elf.data(symbol, len(raw)) == raw,
+                'Resource export path differs: ' + symbol)
+    require(elf.symbols['pdn_export_contract'][1] == 12 and
+            elf.data('pdn_export_contract',12) == b'PDEX' + bytes((1,1,1,1)) + struct.pack('<I',131072),
+            'Unexpected USER resource size/policy contract')
+    required = {'sceIoOpen','sceIoLseek32','sceIoRead','sceIoWrite','sceIoClose',
+                'sceIoGetstat','sceIoMkdir','sceIoRename','sceIoRemove','sceIoSync'}
+    direct_core = {name for name, item in core.all_symbols.items() if item[2] == 0}
+    direct_adapter = {name for name, item in adapter.all_symbols.items() if item[2] == 0}
+    require(direct_core <= {'memcmp','memcpy','memset'},
+            'Portable exporter imports an unaudited API: ' + ', '.join(sorted(direct_core)))
+    require(direct_adapter == required | {'pdn_export_resource'},
+            'USER export adapter imports differ from the bounded file API allowlist: ' +
+            ', '.join(sorted(direct_adapter)))
+    return {**{key:value[1] for key,value in paths.items()}, 'max_bytes':131072,
+            'contract':'PDEX/1','user_io_imports_reviewed':True,
+            'usb_start_gate':'shared-ram-before-usb-start','physical_export_verified':False}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("elf", type=Path)
     parser.add_argument("--user-elf", required=True, type=Path)
     parser.add_argument("--user-object", required=True, type=Path)
+    parser.add_argument("--exporter-object", required=True, type=Path)
+    parser.add_argument("--exporter-psp-object", required=True, type=Path)
     parser.add_argument("--pbp", required=True, type=Path)
     parser.add_argument("--assets", required=True, type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     result = audit(args.elf.read_bytes())
     result["user_app"] = _reader.audit_user(args.user_elf.read_bytes(), args.user_object.read_bytes())
+    result["user_app"]["resource_export"] = audit_resource_export(
+        args.user_elf.read_bytes(), args.exporter_object.read_bytes(), args.exporter_psp_object.read_bytes())
     pbp = args.pbp.read_bytes()
     result["xmb_assets"] = _reader.audit_pbp(pbp, args.assets)
     require(pbp_title(pbp) == "PSP Dock", "XMB title must be exactly PSP Dock")
     user_elf = MipsElf(args.user_elf.read_bytes())
     user_info = user_elf.section_bytes(user_elf.section_names[".rodata.sceModuleInfo"])
-    require(user_info[2:4] == b"\x07\x03", "Expected USER launcher module version 3.7")
+    require(user_info[2:4] == b"\x08\x03", "Expected USER launcher module version 3.8")
     result["xmb_title"] = "PSP Dock"
     result["pbp_sha256"] = hashlib.sha256(pbp).hexdigest()
     rendered = json.dumps(result, sort_keys=True, indent=2) + "\n"

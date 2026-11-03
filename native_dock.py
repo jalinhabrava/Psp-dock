@@ -25,26 +25,29 @@ from bridge_hid import _WindowsHid, HIDP_CAPS, BridgeHidError, VID
 from psp_usb import PspStorage, identify, _volume_serial
 
 PID = 0x01CD
-REVISION = 0x0307  # Firmware version, never inferred from Sony bcdDevice.
+REVISION = 0x0308  # Firmware version, never inferred from Sony bcdDevice.
 FIRMWARE_BUILDS = {0x0303: 0x03030001, 0x0304: 0x03040001,
-                   0x0305: 0x03050001, 0x0306: 0x03060001, 0x0307: 0x03070001}
-FIRMWARE_CAPABILITIES = {0x0303: 0x0007, 0x0304: 0x0007, 0x0305: 0x000F, 0x0306: 0x000F, 0x0307: 0x000F}
+                   0x0305: 0x03050001, 0x0306: 0x03060001, 0x0307: 0x03070001,
+                   0x0308: 0x03080001}
+FIRMWARE_CAPABILITIES = {0x0303: 0x0007, 0x0304: 0x0007, 0x0305: 0x000F,
+                         0x0306: 0x000F, 0x0307: 0x000F, 0x0308: 0x000F}
 CAP_HOST_SHUTDOWN = 8
 RETIRED_REVISIONS = frozenset({0x0300, 0x0301, 0x0302})
-USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307})
+USB_REVISIONS = frozenset({0x0100, 0x0303, 0x0304, 0x0305, 0x0306, 0x0307, 0x0308})
 MAGIC, VERSION = b'PDK2', 3
 STATUS, SET_PHASE, HOST_BEGIN, HOST_PROGRESS = 1, 2, 3, 4
 HOST_SHUTDOWN = 5
 STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR = 1, 2, 3, 4, 5, 255
 CONNECTED, PENDING, SONY_STORAGE, EXIT_REQUESTED, HOST_CONFIRMED = 1, 2, 4, 8, 16
 SHUTDOWN_REQUESTED = 32
+UI_SOUNDS_READY = 64
 FRAME = struct.Struct('<4sBBBB16sIi')
 EXTENSION = struct.Struct('<4sHHIBBHQQ')
 EXT_MAGIC, CAPABILITIES, BUILD_ID = b'NAT3', FIRMWARE_CAPABILITIES[REVISION], FIRMWARE_BUILDS[REVISION]
 CORE_REPORT_BYTES = 65  # Windows report ID byte + unchanged 64-byte PDK2 core.
 REPORT_BYTES = CORE_REPORT_BYTES
 FIRMWARE_REPORT_BYTES = {revision: CORE_REPORT_BYTES for revision in FIRMWARE_BUILDS}
-FRAGMENT_REVISIONS = frozenset((0x0306, 0x0307))
+FRAGMENT_REVISIONS = frozenset((0x0306, 0x0307, 0x0308))
 WAITING, INVENTORY, CHOOSING, SYNC_IN, COPY_GAME, CONTROL_ACTIVITY, SYNC_OUT, SAFE_ACTIVITY = range(8)
 UNKNOWN, BYTES, FILES = 0, 1, 2
 PHASE_ACTIVITIES = {STORAGE: (INVENTORY, CHOOSING, SYNC_IN),
@@ -85,6 +88,7 @@ class NativeStatus:
     total: int = 0
     shutdown_requested: bool = False
     transport_word: int = 0
+    ui_sounds_ready: bool = False
 
 
 def _progress_valid(phase, activity, unit, completed, total, *, command=False):
@@ -111,8 +115,12 @@ def _validate_identity(protocol_version, firmware_revision, capabilities, build_
 
 
 def _validate_status_identity(status):
-    return _validate_identity(status.protocol_version, status.firmware_revision,
-                              status.capabilities, status.build_id)
+    identity = _validate_identity(status.protocol_version, status.firmware_revision,
+                                  status.capabilities, status.build_id)
+    if (type(status.ui_sounds_ready) is not bool or
+            status.ui_sounds_ready and status.firmware_revision != 0x0308):
+        raise NativeDockError('El estado de exportación de sonidos no corresponde al firmware verificado.')
+    return identity
 
 
 def decode_status(report: bytes) -> NativeStatus:
@@ -124,7 +132,7 @@ def decode_status(report: bytes) -> NativeStatus:
         raise NativeDockError('El dispositivo no ofrece el protocolo PDK2 esperado.')
     if phase not in (0, STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE, ERROR):
         raise NativeDockError('Fase PDK2 desconocida.')
-    if flags & ~63 or not any(session):
+    if not any(session):
         raise NativeDockError('Sesión o indicadores PDK2 inválidos.')
     pending = bool(flags & PENDING)
     if ((pending and (seq == 0 or result != 1)) or
@@ -139,8 +147,11 @@ def decode_status(report: bytes) -> NativeStatus:
     status = NativeStatus(session.hex(), phase, seq, result, bool(flags & CONNECTED),
                           pending, bool(flags & SONY_STORAGE), bool(flags & EXIT_REQUESTED),
                           bool(flags & HOST_CONFIRMED), version, firmware, capabilities, build,
-                          activity, unit, done, total, bool(flags & SHUTDOWN_REQUESTED), reserved)
+                          activity, unit, done, total, bool(flags & SHUTDOWN_REQUESTED), reserved,
+                          bool(flags & UI_SOUNDS_READY))
     _validate_status_identity(status)
+    if flags & ~(127 if firmware == 0x0308 else 63):
+        raise NativeDockError('Indicadores PDK2 no admitidos por este firmware.')
     if len(report) != FIRMWARE_REPORT_BYTES[firmware]:
         raise NativeDockError('El tamaño USB no corresponde al firmware verificado.')
     if status.shutdown_requested and (not status.capabilities & CAP_HOST_SHUTDOWN or
@@ -605,6 +616,8 @@ class NativeDockTransport:
             'host_confirmed': status['host_confirmed'],
             'sequence': status['sequence'], 'result': status['result'],
             'pending': status['pending'], 'shutdown_requested': status.get('shutdown_requested', False),
+            'ui_sounds_ready': (status['firmware_revision'] == 0x0308 and
+                                status.get('ui_sounds_ready') is True),
             'activity': status['activity'], 'unit': status['unit'],
             'completed': status['completed'], 'total': status['total'],
             'usb_parent': parent[1], 'root': storage.drive,
