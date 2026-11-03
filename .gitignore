@@ -43,6 +43,9 @@ copy-decisions.json
 *.ppst
 *.mp4
 *.png
+!homebrew/psp-dock-app/assets/ICON0.PNG
+!homebrew/psp-dock-app/assets/PIC0.PNG
+!homebrew/psp-dock-app/assets/PIC1.PNG
 *.jpg
 *.jpeg
 *.gif
@@ -110,6 +113,8 @@ Thumbs.db
 # Local chronological handoff and machine-specific evidence
 HANDOFF.md
 docs/*
+!docs/PSP-HOMEBREW-UI.md
+!docs/psp-homebrew-ui-preview.png
 !docs/ARRANQUE-HID-AUTOMATICO.md
 !docs/GRAFICOS-PPSSPP.md
 !docs/PROTOCOLO-ROLE-BRIDGE-V2.md

@@ -23,10 +23,16 @@ class PersistentHidBuildContractTests(unittest.TestCase):
         self.assertIn('PSPDock/bridgehid.prx',user)
         self.assertIn('PSPDock/dockcore.prx',user)
         self.assertIn('PSP Dock', (product/'Makefile').read_text())
-        self.assertIn('INICIAR PSP DOCK EN EL PC',user)
+        ui=(product/'ui.c').read_text(encoding='utf-8')
+        self.assertIn('PREPARA TU DOCK',ui)
+        self.assertIn('Desconecta el cable USB.',ui)
+        self.assertIn('CONECTA LA PSP',ui)
+        self.assertIn('USB_GUARD_TICKS',user)
+        self.assertIn('CONNECT_GUIDE_TICKS',user)
+        self.assertNotIn('pspDebugScreenPrintf',user)
         self.assertIn('PSP_CTRL_CROSS',user)
         self.assertIn('sceKernelExitGame()',user)
-        self.assertLess(user.index('INICIAR PSP DOCK EN EL PC'),
+        self.assertLess(user.index('ui.stage = DOCK_UI_WELCOME'),
                         user.index('load_and_start(HID_MODULE)'))
 
     def test_same_verified_gate_and_driver_not_modified(self):

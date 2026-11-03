@@ -5,11 +5,22 @@ export PATH="$PSPDEV/bin:/usr/local/bin:/usr/bin:/bin"
 src="$(cd -- "$(dirname -- "$0")" && pwd)"
 work=/home/david/projects/psp-dock-build/psp-dock-app
 mkdir -p "$work"
-cp "$src/main.c" "$src/lab_core.c" "$src/PSPDockHid.S" \
+cp "$src/main.c" "$src/ui.c" "$src/ui.h" "$src/ui_font_data.h" \
+   "$src/lab_core.c" "$src/PSPDockHid.S" \
    "$src/exports.exp" "$src/lab_gate.h" "$src/Makefile" \
    "$src/Makefile.core" "$work/"
+mkdir -p "$work/assets"
+cp "$src/assets/ICON0.PNG" "$src/assets/PIC0.PNG" \
+   "$src/assets/PIC1.PNG" "$work/assets/"
 cp "$src/../bridge-hid/bridge_hid.h" "$work/bridge_hid.h"
 cd "$work"
+
+# Exercise every LCD state on a host compiler before producing the PSP PBP.
+# The renderer is pure C, so ASAN/native tests can guard VRAM stride overflows.
+cc -std=c99 -O2 -Wall -Wextra -Werror -I"$src" \
+    "$src/ui.c" "$src/tests/test_ui_renderer.c" \
+    -o "$work/test-ui-renderer"
+"$work/test-ui-renderer"
 
 # Mandatory source safeguards: no watchdog/timeout that would unexpectedly
 # end a product session; exit remains manual and cable-loss fail-safe.
@@ -52,5 +63,6 @@ mkdir -p "$src/dist"
 cp "$work/EBOOT.PBP" "$work/dockcore.prx" "$src/dist/"
 cp "$src/../bridge-hid/dist/bridgehid.prx" "$src/dist/"
 cp "$src/LICENSE-FuSa-GPL-3.0.txt" "$src/dist/LICENSE-FuSa-GPL-3.0.txt"
+python3 "$src/tests/test_pbp_assets.py" "$src/dist/EBOOT.PBP"
 printf '\nPSP Dock persistent HID compiled ONLY on PC; NOT INSTALLED\n'
 sha256sum "$src/dist/"*
