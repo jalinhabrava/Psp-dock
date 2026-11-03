@@ -151,11 +151,16 @@ Contiene el lector y el controlador, con SND0 vacío. No contiene el recurso
 RCO ni los efectos de Sony. Estos resultados no deben sumarse como un único
 recuento de pruebas distintas.
 
-**Pendiente en hardware:** leer este RCO desde USER bajo ARK-5, completar la
-preparación en la Memory Stick real, importar en una caché nueva y escuchar los
-efectos con el mando. Esta rama no instala automáticamente el nuevo homebrew
-ni considera una compilación como aceptación física. La instalación previa
-0307 del usuario permanece intacta durante el desarrollo.
+**Actualización tras la primera prueba física, 3 de noviembre:** la 0308 se
+instaló con el actualizador verificado y respaldo de la 0307. Se conservó la
+caché anterior y se dejó vacía la ruta de importación para la prueba. El usuario
+confirmó el clic correcto del XMB y el selector con el mando; apareció una
+nueva caché de sonidos. La prueba también detectó una omisión de 0308 en la
+lista de identidades de la interfaz Windows, que impedía mostrar el launcher
+después de elegir «Sin copiar ahora». El arreglo y sus regresiones se describen
+en [la validación de entrada 0308](validation/native-0308-no-copy-launcher.md).
+Falta repetir físicamente esa entrada con la interfaz corregida. La 0308 de
+la consola no necesita reinstalarse para ese arreglo de Windows.
 
 ## Procedencia y distribución
 

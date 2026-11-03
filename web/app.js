@@ -1672,7 +1672,7 @@ function dockConnectionView(state, options = {}) {
   const product = dockProductFlowView(current, options);
   const link = dockLinkView(current);
   const diagnostic = controller.connected === true && controller.mode === 'msc_diagnostic';
-  const nativeBuild = [[0x0303, 0x03030001, 7], [0x0304, 0x03040001, 7], [0x0305, 0x03050001, 15], [0x0306, 0x03060001, 15], [0x0307, 0x03070001, 15]].some(
+  const nativeBuild = [[0x0303, 0x03030001, 7], [0x0304, 0x03040001, 7], [0x0305, 0x03050001, 15], [0x0306, 0x03060001, 15], [0x0307, 0x03070001, 15], [0x0308, 0x03080001, 15]].some(
     ([revision, build, capabilities]) => controller.firmware_revision === revision && controller.build_id === build && controller.capabilities === capabilities);
   const nativeIdentity = controller.connected === true && controller.mode === 'native_dock' &&
     controller.product_id === 0x01cd && controller.protocol_version === 3 && nativeBuild &&
