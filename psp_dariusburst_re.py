@@ -18,6 +18,7 @@ import struct
 from psp_artwork import SECTOR, _CSOReader, _directory_record, _read_directory
 from psp_hd_textures import DUMP_RE, safe_pc_path
 from psp_game_metadata import read_metadata
+from psp_texture_engine import identify
 
 GAME_DISC_ID = "ULJM05558"
 VALID_ASSET_TYPES = frozenset((".tx2", ".xxi", ".bxn"))
@@ -137,6 +138,7 @@ def inventory_dariusburst(media: Path, *, max_hash_bytes: int = MAX_SHA_BYTES) -
         "file_count": 0, "dzip_count": 0, "total_declared_unpacked_bytes": 0,
         "extension_counts": {}, "group_counts": {},
         "records": [], "errors": [], "source_bytes": media.stat().st_size,
+        "decoder_ready": False, "signature_variants": {},
     }
     source_digest = hashlib.sha256()
     with media.open("rb") as stream:
@@ -145,6 +147,7 @@ def inventory_dariusburst(media: Path, *, max_hash_bytes: int = MAX_SHA_BYTES) -
     result["source_sha256"] = source_digest.hexdigest()
     extension_counts = Counter()
     group_counts = Counter()
+    signature_variants = defaultdict(Counter)
     remaining = max_hash_bytes
     for stream, relative, offset, size in _iso_entries(media):
         result["file_count"] += 1
@@ -155,13 +158,17 @@ def inventory_dariusburst(media: Path, *, max_hash_bytes: int = MAX_SHA_BYTES) -
         if extension not in VALID_ASSET_TYPES:
             continue
         stream.seek(offset)
-        header = stream.read(min(8, size))
+        header = stream.read(min(12, size))
+        detected = identify(header, extension=extension)
         record = {
             "path": relative, "extension": extension,
             "group": group, "packed_bytes": size,
             "iso_offset": offset, "has_dzip": False,
             "decoded": False, "ppsspp_hash": None,
             "status": "opaque",
+            "format_family": detected.family,
+            "decoder_status": detected.status,
+            "unverified_variant_prefix": detected.variant_prefix,
         }
         if header[:4] == b"DZIP":
             try:
@@ -170,6 +177,7 @@ def inventory_dariusburst(media: Path, *, max_hash_bytes: int = MAX_SHA_BYTES) -
                 record["unpacked_bytes"] = envelope.unpacked_size
                 result["dzip_count"] += 1
                 result["total_declared_unpacked_bytes"] += envelope.unpacked_size
+                signature_variants[extension][detected.variant_prefix] += 1
                 if extension == ".tx2":
                     record["size_hypotheses"] = tx2_size_hypotheses(envelope.unpacked_size)
             except DariusburstREError as exc:
@@ -193,6 +201,10 @@ def inventory_dariusburst(media: Path, *, max_hash_bytes: int = MAX_SHA_BYTES) -
         result["records"].append(record)
     result["extension_counts"] = dict(sorted(extension_counts.items()))
     result["group_counts"] = dict(sorted(group_counts.items()))
+    result["signature_variants"] = {
+        extension: dict(sorted(counts.items()))
+        for extension, counts in sorted(signature_variants.items())
+    }
     result["hashed_bytes"] = max_hash_bytes - remaining
     return result
 

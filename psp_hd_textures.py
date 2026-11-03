@@ -268,11 +268,13 @@ def process_dump_batch(memstick: Path, disc_id: str,
 
 def discover_iso_assets(path: Path, cache: Path, *, disc_id: str,
                         max_items: int = MAX_SCAN_ITEMS) -> dict:
-    """Read-only inventory of ordinary PNG/JPEG/GIM files in ISO9660/CSO.
+    """Read-only format-based inventory of files in ISO9660/CSO.
 
     Does not invent a PPSSPP hash. PNG/JPEG bytes remain on the private PC
-    cache to support later source matching; GIM is only listed, not decoded.
+    cache for later matching. Proprietary compression is detected using
+    headers, never inferred from game names nor decoded speculatively.
     """
+    from psp_texture_engine import identify
     verified_disc_id(disc_id)
     media = safe_pc_path(path)
     cache = safe_pc_path(cache) / disc_id
@@ -286,6 +288,9 @@ def discover_iso_assets(path: Path, cache: Path, *, disc_id: str,
     cache.mkdir(parents=True, exist_ok=True)
     result = {"disc_id": disc_id, "source": "local_iso9660",
               "files_visited": 0, "candidates": [], "stored": 0,
+              "engine_version": 1,
+              "recognized_unsupported": 0,
+              "format_profiles": {},
               "unmapped": True, "limited": False,
               "note": "Recursos sin hash PPSSPP; no son reemplazos listos para usar."}
     stream = _CSOReader(media) if media.suffix.lower() == ".cso" else media.open("rb")
@@ -318,11 +323,33 @@ def discover_iso_assets(path: Path, cache: Path, *, disc_id: str,
                     continue
                 result["files_visited"] += 1
                 extension = Path(name).suffix.lower()
-                if extension not in (".png", ".jpg", ".jpeg", ".gim", ".tm2"):
-                    continue
                 length = entry["size"]
                 offset = entry["extent"] * SECTOR
-                if not 0 < length <= MAX_SCAN_ASSET or offset <= 0 or offset + length > size:
+                if not 0 < length <= 64*1024*1024 or offset <= 0 or offset + length > size:
+                    continue
+                stream.seek(offset)
+                preview = stream.read(min(16,length))
+                detection = identify(preview,extension=extension)
+                if detection.family in ("dzip_unknown","marmalade_dzip"):
+                    if detection.status != "recognized_unsupported":
+                        result["limited"] = True
+                        continue
+                    result["recognized_unsupported"] += 1
+                    result["format_profiles"][detection.family] = (
+                        result["format_profiles"].get(detection.family,0)+1)
+                    result["candidates"].append({
+                        "path":rel, "format":detection.family,
+                        "source_extension":extension,
+                        "packed_bytes":length,
+                        "unpacked_bytes_declared":detection.declared_size,
+                        "variant_prefix_unverified":detection.variant_prefix,
+                        "codec_status":detection.status,
+                        "mapped":False, "decoded":False,
+                    })
+                    continue
+                if extension not in (".png", ".jpg", ".jpeg", ".gim", ".tm2"):
+                    continue
+                if length > MAX_SCAN_ASSET:
                     continue
                 if extension in (".gim", ".tm2"):
                     result["candidates"].append({
