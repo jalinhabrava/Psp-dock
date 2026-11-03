@@ -1831,10 +1831,28 @@ const xmb = {
   mediaGeneration: 0, mediaHdTimer: null, mediaHdAbort: null,
   mediaLaunchPending: false, mediaLaunchSettled: false,
   menuSound: true, menuSoundAt: 0,
+  motion: 'on',
 };
 try { xmb.theme = localStorage.getItem('psp-dock-theme') || 'month'; } catch { /* sin almacenamiento */ }
 try { xmb.mediaSound = localStorage.getItem('psp-dock-xmb-sound') !== 'off'; } catch { /* sin almacenamiento */ }
 try { xmb.menuSound = localStorage.getItem('psp-dock-menu-sound') !== 'off'; } catch { /* sin almacenamiento */ }
+try {
+  const storedMotion = localStorage.getItem('psp-dock-xmb-motion');
+  if (['on', 'off', 'system'].includes(storedMotion)) xmb.motion = storedMotion;
+} catch { /* sin almacenamiento */ }
+function xmbReducedMotion() {
+  return xmb.motion === 'off' || xmb.motion === 'system' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+function xmbSyncMotion() {
+  const reduced = xmbReducedMotion();
+  $('xmb').classList.toggle('xmb-motion-on', !reduced);
+  $('xmb').classList.toggle('xmb-motion-off', reduced);
+  if (reduced) {
+    $('xmb-cats').getAnimations().forEach((animation) => animation.cancel());
+    for (const node of xmb.els.values()) node.getAnimations().forEach((animation) => animation.cancel());
+  }
+  xmbWaves();
+}
 
 function xmbConnectionView() {
   const connection = dockConnectionView(ui.state, {
@@ -2258,6 +2276,15 @@ function xmbBuildSections() {
         try { localStorage.setItem('psp-dock-theme', value); } catch { /* sin almacenamiento */ }
         xmbApplyTheme();
       }) },
+    { key: 'motion', t: 'Animación de menús', icon: 'theme',
+      s: () => ({ on: 'Activada · desplazamiento fluido', off: 'Desactivada · sin movimiento', system: 'Según preferencias de Windows' })[xmb.motion],
+      activate: () => xmbValues('Animación de menús',
+        [['on', 'Activada · desplazamiento fluido'], ['off', 'Desactivada · sin movimiento'],
+          ['system', 'Según preferencias de Windows']], xmb.motion, (value) => {
+          xmb.motion = value;
+          try { localStorage.setItem('psp-dock-xmb-motion', value); } catch { /* sin almacenamiento */ }
+          xmbSyncMotion();
+        }) },
     { key: 'sound', t: 'Música de selección de juegos', icon: 'info',
       s: () => xmb.mediaSound ? 'Activada · audio original PSP' : 'Silenciada',
       activate: () => xmbValues('Música del XMB', [['on','Activada'],['off','Silenciada']],
@@ -2863,6 +2890,7 @@ function xmbPress(button) {
 const XMB_CAT_GAP = 12, XMB_CAT_X = 24;
 let xmbRenderedColumn = null;
 let xmbRenderedCategory = null;
+let xmbRenderedFocus = null;
 function xmbIconNode(icon) {
   const box = document.createElement('div');
   if (typeof icon === 'string') { box.className = 'xmb-ic round'; box.innerHTML = XMB_ICONS[icon] || XMB_ICONS.info; return box; }
@@ -2954,8 +2982,17 @@ function xmbRender() {
   const previousColumn = xmbRenderedColumn;
   const previousCategory = xmbRenderedCategory;
   const changingColumn = previousColumn !== null && previousColumn !== column;
+  const changingFocus = previousColumn === column && xmbRenderedFocus !== (inSub ? nav.subIdx : focus);
   const movingRight = nav.cat >= (previousCategory ?? nav.cat);
-  const motion = changingColumn && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const reducedMotion = xmbReducedMotion();
+  const motion = changingColumn && !reducedMotion;
+  // Record the actual on-screen position, including a navigation animation that
+  // is still running. CSS transitions of top/left alone can be skipped when a
+  // fresh frame also mounts or removes XMB entries.
+  const previousPositions = new Map();
+  if (changingFocus && !reducedMotion) for (const [key, node] of xmb.els) {
+    if (node.isConnected) previousPositions.set(key, node.getBoundingClientRect());
+  }
   const rows = inSub ? xmbGraphicsRows(xmb.sub?.id || null) : [];
   if (inSub) nav.subIdx = Math.max(0, Math.min(rows.length - 1, nav.subIdx));
   if (!inSub) section.items[focus]?.focus?.();
@@ -2969,6 +3006,8 @@ function xmbRender() {
   );
 
   const cats = $('xmb-cats');
+  const previousCatsTransform = !reducedMotion && previousCategory !== null && previousCategory !== nav.cat
+    ? getComputedStyle(cats).transform : null;
   if (cats.childElementCount !== xmb.sections.length) {
     cats.replaceChildren(...xmb.sections.map((item, i) => {
       const node = document.createElement('button');
@@ -2989,12 +3028,38 @@ function xmbRender() {
     badge.hidden = !xmb.sections[i].badge;
     badge.textContent = xmb.sections[i].badge || '';
   });
-  cats.style.transform = `translateX(${-nav.cat * XMB_CAT_GAP}cqw)`;
+  const categoryTarget = `translateX(${-nav.cat * XMB_CAT_GAP}cqw)`;
+  // Use an explicit interpolated transform. Starting from the computed matrix
+  // also preserves momentum when the player changes direction mid-animation.
+  if (previousCatsTransform) cats.getAnimations().forEach((animation) => animation.cancel());
+  cats.style.transform = categoryTarget;
+  if (previousCatsTransform && previousCatsTransform !== 'none' && typeof cats.animate === 'function') {
+    cats.animate([{ transform: previousCatsTransform }, { transform: categoryTarget }],
+      { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+  }
   cats.classList.toggle('faded', inSub);
 
   const used = new Set();
   xmbPlaceColumn('main:' + section.id + ':', section.items, focus, inSub ? 4 : XMB_CAT_X - 3.6, inSub, used);
   if (inSub) xmbPlaceColumn('sub:', rows, nav.subIdx, 26, false, used);
+  // FLIP: animate retained entries between their measured screen coordinates.
+  // This guarantees intermediate frames for up/down movement even if the
+  // browser batches multiple DOM/style updates into one paint.
+  if (changingFocus && !reducedMotion) for (const key of used) {
+    const node = xmb.els.get(key);
+    const before = previousPositions.get(key);
+    if (!node || !before || typeof node.animate !== 'function') continue;
+    node.getAnimations().forEach((animation) => animation.cancel());
+    const after = node.getBoundingClientRect();
+    const dx = before.left - after.left;
+    const dy = before.top - after.top;
+    if (Math.abs(dx) > .5 || Math.abs(dy) > .5) {
+      node.animate([
+        { transform: `translate(${dx}px, ${dy}px)` },
+        { transform: 'translate(0px, 0px)' },
+      ], { duration: 280, easing: 'cubic-bezier(.2,.7,.2,1)' });
+    }
+  }
   for (const [key, node] of xmb.els) if (!used.has(key)) {
     xmb.els.delete(key);
     if (motion && typeof node.animate === 'function') {
@@ -3016,6 +3081,7 @@ function xmbRender() {
   }
   xmbRenderedColumn = column;
   xmbRenderedCategory = nav.cat;
+  xmbRenderedFocus = inSub ? nav.subIdx : focus;
 
   $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : connection.storageSetup ? 'PREPARACIÓN · almacenamiento USB' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
   const hid = state.controller_status?.connected === true;
@@ -3096,10 +3162,14 @@ function xmbApplyTheme() {
   $('xmb').style.setProperty('--xmb-top', colors.top);
   $('xmb').style.setProperty('--xmb-bottom', colors.bottom);
 }
+let xmbWavesFrameId = null;
 function xmbWaves() {
+  if (xmbWavesFrameId !== null) return;
+  if (document.hidden) return;
   const canvas = $('xmb-waves'), ctx = canvas.getContext('2d');
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const frame = (time) => {
+    xmbWavesFrameId = null;
+    const still = xmbReducedMotion();
     const w = canvas.clientWidth, h = canvas.clientHeight, dpr = devicePixelRatio || 1;
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -3118,15 +3188,22 @@ function xmbWaves() {
       ctx.fillStyle = `rgba(255,255,255,${.035 - k * .008})`;
       ctx.fill();
     }
-    if (!still && !document.hidden) requestAnimationFrame(frame);
-    else if (!still) document.addEventListener('visibilitychange', () => requestAnimationFrame(frame), { once: true });
+    if (!still && !document.hidden) xmbWavesFrameId = requestAnimationFrame(frame);
   };
-  requestAnimationFrame(frame);
+  // An existing loop owns the next frame. Re-entering after a setting change
+  // starts one loop only, while reduced motion paints one stationary frame.
+  xmbWavesFrameId = requestAnimationFrame(frame);
 }
 function xmbEscape(text) { return String(text).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
 xmbApplyTheme();
 setInterval(xmbApplyTheme, 60000);
-xmbWaves();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) xmbWaves();
+});
+matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
+  if (xmb.motion === 'system') xmbSyncMotion();
+});
+xmbSyncMotion();
 xmbLoadSettings();
 
 function appNewClientId() {
