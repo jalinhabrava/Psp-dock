@@ -1,5 +1,23 @@
 # PSP Dock · prototipo para Windows
 
+## Verificación rigurosa de códecs DZIP (en investigación)
+
+Se puede ejecutar un escaneo read-only de cualquier ISO/CSO PSP local por
+firma DZIP usando el comando
+python -m psp_dzip_compatibility RUTA_DEL_JUEGO.iso
+
+El sistema nunca certifica compatibilidad por compartir la extensión o
+cabecera. El nuevo verificador compara los datos descomprimidos byte a byte
+contra referencias independientes de **al menos dos recursos por juego y
+dos juegos diferentes**, y rechaza salidas truncadas o bytes sin consumir.
+Los resultados sintéticos prueban el verificador, **no el algoritmo DZIP**.
+
+Como resultado real, PPSSPP 1.20.4 generó en una instalación aislada
+un EBOOT MIPS descifrado de Dariusburst y una textura PNG capturada.
+**La rutina DZIP y la compatibilidad entre juegos siguen pendientes**:
+los archivos del laboratorio nunca se añaden a Git.
+Ver [resultados detallados](docs/DZIP-COMPATIBILIDAD.md).
+
 ## Motor determinista reutilizable de texturas (investigación)
 
 La extracción de recursos se divide en **detección por firma**, **códec**,
