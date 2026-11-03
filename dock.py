@@ -1495,6 +1495,20 @@ class Dock:
                 inventory={}
         with self.hd_scan_lock:
             scan_state=dict(self.hd_scan_state)
+        darius_re={}
+        if disc_id=='ULJM05558':
+            evidence=Path(self.config['storage_root'])/'hd-iso-candidates'/disc_id
+            for name,label in (
+                    ('dzip-summary.json','archive'),
+                    ('capture-summary.json','capture')):
+                summary=inside(evidence,name)
+                if summary.is_file() and summary.stat().st_size <= 16384:
+                    try:
+                        body=read_json(summary,{})
+                        if isinstance(body,dict) and body.get('schema')==1:
+                            darius_re[label]=body
+                    except (OSError,ValueError,TypeError):
+                        pass
         return {
             **state,'disc_id':disc_id,'enabled':config.get('enabled') is True,
             'scale':config.get('scale',2),'engine':config.get('engine','lanczos'),
@@ -1510,6 +1524,7 @@ class Dock:
             'iso_candidates':len(inventory.get('candidates',[])),
             'iso_unmapped':True,
             'iso_limited':bool(inventory.get('limited')),
+            'darius_re':darius_re,
         }
 
     def configure_hd_generator(self, game_id, *, action, scale=2, engine='lanczos'):
@@ -1573,7 +1588,39 @@ class Dock:
 
         def work():
             try:
-                report=discover_iso_assets(path,cache,disc_id=disc_id)
+                cache_dir=inside(cache,disc_id)
+                previous=inside(cache_dir,'index.json')
+                if previous.is_file():
+                    report=read_json(previous,{})
+                    if (not isinstance(report,dict) or
+                            report.get('disc_id')!=disc_id or
+                            not isinstance(report.get('candidates'),list)):
+                        raise ValueError('Inventario ISO anterior inválido.')
+                else:
+                    report=discover_iso_assets(path,cache,disc_id=disc_id)
+                if disc_id=='ULJM05558':
+                    from psp_dariusburst_re import (
+                        inventory_dariusburst,safe_report_write,
+                    )
+                    forensic=inventory_dariusburst(path)
+                    evidence=inside(
+                        cache_dir,'dzip-report-'+forensic['source_sha256'][:20]+'.json')
+                    if not evidence.exists():
+                        safe_report_write(evidence,forensic)
+                    summary={
+                        'schema':1,'disc_id':disc_id,
+                        'source_sha256':forensic['source_sha256'],
+                        'disc_version':forensic['disc_version'],
+                        'iso_files':forensic['file_count'],
+                        'dzip_files':forensic['dzip_count'],
+                        'declared_unpacked_bytes':forensic['total_declared_unpacked_bytes'],
+                        'extension_counts':forensic['extension_counts'],
+                        'group_counts':forensic['group_counts'],
+                        'errors':len(forensic['errors']),
+                        'decoded_assets':0,'replacements_proven':0,
+                        'status':'dzip_header_only',
+                    }
+                    atomic_json(inside(cache_dir,'dzip-summary.json'),summary)
                 self.events.record('hd_iso_inventory',evidence='pc_observed',
                                    game_id=game_id,count=len(report['candidates']),
                                    result='unmapped_candidates')
@@ -1587,6 +1634,69 @@ class Dock:
         threading.Thread(target=work,daemon=True,
                          name='PSPDockHDISOInventory').start()
         return {'active':True,'disc_id':disc_id,'status':'scanning'}
+
+    def start_darius_capture_snapshot(self,game_id):
+        """Compare actual PPSSPP dumped PNG hashes after each finished game."""
+        from psp_dariusburst_re import (
+            capture_inventory,compare_capture_sessions,GAME_DISC_ID,
+        )
+        if self.demo or self.running():
+            raise ValueError('La comparación requiere PPSSPP cerrado.')
+        path,disc_id=self.verified_local_texture_game(game_id)
+        if disc_id != GAME_DISC_ID:
+            raise ValueError('Esta investigación se limita a Dariusburst ULJM05558.')
+        dumps=inside(Path(self.config['memstick']),
+                     'PSP/TEXTURES/'+disc_id+'/new')
+        cache=inside(Path(self.config['storage_root']),
+                     'hd-iso-candidates/'+disc_id)
+        with self.hd_scan_lock:
+            if self.hd_scan_state['active']:
+                raise ValueError('Termina primero el análisis anterior.')
+            self.hd_scan_state={'active':True,'status':'comparing_captures',
+                                'disc_id':disc_id,'error':''}
+
+        def work():
+            try:
+                from psp_dariusburst_re import safe_pc_path
+                safe_pc_path(cache).mkdir(parents=True,exist_ok=True)
+                current=capture_inventory(dumps)
+                if current['count']==0:
+                    raise ValueError('No existen todavía PNG capturados de Dariusburst.')
+                source_sha=digest(path)
+                current.update(schema=1,disc_id=disc_id,source_sha256=source_sha)
+                latest=inside(cache,'capture-latest.json')
+                previous=read_json(latest,{}) if latest.is_file() else {}
+                comparison={}
+                if previous and previous.get('source_sha256')==source_sha:
+                    comparison=compare_capture_sessions(previous,current)
+                atomic_json(latest,current)
+                compact={
+                    'schema':1,'disc_id':disc_id,
+                    'source_sha256':source_sha,'captured':current['count'],
+                    'invalid':current['invalid'],
+                    'prior_captured':comparison.get('before'),
+                    'repeated':comparison.get('repeated_same_pixels',0),
+                    'changed':comparison.get('same_hash_different_pixels',0),
+                    'new':len(comparison.get('new_hashes',[])),
+                    'compared':bool(comparison),
+                    'source_mapping_verified':False,
+                }
+                atomic_json(inside(cache,'capture-summary.json'),compact)
+                if comparison:
+                    atomic_json(inside(cache,'capture-comparison.json'),comparison)
+                status='finished'
+                error=''
+                self.events.record(
+                    'darius_capture_fingerprints',evidence='pc_observed',
+                    game_id=game_id,count=current['count'],result='unmapped')
+            except (OSError,ValueError,TypeError) as exc:
+                status='failed'
+                error=str(exc)[:240]
+            with self.hd_scan_lock:
+                self.hd_scan_state.update(active=False,status=status,error=error)
+        threading.Thread(target=work,daemon=True,
+                         name='PSPDockDariusCaptureRE').start()
+        return {'active':True,'disc_id':disc_id,'status':'comparing_captures'}
 
     def controller_status(self, storage_mounted):
         """Observe manual PDK1 HID without authorizing a USB role handoff."""
@@ -2226,6 +2336,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False):
                             engine=body.get('engine','lanczos'))
                     elif self.path == '/api/hd-iso-scan':
                         dock.start_hd_iso_scan(body.get('id'))
+                    elif self.path == '/api/hd-capture-snapshot':
+                        dock.start_darius_capture_snapshot(body.get('id'))
                     elif self.path == '/api/select-device':
                         if body['root'] not in [d['root'] for d in dock.devices()]:
                             raise ValueError('Unidad no disponible.')

@@ -1,5 +1,15 @@
 # PSP Dock · prototipo para Windows
 
+## Investigación de texturas Dariusburst (ULJM05558)
+
+La PR de investigación sobre el generador HD híbrido permite inventariar
+recursos DZIP de Dariusburst desde su ISO/CSO del PC (TX2, XXI, BXN)
+y comparar huellas de los PNG volcados por PPSSPP en sucesivas partidas.
+Incluye cálculo independiente de la porción **hash de contenido** (XXH64
+con parámetros de PPSSPP) cuando se disponga de bytes gráficos sin comprimir.
+**No contiene todavía un descompresor DZIP ni publica reemplazos inferidos.**
+Ver [resultados, pruebas y siguientes pasos](docs/DARIUSBURST-RE.md).
+
 ## Generador HD híbrido de texturas (opt-in, PC)
 
 En el XMB > Gráficos > un juego verificado > Generador HD híbrido puedes
