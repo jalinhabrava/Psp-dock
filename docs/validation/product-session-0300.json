@@ -1,0 +1,348 @@
+{
+  "schema": "pspdock-product-session-0300-validation-v1",
+  "record_status": "prepared_pending_physical_native_0300_acceptance",
+  "recorded_date_utc": "2026-11-02",
+  "base_commit": "712091cdfb293a059512d5d21167f6130b954e69",
+  "scope": "Native 0300 product session implementation, synthetic UI validation, build checks, Windows regression checks, backups and verified firmware installation. Functional testing of native 0300 on the physical PSP has not run.",
+  "evidence_provenance": {
+    "source": "Verified execution logs and artifacts from the implementation session.",
+    "identifying_device_data_included": false,
+    "absolute_windows_user_paths_included": false
+  },
+  "expected_native_profile": {
+    "controller_mode": "native_dock",
+    "product_id_hex": "01CD",
+    "revision_hex": "0300",
+    "observed_on_physical_psp_in_this_validation": false
+  },
+  "ui_visual": {
+    "result": "passed",
+    "kind": "isolated_synthetic_http_fixtures",
+    "runner": "tools/product_ui_preview.py",
+    "report": "data/product-session-ui/result.json",
+    "screenshots_directory": "data/product-session-ui/",
+    "views_checked": 24,
+    "snapshot_scenarios": [
+      "choosing",
+      "syncing_in",
+      "ready",
+      "ready_pc_saves",
+      "copying",
+      "copying_window_close",
+      "waiting_game_exit",
+      "syncing_out",
+      "finalizing",
+      "safe_to_disconnect",
+      "attention",
+      "attention_initial",
+      "attention_resolved"
+    ],
+    "viewports": [
+      {
+        "width": 1600,
+        "height": 900
+      },
+      {
+        "width": 540,
+        "height": 960
+      }
+    ],
+    "narrow_viewport_scenarios": [
+      "choosing",
+      "attention",
+      "attention_initial",
+      "attention_resolved"
+    ],
+    "javascript_errors": 0,
+    "unexpected_mutations": 0,
+    "layout_checks_passed": true,
+    "layout_scope": "Product panels and conflict dialogs must not overflow horizontally. XMB navigation may occupy deliberately clipped offscreen space; its active controls and viewport clipping are checked separately.",
+    "browser_closed": true,
+    "server_closed": true,
+    "root_visual_review": {
+      "result": "passed",
+      "reviewed": [
+        "initial_choice",
+        "ready_xmb",
+        "conflict_review",
+        "finalizing",
+        "safe_to_disconnect"
+      ]
+    },
+    "physical_native_hardware_evidence": false
+  },
+  "javascript_tests": [
+    {
+      "test": "tests/xmb_product_flow.test.js",
+      "result": "passed",
+      "assertions": 161
+    },
+    {
+      "test": "tests/xmb_connection_model.test.js",
+      "result": "passed",
+      "assertions": 151
+    },
+    {
+      "test": "tests/xmb_navigation_model.test.js",
+      "result": "passed"
+    },
+    {
+      "test": "tests/xmb_controller_navigation.test.js",
+      "result": "passed"
+    },
+    {
+      "test": "tests/xmb_triangle_menu_contract.test.js",
+      "result": "passed"
+    }
+  ],
+  "native_build_checks": {
+    "normal_native_checks": {
+      "result": "passed"
+    },
+    "address_and_undefined_behavior_sanitizers": {
+      "result": "passed",
+      "sanitizers": [
+        "ASan",
+        "UBSan"
+      ]
+    },
+    "psp_firmware_build": {
+      "result": "passed",
+      "toolchain": "PSP GCC",
+      "warnings_as_errors": true,
+      "compiler_option": "-Werror"
+    },
+    "physical_execution_verified": false,
+    "elf_pbp_audit": {
+      "result": "passed",
+      "report": "homebrew/native-dock/dist/compiled-audit.json",
+      "user_launcher": true,
+      "no_kernel_filesystem_imports": true
+    }
+  },
+  "windows_python_tests": {
+    "runs_overlap": true,
+    "unique_test_total": null,
+    "aggregation_note": "These runs overlap. Their counts must not be added. The broad run had one intermittent loopback error; the targeted recheck passed, but it does not make the original broad run a clean pass.",
+    "runs": [
+      {
+        "stage": "broad_regression",
+        "result": "completed_with_one_error",
+        "tests": 305,
+        "passed": 304,
+        "not_passed": 1,
+        "error": {
+          "code": "WinError 10053",
+          "scope": "Unauthorized-heartbeat HTTP loopback regression test; connection aborted before its response.",
+          "reported_as_intermittent": true
+        },
+        "log": "data/native-dock-0300-evidence/windows-tests-final.log"
+      },
+      {
+        "stage": "targeted_loopback_recheck",
+        "result": "passed",
+        "tests": 4,
+        "passed": 4,
+        "log": "data/native-dock-0300-evidence/windows-loopback-recheck.log"
+      },
+      {
+        "stage": "final_close_gate",
+        "result": "passed",
+        "tests": 83,
+        "passed": 83,
+        "log": "data/native-dock-0300-evidence/windows-final-close-gate.log"
+      },
+      {
+        "stage": "inventory_gate",
+        "result": "passed",
+        "tests": 38,
+        "passed": 38,
+        "log": "data/native-dock-0300-evidence/windows-inventory-gate.log"
+      }
+    ]
+  },
+  "backups": {
+    "critical": {
+      "result": "verified",
+      "files": 42,
+      "bytes": 4908072,
+      "destination_kind": "pc_backup",
+      "writes_to_psp": false
+    },
+    "retro_opaque": {
+      "result": "verified",
+      "files": 108,
+      "bytes": 6106030,
+      "destination_kind": "pc_backup",
+      "writes_to_psp": false,
+      "content_handling": "Opaque backup only; files are preserved without claiming format compatibility or converting emulator states.",
+      "savestate_conversion_performed": false,
+      "savestate_compatibility_verified": false
+    }
+  },
+  "firmware_installation": {
+    "revision_hex": "0300",
+    "result": "installed_and_verified",
+    "verified_utc": "2026-11-02T10:19:37.738888+00:00",
+    "installed_files": 4,
+    "installed_bytes": 361380,
+    "all_installed_files_verified": true,
+    "component_sha256": {
+      "EBOOT.PBP": "5c981962c4eef43f0ce604df89070776217cb548f57f7e65e4cfc766c81983fd",
+      "docknative.prx": "b3ac8e838e398733898e4db90784b3ed7abf1f661b7893035368d1f299b15d63"
+    },
+    "functional_hardware_test_completed": false,
+    "destination_relative": "PSP/GAME/PSPDockNative",
+    "title": "PSP Dock - Memory Stick + Mando 0300",
+    "receipt": "data/native-dock-0300-evidence/installation.json",
+    "branding": {
+      "icon0_embedded": true,
+      "pic0_embedded": true,
+      "pic1_embedded": true,
+      "screen_has_product_name": true
+    }
+  },
+  "save_compatibility": {
+    "sram_sync_scope": "Only compatible profiles verified by the implementation are eligible for SRAM synchronization.",
+    "universal_savestate_conversion_claimed": false,
+    "unsupported_states": "Opaque backup only; not evidence of cross-emulator compatibility or authorization to copy those states into another emulator.",
+    "physical_sram_round_trip_verified": false,
+    "physical_savestate_round_trip_verified": false,
+    "supported_raw_sram_profiles": [
+      "gpSP Kai / GBA .sav",
+      "TempGBA4PSP / GBA .sav",
+      "Snes9xTYL / SNES .srm",
+      "Snes9x Euphoria / SNES .srm"
+    ]
+  },
+  "physical_native_0300_validation": {
+    "status": "not_run",
+    "firmware_started": false,
+    "native_usb_enumeration_verified": false,
+    "native_hid_controls_verified": false,
+    "real_memory_stick_access_verified": false,
+    "initial_inventory_and_choice_verified": false,
+    "initial_synchronization_verified": false,
+    "controller_mode_transition_verified": false,
+    "game_launch_verified": false,
+    "on_demand_game_copy_verified": false,
+    "save_return_verified": false,
+    "safe_disconnect_verified": false,
+    "window_close_during_native_session_verified": false,
+    "note": "Installation verification, synthetic screenshots, host tests and the earlier 0207 diagnostic session do not establish physical native 0300 functionality."
+  },
+  "final_application_readiness": {
+    "status": "startup_verified_then_window_closed_normally",
+    "final_startup_verified": true,
+    "observed_utc": "2026-11-02T11:06:06.696210+00:00",
+    "report": "data/native-dock-0300-evidence/windows-ready-final.json",
+    "ui_clients": 1,
+    "native_window_count": 1,
+    "closing": false,
+    "scanning": false,
+    "error": null,
+    "connection_state": "waiting_psp",
+    "controller_mode": "usb_storage",
+    "game_count": 21,
+    "rom_count": 1446,
+    "runtime_prepared": true,
+    "game_running": false,
+    "pending_return": false,
+    "recovery_required": false,
+    "physical_native_session_active": false,
+    "observational_wrapper": true,
+    "wrapper_scope": "Temporary manual launch with timing logs and one completed stack observation. It does not alter lifecycle decisions or device/file operations; its lifetime remains owned by the visible application.",
+    "note": "The PSP is still in ordinary Sony XMB storage mode. This verifies the completed host inventory and waiting window, not native 0300 enumeration.",
+    "current_window_open": false,
+    "closed_utc": "2026-11-02T11:15:24.278428+00:00",
+    "next_start": "Use the updated manual desktop shortcut; it launches start_dock.py without the temporary observation wrapper."
+  },
+  "artifacts": {
+    "data/native-dock-0300-build.log": {
+      "sha256": "911147f1bda1421b3cc656e49fa02039c4f923751c86904be1fd345c10926a65",
+      "bytes": 5839
+    },
+    "homebrew/native-dock/dist/compiled-audit.json": {
+      "sha256": "267c81452a26464aebf98d6a2d7f90f8224020ca13fd5fd10cdf2e6a7c4acad8",
+      "bytes": 2114
+    },
+    "data/native-dock-0300-evidence/installation.json": {
+      "sha256": "e608ccd22a96bf82c6ae88ddf8a364740c602c40d0c04c66010c51055670dab2",
+      "bytes": 2597
+    },
+    "data/native-dock-0300-evidence/windows-tests-final.log": {
+      "sha256": "9578838d9e076adcdfe0ba19acdf8e6c12d3f5f1aeb9396b12588ec7def4b33e",
+      "bytes": 3659
+    },
+    "data/native-dock-0300-evidence/windows-loopback-recheck.log": {
+      "sha256": "c9ea977f8b661e91af1825dbaf946ca25321bdc715d2a706f1e3aab48c67c0e1",
+      "bytes": 873
+    },
+    "data/native-dock-0300-evidence/windows-final-close-gate.log": {
+      "sha256": "02b992726c2226e3bab321bbe336f72082a6bc01802bb6bce2b158fc8bf4645f",
+      "bytes": 256
+    },
+    "data/product-session-ui/result.json": {
+      "sha256": "9aca81b537db87d6adeaa235cb45d5bc76133fbfa6bc96ce66ac19dc3f2d3100",
+      "bytes": 137414
+    },
+    "data/native-dock-0300-evidence/windows-inventory-gate.log": {
+      "sha256": "3f6f6f93157a9fc8dc46432393cabf2206f94cc0701aabdb0d949de6dd6fd284",
+      "bytes": 144
+    },
+    "data/native-dock-0300-evidence/windows-ready-final.json": {
+      "sha256": "430876d3cc326ac05483ebe26cb3d90a6e555f4b4ea655e08e6e4a96430bc9eb",
+      "bytes": 1198
+    }
+  },
+  "manual_windows_entry": {
+    "shortcut_updated": true,
+    "startup_service_installed": false,
+    "usb_arrival_task_installed": false,
+    "lifetime": "The manually opened UI owns the detector and server.",
+    "window_close_observed": true,
+    "close_observation": "The temporary observed manual launch exited normally after pagehide/native window disappearance and completion of the current read."
+  },
+  "source_provenance": {
+    "integration_branch": "feat/dock-product-session",
+    "base_branch": "feat/composite-usb-driver",
+    "retro_source_commits": [
+      "0a014f1",
+      "74e7dc5",
+      "e30211b",
+      "0ef580b"
+    ],
+    "normalized_line_endings_for_source_hashes": "LF",
+    "selected_sha256": {
+      "dock.py": "c01014dae419a084a615cd2dd3587c6f598797cf827e0334ec12d3ab5949cb5d",
+      "dock_product_flow.py": "bd409f892bbf78c27be92d4a248bbbebefa96e23e10342e8ffce36c26beb7f24",
+      "dock_product_session.py": "04fb3384020ac955eb0ef09d1aa7adac68d1c8d5fed8f7113ddbb15a5dc311bc",
+      "dock_window_close.py": "f0658640293b08f9809b4e7dc389723aaac7911c5b6df2f79c5d17f6bbf922ea",
+      "native_dock.py": "672863e78e8d9236f68fbcfd590e3a63ddf35d4c99f5631e401986e5bdf6c4e2",
+      "web/app.js": "f9b3c980b15fdfe3d9a4bc7890ec4bb436bff852f8866049c5a80702f5031ec2",
+      "psp_retro_backup.py": "8374045dd77eea0992867831f58eaac3517a8ec2097a884681d16f42d6a32fbd"
+    }
+  },
+  "initial_inventory_performance": {
+    "scope": "Observed ordinary Sony XMB storage startup with the user's library, before running native 0300.",
+    "seconds_from_launch_to_first_complete_state": 204.886,
+    "retro_catalog_passes_seconds": [
+      84.828,
+      93.235
+    ],
+    "savedata_plan_first_seconds": 1.562,
+    "retro_save_plan_seconds": 11.36,
+    "known_limitation": "The identical-save preparation and final state publication each scan the retro catalog during a fresh legacy startup. This duplication remains to be optimized; the initial state was published only after the complete audit.",
+    "log": "data/native-dock-0300-evidence/windows-app-observed.log",
+    "native_hardware_timing_verified": false
+  },
+  "startup_followup": {
+    "previous_normal_launch": "Returned cleanly while the inventory was pending; that earlier initiating close signal was not captured.",
+    "current_launch": "Completed the full inventory and remained open until the browser sent pagehide and its native window disappeared at 11:15:19 UTC. The UI lifetime monitor requested shutdown after its grace interval, drained the active read, and launch() returned normally at 11:15:24 UTC.",
+    "temporary_faulthandler_attempt": "A separate instrumented attempt crashed in python312.dll during its faulthandler stack dump. That instrument was removed from the subsequent launch.",
+    "production_native_acceptance_still_pending": true,
+    "observed_close_reason": "pagehide",
+    "observed_close_initiator": "Browser pagehide plus absent native window; no claim about who or what closed the browser window.",
+    "current_launch_unexpected_product_exception": false
+  }
+}

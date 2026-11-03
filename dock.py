@@ -19,8 +19,16 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dock_events import EventJournal
 from dock_lifecycle import UiLifecycle
+from catalog_paths import ReadOnlyTree
 from dock_preflight import assess_storage
 from psp_artwork import read_icon, valid_png
+from psp_retro import SYSTEMS, emulator_inventory, emulator_profile, retroarch_core
+from retro_installer import (RetroInstallError, install_plan as pc_retro_install_plan,
+                             install_required as install_pc_retro, managed_retroarch)
+from retro_runtime import (LAYOUTS, prepare_joypad_profile,
+                           private_save_paths, retroarch_arguments)
+from retro_saves import (plan_retro_saves, copy_sram_verified, _baseline_key,
+                         _sha as retro_sha, RAW_PROFILES)
 
 ROOT = Path(__file__).resolve().parent
 
@@ -83,6 +91,10 @@ def slots(root):
 
 def sync_plan(psp, pc, baseline):
     a, b = slots(psp), slots(pc)
+    return sync_plan_from_snapshots(a, b, baseline)
+
+def sync_plan_from_snapshots(a, b, baseline):
+    """Compare an already read pair; never hash the same saves for presentation."""
     actions, conflicts = [], []
     for slot in sorted(a.keys() | b.keys() | baseline.keys()):
         x, y, old = a.get(slot), b.get(slot), baseline.get(slot)
@@ -158,11 +170,24 @@ def game_inventory(root):
         if not base.exists():
             continue
         for p in base.rglob('*'):
+            # Ignore ROM/save names before touching their USB metadata.
+            # Real PSP-game candidates still receive every path check below.
+            if not ((folder == 'ISO' and p.suffix.lower() in ('.iso', '.cso')) or
+                    (folder == 'PSP/GAME' and p.name.upper() == 'EBOOT.PBP')):
+                continue
             if not p.is_file():
                 continue
             rel = p.relative_to(root).as_posix()
             p = inside(root, rel)
             if (folder == 'ISO' and p.suffix.lower() in ('.iso', '.cso')) or (folder == 'PSP/GAME' and p.name.upper() == 'EBOOT.PBP'):
+                if (folder == 'PSP/GAME' and p.parent.parent == base and
+                        p.parent.name.casefold() in ('pspdock','pspdocknative',
+                                                    'pspdockstoragetest','pspdockcompositetest')):
+                    continue
+                # An emulator is a launcher for *another console*, not a PSP
+                # game to feed PPSSPP. Unknown homebrew stays as a PSP title.
+                if p.suffix.lower() == '.pbp' and emulator_profile(p.parent, p):
+                    continue
                 stat = p.stat()
                 found.append({'id': hashlib.sha256(rel.encode()).hexdigest()[:24],
                               'relative': rel, 'title': p.parent.name if p.suffix.lower() == '.pbp' else p.stem,
@@ -412,12 +437,21 @@ class Dock:
         self.lock = threading.RLock()
         self.config_path = self.data / 'settings.json'
         bundled = ROOT / 'tools/PPSSPP/PPSSPPWindows64.exe'
-        defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'library': str(self.data / 'library'),
+        defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'retroarch': '',
+                    'retro_install_policy':'ask',
+                    'retro_button_layout':'nintendo', 'library': str(self.data / 'library'),
                     'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3,
                     'backend': 'directx11','storage_root':str(self.data)}
         self.config = read_json(self.config_path, defaults)
         self.config.setdefault('storage_root',str(self.data))
+        self.config.setdefault('retroarch', '')
+        self.config.setdefault('retro_install_policy', 'ask')
+        self.config.setdefault('retro_button_layout','nintendo')
         self.process = None
+        from xmb_sounds import UiSoundPlayer
+        self.ui_sound_player = UiSoundPlayer(self.data / 'xmb-ui-sounds')
+        self._background_cache = None
+        self._background_cache_lock = threading.Lock()
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
         # A previous process may still have the dedicated memstick open.
         self.recovery_required = self.session.get('running', False)
@@ -440,14 +474,63 @@ class Dock:
                     signature = g.get('signature')
                     if isinstance(signature, str) and re.fullmatch('[0-9a-f]{64}', signature):
                         entry['signature'] = signature
-                    self.last_games.append(entry)
+                    # Purge old incorrectly categorized emulator entries.
+                    if (not emulator_profile(Path(entry['relative']).parent) and
+                            not emulator_profile(Path(entry['title']))):
+                        self.last_games.append(entry)
         self.catalog_volume = cached.get('volume_serial', '') if isinstance(cached, dict) else ''
+        retro_cache = read_json(self.data / 'retro-inventory-cache.json', {})
+        self.last_emulators, self.last_roms, self.retro_volume = [], [], ''
+        if isinstance(retro_cache, dict):
+            self.retro_volume = retro_cache.get('volume_serial', '') if isinstance(retro_cache.get('volume_serial'), str) else ''
+            for emulator in retro_cache.get('emulators', [])[:64] if isinstance(retro_cache.get('emulators'), list) else []:
+                if (isinstance(emulator, dict) and
+                        all(isinstance(emulator.get(key), str) for key in ('id', 'name', 'relative')) and
+                        isinstance(emulator.get('systems'), list) and
+                        all(system in SYSTEMS for system in emulator['systems']) and
+                        re.fullmatch('[0-9a-f]{24}', emulator['id']) and
+                        emulator['relative'].startswith('PSP/GAME/') and
+                        '..' not in emulator['relative'].split('/')):
+                    self.last_emulators.append(emulator)
+            valid_ids = {emu['id'] for emu in self.last_emulators}
+            for rom in retro_cache.get('roms', [])[:2048] if isinstance(retro_cache.get('roms'), list) else []:
+                if (isinstance(rom, dict) and
+                        all(isinstance(rom.get(key), str) for key in
+                            ('id','relative','title','system','system_name','emulator_id','format')) and
+                        rom['system'] in SYSTEMS and rom['emulator_id'] in valid_ids and
+                        re.fullmatch('[0-9a-f]{24}', rom['id']) and
+                        rom['relative'].startswith('PSP/GAME/') and
+                        '..' not in rom['relative'].split('/') and
+                        type(rom.get('size')) is int and 0 <= rom['size'] <= 256 * 1024 * 1024 and
+                        type(rom.get('modified_ns')) is int and rom['modified_ns'] >= 0):
+                    self.last_roms.append(rom)
+        self.cached_retro_results = None
+        self.retro_installer_lock=threading.Lock()
+        self.retro_install_progress={'active':False,'phase':'idle','item':'',
+                                      'bytes_done':0,'bytes_total':0,'error':'',
+                                      'installed_cores':[]}
+        self.retro_install_attempted=set()
+        self.retro_save_baselines_path = self.data/'retro-save-baselines.json'
+        self.retro_save_cache_path = self.data/'retro-save-catalog.json'
+        save_cache = read_json(self.retro_save_cache_path,{})
+        self.retro_save_volume = save_cache.get('volume_serial','') if isinstance(save_cache,dict) else ''
+        self.last_retro_save_rows = []
+        if isinstance(save_cache,dict) and isinstance(save_cache.get('rows'),list):
+            for row in save_cache['rows'][:2048]:
+                if (isinstance(row,dict) and
+                    isinstance(row.get('rom_id'),str) and
+                    re.fullmatch('[0-9a-f]{24}',row['rom_id']) and
+                    row.get('status') in ('none','identical','pc_to_psp','psp_to_pc','conflict','unsupported','blocked') and
+                    (row.get('source_relative') is None or isinstance(row.get('source_relative'),str))):
+                    self.last_retro_save_rows.append(row)
         self.error = None
         self.cache = {}
         # Materialized catalog for artwork requests. Re-enumerating dozens of
         # PSP/GAME folders and their assets for EVERY thumbnail can monopolize
         # the USB worker and the launcher for minutes.
         self.cached_game_results = None
+        from device_memory import DeviceMemory
+        self.device_memory = DeviceMemory(self.data, atomic_json)
         self.last_storage_scan_at = 0.0
         self.last_storage_scan_identity = ''
         self.storage_scan_interval = 300.0
@@ -504,14 +587,33 @@ class Dock:
         ]
         self.snapshot = {'demo':demo,'devices':[],'selected_device':None,'games':[],
                          'connection_state':'waiting_psp',
+                         'retro': {'emulators': list(self.last_emulators),
+                                   'roms': [{**{k:v for k,v in rom.items() if k!='signature'},
+                                             'availability':'checking'} for rom in self.last_roms]},
+                         'retro_saves': {'rows': [], 'pending':0,'conflicts':0,'offline':True},
                          'saves':{'actions':[],'conflicts':[],'unchanged':0},
                          'session':dict(self.session),'emulator':{'path':self.config['emulator'],'available':bool(self.config['emulator'])},
                          'error':None,'recovery_required':self.recovery_required,'scanning':True,
                          'library_source':'cached_manifest' if self.last_games else 'empty'}
         self.snapshot['games']=provisional
+        from dock_product_session import DockProductSession
+        self.product_session = DockProductSession(self)
+        self.product_flow = self.product_session.flow
+        self.native_transport = self.product_session.transport
+        self._native_observation = None
+        from dock_window_close import NativeWindowClose
+        self.window_close = NativeWindowClose(
+            self, persist=lambda record:atomic_json(self.data/'window-close-request.json',record))
+        self.snapshot['product_flow'] = self.product_session.snapshot()
+
+    def native_shutdown_pending(self):
+        # Read the durable close state even before the first HID observation.
+        # Cached UI/flow state must never authorize another FAT probe after
+        # the storage-release transaction has started.
+        return bool(getattr(getattr(self, 'native_transport', None), 'shutdown_pending', False))
 
     def devices(self):
-        if self.storage_polling_paused:
+        if self.storage_polling_paused or self.native_shutdown_pending():
             return []
         if self.demo:
             return [{'root': str(self.data / 'sample-psp'), 'label': 'PSP de demostración · archivos sintéticos'}]
@@ -521,14 +623,43 @@ class Dock:
             devices.append({'root': explicit, 'label': 'Carpeta elegida en ajustes (identidad PSP sin verificar)'})
         return devices
 
+    def awaiting_native_app(self, devices):
+        """An installed native Dock is not a legacy storage-only session.
+
+        This small read-only check suppresses the expensive legacy ROM/save
+        inventory while XMB USB is open. It grants no USB identity or write
+        permission: native transport verification is still required.
+        """
+        if (self.demo or self.product_flow.enabled or self.session.get('pending_return') or
+                self.session.get('exit_requested') or
+                self.copy_queue.get('status') == 'waiting_for_storage'):
+            return False
+        return any(Path(row['root'], 'PSP/GAME/PSPDockNative/EBOOT.PBP').is_file()
+                   for row in devices)
+
+    def watch_interval(self):
+        # USB enumeration/handshake should not accumulate a 3-second delay
+        # between each stage. Established or stopped sessions stay quieter.
+        state = self.product_flow.snapshot()
+        return 1.0 if state['phase'] in ('ready', 'attention', 'safe_to_disconnect') else 0.25
+
     def root(self):
-        if self.storage_polling_paused:
+        if self.storage_polling_paused or self.native_shutdown_pending():
             return None
+        if self.product_flow.enabled:
+            # Sony may keep the volume mounted while the native composite
+            # is in CONTROLLER. Product work only opens it in storage phases.
+            return self.product_session.root()
         devices = self.devices()
         configured = self.config['psp_root']
         if configured:
             return next((Path(d['root']) for d in devices if Path(d['root']) == Path(configured)), None)
         return Path(devices[0]['root']) if len(devices) == 1 else None
+
+    def assert_psp_storage(self, root):
+        if self.product_flow.enabled:
+            return self.product_session.assert_storage(root)
+        return require_psp_identity_before_writing(root)
 
     def pause_storage_polling(self, paused):
         """For a future role adapter. Never mistake this for an OS lock."""
@@ -575,7 +706,8 @@ class Dock:
             serial = volume_identity(root)
             previous = ({g['relative']: g for g in self.last_games}
                         if serial == self.catalog_volume else {})
-            found = game_inventory(root)
+            found = self.device_memory.inventory(inside(root, ''), serial, 'games',
+                                                lambda:game_inventory(root))
             for game in found:
                 # An empty PC library is already proof of absence. Never read
                 # gigabytes over PSP USB just to display an absent game.
@@ -626,18 +758,304 @@ class Dock:
                 if signature == game.get('signature'):
                     status, local_relative = 'ready', candidate['relative']
                     break
-            result.append({**{k:v for k,v in game.items() if k!='signature'}, 'availability': status, 'local_relative':local_relative})
+            result.append({**{k:v for k,v in game.items() if k!='signature'}, 'availability': status,
+                           'local_relative':local_relative, 'on_psp':True,
+                           'on_pc':local.exists() or status=='ready'})
+        represented = {g['local_relative'] for g in result} | {g['relative'] for g in result}
+        for game in candidates:
+            if game['relative'] in represented:
+                continue
+            # PC-only games remain visible; their absence from the PSP is
+            # explicit and never authorizes a copy back to the console.
+            result.append({**game,
+                           'id':hashlib.sha256(('pc-only\n'+game['relative']).encode()).hexdigest()[:24],
+                           'availability':'ready','local_relative':game['relative'],
+                           'on_psp':False,'on_pc':True})
         self.cached_game_results = result
         return result
+
+    def retro_catalog(self):
+        """Verified local-ROM mirror separate from PSP titles and PPSSPP.
+
+        A disconnected PSP never grants ROM access merely because a path
+        exists on Windows: only an earlier SHA-256 PSP/PC match can be ready.
+        """
+        root = self.root()
+        library = Path(self.config['library'])
+        local_tree = ReadOnlyTree(library)
+        if root is not None:
+            serial = volume_identity(root)
+            old = ({r['relative']: r for r in self.last_roms}
+                   if serial == self.retro_volume else {})
+            found = self.device_memory.inventory(inside(root, ''), serial, 'retro',
+                                                lambda:emulator_inventory(root))
+            for index, rom in enumerate(found['roms'], 1):
+                local, local_info = local_tree.file(rom['relative'])
+                if local_info is not None and local_info.st_size == rom['size']:
+                    # Contents are read only after the original fresh path guard.
+                    rom['signature'] = self.hash(inside(root, rom['relative']))
+                elif (rom['relative'] in old and
+                      old[rom['relative']].get('size') == rom['size'] and
+                      old[rom['relative']].get('modified_ns') == rom['modified_ns']):
+                    rom['signature'] = old[rom['relative']].get('signature')
+                self.product_session.inventory_progress('Comprobando ROMs de la PSP.', index, rom['title'], total=len(found['roms']))
+            source_tree = ReadOnlyTree(root)
+            if volume_identity(root) != serial or any(
+                (lambda info: info is None or info.st_size != rom['size'] or info.st_mtime_ns != rom['modified_ns'])(
+                    source_tree.file(rom['relative'])[1]) for rom in found['roms']
+            ):
+                raise ValueError('Las ROMs cambiaron durante el inventario PSP; vuelve a comparar.')
+            if (serial != self.retro_volume or found['emulators'] != self.last_emulators or
+                    found['roms'] != self.last_roms):
+                atomic_json(self.data / 'retro-inventory-cache.json',
+                            {'volume_serial':serial,'emulators':found['emulators'],
+                             'roms':found['roms']})
+            self.retro_volume = serial
+            self.last_emulators, self.last_roms = found['emulators'], found['roms']
+            if self.config.get('retro_install_policy')=='auto':
+                # PC-only downloads after a live read-only PSP inventory.
+                # Network traffic belongs to a separate worker, never the
+                # PSP USB scan or the /api/state HTTP thread.
+                self.start_retro_install(automatic=True)
+        roms = []
+        cores = {system:retroarch_core(self.config['retroarch'],system) for system in SYSTEMS}
+        for index, rom in enumerate(self.last_roms, 1):
+            local, local_info = local_tree.entry(rom['relative'])
+            status = 'missing'
+            if local_info is not None:
+                status = 'different'
+                if (local_tree.file(rom['relative'])[1] is not None and local_info.st_size == rom['size'] and
+                        re.fullmatch('[0-9a-f]{64}', rom.get('signature') or '') and
+                        self.hash(inside(library, rom['relative'])) == rom['signature']):
+                    status = 'ready'
+            core = cores[rom['system']]
+            self.product_session.inventory_progress('Comparando ROMs con el ordenador.', index, rom['title'], total=len(self.last_roms))
+            roms.append({**{k:v for k,v in rom.items() if k!='signature'},
+                         'availability':status,'local_relative':rom['relative'],
+                         'windows_emulator':'RetroArch · ' + SYSTEMS[rom['system']][1].replace('_libretro.dll',''),
+                         'core_available':core is not None})
+        self.cached_retro_results = {'emulators':list(self.last_emulators),'roms':roms,
+                                     'retroarch_available':any(retroarch_core(self.config['retroarch'], system)
+                                           for system in SYSTEMS)}
+        return self.cached_retro_results
+
+    def retro_install_state(self):
+        plan=pc_retro_install_plan(self.config['storage_root'],self.last_emulators,
+                                   self.config.get('retroarch',''))
+        with self.retro_installer_lock:
+            progress=dict(self.retro_install_progress)
+        return {**plan,'policy':self.config['retro_install_policy'],
+                'progress':progress,'volume_present':bool(self.root())}
+
+    def start_retro_install(self, automatic=False):
+        """Schedule a *PC-only* installation of detected emulator equivalents.
+
+        Installer mode will set policy='auto' after selecting storage_root;
+        legacy installations default to 'ask' for no surprise downloads.
+        """
+        if self.demo or self.recovery_required or self.running() or self.session.get('pending_return'):
+            if automatic:return False
+            raise ValueError('Termina o recupera la sesión antes de instalar emuladores.')
+        if self.storage_polling_paused or self.session.get('exit_requested'):
+            if automatic:return False
+            raise ValueError('La PSP está cambiando de modo o saliendo del Dock.')
+        root=self.root()
+        if root is None or not self.last_emulators or volume_identity(root)!=self.retro_volume:
+            if automatic:return False
+            raise ValueError('Conecta una PSP en almacenamiento Sony y detecta primero sus emuladores.')
+        if automatic and self.config.get('retro_install_policy')!='auto':
+            return False
+        plan=pc_retro_install_plan(self.config['storage_root'],self.last_emulators,
+                                   self.config.get('retroarch',''))
+        if plan['external']:
+            if automatic:return False
+            raise ValueError('RetroArch está en una carpeta externa. No se modificará: instala los núcleos allí manualmente.')
+        if not plan['needed']:
+            if not self.config.get('retroarch') and plan['retroarch_installed']:
+                self.config['retroarch']=str(managed_retroarch(self.config['storage_root']))
+                atomic_json(self.config_path,self.config)
+            return False
+        key=(self.retro_volume,str(self.config['storage_root']),
+             tuple(plan['requested_cores']))
+        with self.retro_installer_lock:
+            if self.retro_install_progress['active']:
+                return False
+            if automatic and key in self.retro_install_attempted:
+                return False
+            self.retro_install_attempted.add(key)
+            self.retro_install_progress={'active':True,'phase':'queued',
+                                         'item':'RetroArch y núcleos oficiales',
+                                         'bytes_done':0,'bytes_total':0,
+                                         'error':'','installed_cores':[]}
+        storage=self.config['storage_root']
+        emulators=[{'name':emu['name'],'systems':list(emu['systems'])}
+                   for emu in self.last_emulators]
+        configured=self.config.get('retroarch','')
+
+        def job():
+            def report(**values):
+                with self.retro_installer_lock:
+                    self.retro_install_progress.update(values)
+            try:
+                result=install_pc_retro(storage,emulators,configured=configured,
+                                        progress=report)
+                # Commit only AFTER download hash, payload extraction and
+                # all selected cores are installed. Changing the storage
+                # target while the worker runs is blocked in settings.
+                with self.lock:
+                    if self.config['storage_root'] != storage:
+                        raise ValueError('La ubicación cambió durante la instalación.')
+                    self.config['retroarch']=str(managed_retroarch(storage))
+                    atomic_json(self.config_path,self.config)
+                    self.cached_retro_results=None
+                    self.last_storage_scan_at=0
+                    self.events.record('retro_emulators_installed',evidence='pc_observed',
+                                       count=len(result['installed_cores']),
+                                       result='verified_pc_install')
+                report(phase='ready',error='',installed_cores=result['installed_cores'])
+            except Exception as exc:
+                # A connection failure cannot become a successful install.
+                # Never delete an older RetroArch installation or PSP files.
+                report(phase='failed',error=str(exc)[:500])
+            finally:
+                report(active=False)
+        threading.Thread(target=job,daemon=True,name='PSPDockRetroInstaller').start()
+        return True
+
+    def retro_save_plan(self):
+        """Read-only SRAM plan; USB source is accessed only when mounted.
+
+        Offline/HID rows are merely last-observed metadata, never permission
+        to write to the PSP. Each mutation recomputes its fresh revision.
+        """
+        root = self.root()
+        if (root is not None and not self.running() and
+                volume_identity(root) == self.retro_volume):
+            baselines = read_json(self.retro_save_baselines_path,{})
+            if not isinstance(baselines,dict):
+                baselines={}
+            rows = plan_retro_saves(
+                root=root,storage_root=Path(self.config['storage_root']),
+                volume=self.retro_volume,roms=self.last_roms,
+                emulators=self.last_emulators,baselines=baselines)
+            # Like the existing PSP/SAVEDATA three-way sync: two already
+            # identical SRAMs establish a safe common ancestor by changing
+            # PC METADATA only. This never copies/overwrites any save.
+            established=False
+            for row in rows:
+                if (row['status']=='identical' and row.get('psp_signature') and
+                        row['psp_signature']==row.get('pc_signature')):
+                    key=_baseline_key(self.retro_volume,row['rom_id'])
+                    if baselines.get(key)!=row['psp_signature']:
+                        baselines[key]=row['psp_signature']
+                        established=True
+            if established:
+                atomic_json(self.retro_save_baselines_path,baselines)
+            if self.retro_save_volume != self.retro_volume or rows != self.last_retro_save_rows:
+                atomic_json(self.retro_save_cache_path,{
+                    'volume_serial':self.retro_volume,'rows':rows})
+            self.last_retro_save_rows=rows
+            self.retro_save_volume=self.retro_volume
+        else:
+            rows=(self.last_retro_save_rows if self.retro_save_volume == self.retro_volume else [])
+        offline = root is None or self.storage_polling_paused
+        skipped = set(self.session.get('retro_save_skipped_ids') or []) if self.session.get('exit_requested') else set()
+        pending = ('psp_to_pc','pc_to_psp','conflict')
+        view=[{k:v for k,v in row.items() if k not in ('pc_signature','psp_signature')}
+              | {'skipped':row['rom_id'] in skipped} for row in rows]
+        return {'rows':view,'offline':offline,
+                'pending':sum(row['status'] in pending and row['rom_id'] not in skipped for row in rows),
+                'conflicts':sum(row['status']=='conflict' and row['rom_id'] not in skipped for row in rows),
+                'unmanaged':sum(row['status'] in ('blocked','unsupported') for row in rows)}
+
+    def sync_retro_save(self, rom_id, choice, revision):
+        """Explicit one-slot copy with SHA preconditions and recoverable backup.
+
+        `skip` only means leave both existing versions unchanged for this
+        current return. It never establishes a baseline or deletes a save.
+        """
+        if self.product_flow.enabled and self.product_flow.snapshot()['purpose']=='exit':
+            if self.running() or self.recovery_required:
+                raise ValueError('Cierra el emulador y revisa la recuperación antes de devolver SRAM.')
+            return self.product_session.resolve_retro(rom_id,choice,revision)
+        if self.demo or self.running() or self.recovery_required or self.storage_polling_paused:
+            raise ValueError('Cierra los emuladores y revisa cualquier recuperación antes de sincronizar SRAM.')
+        root=self.root()
+        if root is None:
+            raise ValueError('Vuelve a almacenamiento USB Sony para sincronizar guardados retro.')
+        self.assert_psp_storage(root)
+        self.validate_layout(root)
+        volume=volume_identity(root)
+        if volume!=self.retro_volume or self.session.get('prepared_volume') not in (None,volume):
+            raise ValueError('Memory Stick distinta: nunca se mezclan SRAM entre dispositivos.')
+        storage=Path(self.config['storage_root']).absolute()
+        if storage.is_relative_to(root.absolute()) or root.absolute().is_relative_to(storage):
+            raise ValueError('Los guardados retro deben almacenarse fuera de la PSP.')
+        report=self.retro_save_plan()
+        row=next((item for item in report['rows'] if item['rom_id']==rom_id),None)
+        if row is None or row['revision'] is None or row['revision']!=revision:
+            raise ValueError('La comparación de guardados ha cambiado; revísala de nuevo.')
+        if row['status'] not in ('psp_to_pc','pc_to_psp','conflict'):
+            raise ValueError('No existe una copia SRAM pendiente y compatible.')
+        if choice == 'skip':
+            if not self.session.get('exit_requested'):
+                raise ValueError('La omisión solo está disponible al devolver el Dock.')
+            skips=self.session.get('retro_save_skipped_ids') or []
+            if rom_id not in skips:
+                self.session['retro_save_skipped_ids']=[*skips,rom_id][:2048]
+                atomic_json(self.data/'session.json',self.session)
+            self.events.record('retro_sram_return_skipped',evidence='pc_action',
+                               game_id=rom_id,volume_serial=volume)
+            return self.retro_save_plan()
+        if choice not in ('psp','pc'):
+            raise ValueError('Debes elegir guardar la SRAM de PSP o la del PC.')
+        if choice == 'psp' and row['status']=='pc_to_psp' or choice == 'pc' and row['status']=='psp_to_pc':
+            raise ValueError('Esa versión de SRAM no existe o está obsoleta.')
+        original=next((rom for rom in self.last_roms if rom['id']==rom_id),None)
+        emulator=next((emu for emu in self.last_emulators if original and emu['id']==original['emulator_id']),None)
+        if not original or not emulator or (emulator['name'],original['system']) not in RAW_PROFILES:
+            raise ValueError('El guardado del emulador no es compatible con la copia directa.')
+        source_relative=row['source_relative']
+        if not isinstance(source_relative,str):
+            raise ValueError('Ruta de SRAM PSP no verificada.')
+        psp=inside(root,source_relative)
+        pc,_=private_save_paths(storage,volume,rom_id)
+        psp_sha,pc_sha=retro_sha(psp),retro_sha(pc)
+        if choice=='psp':
+            source,target,source_root,target_root=psp,pc,root,storage
+            source_sha,target_sha=psp_sha,pc_sha
+        else:
+            source,target,source_root,target_root=pc,psp,storage,root
+            source_sha,target_sha=pc_sha,psp_sha
+        if not source_sha or len(source_sha)!=64:
+            raise ValueError('No existe SRAM válida en el origen elegido.')
+        key=_baseline_key(volume,rom_id)
+        before=read_json(self.retro_save_baselines_path,{})
+        if not isinstance(before,dict): before={}
+        saved=copy_sram_verified(
+            source=source,target=target,source_root=source_root,target_root=target_root,
+            storage_root=storage,backup_dir=storage/'retro-save-backups'/key[:24],
+            journal_dir=storage/'retro-save-journals',
+            expected_source=source_sha,expected_target=target_sha,
+            system=original['system'])
+        before[key]=saved
+        atomic_json(self.retro_save_baselines_path,before)
+        self.events.record('retro_sram_synced',evidence='pc_action',
+                           game_id=rom_id,direction='psp_to_pc' if choice=='psp' else 'pc_to_psp',
+                           result='sha256_verified',volume_serial=volume)
+        return self.retro_save_plan()
 
     def running(self):
         if self.process is not None and self.process.poll() is not None:
             self.process = None
             self.session['running'] = False
+            if self.product_flow.enabled:
+                self.product_flow.set_game_running(False)
             atomic_json(self.data / 'session.json', self.session)
             self.events.record('game_closed', evidence='pc_observed',
                                game_id=self.session.get('last_game_id', ''),
-                               result='ppsspp_exited')
+                               result=('retroarch_exited' if self.session.get('launcher')=='retroarch'
+                                       else 'ppsspp_exited'))
             # A game ended: restore the SAME XMB window automatically,
             # instead of leaving the player on another desktop window.
             # Never run Alt+Tab or focus an arbitrary process by title.
@@ -660,7 +1078,7 @@ class Dock:
         Requested UX: connect one cable and avoid a needless mouse click
         when there is NOTHING to synchronize. Strict precondition: not a
         single pending action/conflict, same Sony volume and at least one
-        local game. This writes *metadata to PC only*, no savedata on either
+        verified local PSP game or retro ROM. This writes *metadata to PC only*, no savedata on either
         machine, and never calls Dock.sync() or copy_slot().
 
         When files differ, the user still has to choose/approve copies.
@@ -676,10 +1094,12 @@ class Dock:
         if self.session.get('prepared_volume')==identity:
             return False
         self.validate_layout(root)
-        require_psp_identity_before_writing(root)
+        self.assert_psp_storage(root)
         # Reuse previously verified game catalog when possible.
         available=self.cached_game_results if self.cached_game_results is not None else self.games()
-        if not any(item['availability']=='ready' for item in available):
+        retro = self.cached_retro_results or self.retro_catalog()
+        if not (any(item['availability']=='ready' for item in available) or
+                any(item['availability']=='ready' for item in retro['roms'])):
             return False
         plan=self.save_plan()
         if plan['actions'] or plan['conflicts']:
@@ -700,11 +1120,17 @@ class Dock:
                            volume_serial=identity)
         return True
 
-    def sync(self, resolution=None):
+    def sync(self, resolution=None, *, progress=None, before_action=None):
+        if self.product_flow.enabled and self.product_flow.snapshot()['purpose']=='exit':
+            if resolution is None:
+                raise ValueError('La devolución se ejecuta desde Salir del Dock; revisa los conflictos pendientes.')
+            return self.product_session.resolve_save(resolution)
         if self.running():
             raise ValueError('Sincronización bloqueada: PPSSPP está abierto o una sesión anterior necesita revisión.')
+        if self.session.get('exit_requested') and self.retro_save_plan()['pending']:
+            raise ValueError('Revisa primero las partidas Retro pendientes de devolución o elige omitirlas.')
         a, b = self.roots()
-        require_psp_identity_before_writing(self.root())
+        self.assert_psp_storage(self.root())
         identity = volume_identity(self.root())
         if self.session.get('pending_return') and self.session.get('prepared_volume') != identity:
             raise ValueError('La sesión pertenece a otra Memory Stick. Conecta la unidad original.')
@@ -741,7 +1167,11 @@ class Dock:
             src, dst = (inside(b, slot), inside(a, slot)) if choice == 'pc' else (inside(a, slot), inside(b, slot))
             actions = [{'slot': slot, 'direction': 'to_psp' if choice == 'pc' else 'to_pc',
                         'source_hash': tree_signature(src), 'target_hash': tree_signature(dst)}]
-        for action in actions:
+        if progress:
+            progress(0, len(actions), None)
+        for index, action in enumerate(actions, 1):
+            if before_action:
+                before_action()
             slot = action['slot']
             src_root, dst_root = (a, b) if action['direction'] == 'to_pc' else (b, a)
             src, dst = inside(src_root, slot), inside(dst_root, slot)
@@ -749,6 +1179,8 @@ class Dock:
                       action['source_hash'], action['target_hash'])
             baseline[slot] = action['source_hash']
             atomic_json(baseline_file, baseline)
+            if progress:
+                progress(index, len(actions), slot)
         # Identical initial saves also establish a common ancestor.
         x, y = slots(a), slots(b)
         for slot in x.keys() & y.keys():
@@ -773,7 +1205,7 @@ class Dock:
         root = self.root()
         if not root:
             raise ValueError('Almacenamiento PSP no disponible.')
-        require_psp_identity_before_writing(root)
+        self.assert_psp_storage(root)
         self.validate_layout(root)
         games = {g['id']: g for g in self.games()}
         if not ids or len(set(ids)) != len(ids) or any(i not in games for i in ids):
@@ -795,6 +1227,7 @@ class Dock:
             }
         try:
             for i, g in enumerate(selected, 1):
+                self.product_session.operation_checkpoint()
                 if self.transfer_cancel.is_set():
                     raise TransferCancelled('Transferencia cancelada antes de iniciar el siguiente juego.')
                 self._update_transfer(phase='copying', title=g['title'], game_index=i)
@@ -827,9 +1260,69 @@ class Dock:
         finally:
             self.transfer_cancel.clear()
 
+    def transfer_retro(self, ids):
+        """Consent-only verified ROM transfer to PC; no PSP writes or saves."""
+        product_copy = self.product_flow.enabled and self.product_flow.snapshot()['phase']=='copying_game'
+        if self.demo or self.running() or (self.session.get('pending_return') and not product_copy):
+            raise ValueError('Termina la sesión antes de copiar ROMs.')
+        root = self.root()
+        if root is None or self.storage_polling_paused:
+            raise ValueError('Conecta la PSP en modo almacenamiento para copiar ROMs.')
+        self.assert_psp_storage(root)
+        self.validate_layout(root)
+        selection = {rom['id']: rom for rom in self.retro_catalog()['roms']}
+        if (not isinstance(ids,list) or not ids or len(ids) > 100 or
+                len(set(ids)) != len(ids) or any(i not in selection for i in ids)):
+            raise ValueError('Selección de ROMs inválida.')
+        selected = [selection[i] for i in ids]
+        if any(rom['availability'] != 'missing' for rom in selected):
+            raise ValueError('No se sobrescriben ROMs del PC diferentes o existentes.')
+        library = Path(self.config['library'])
+        library.mkdir(parents=True, exist_ok=True)
+        total = sum(item['size'] for item in selected)
+        if shutil.disk_usage(library).free < total + 16 * 1024 * 1024:
+            raise ValueError('No hay espacio suficiente para la transferencia de ROMs.')
+        self.transfer_cancel.clear()
+        self._update_transfer(active=True,phase='copying',total_bytes=total,
+                              copied_bytes=0,game_index=0,games_total=len(selected),
+                              title='',error='')
+        try:
+            for index, rom in enumerate(selected,1):
+                self.product_session.operation_checkpoint()
+                if self.transfer_cancel.is_set():
+                    raise TransferCancelled('Copia de ROMs cancelada.')
+                self._update_transfer(phase='copying',game_index=index,title=rom['title'])
+                source = inside(root,rom['relative'])
+                target = inside(library,rom['relative'])
+                stat = source.stat()
+                if (stat.st_size != rom['size'] or stat.st_mtime_ns != rom['modified_ns']):
+                    raise ValueError('La ROM cambió en la PSP antes de la copia.')
+                copy_game(source,target,
+                          on_chunk=lambda size: self._update_transfer_delta(size),
+                          on_verifying=lambda: self._update_transfer(phase='verifying'),
+                          cancel=self.transfer_cancel)
+                if (source.stat().st_size != rom['size'] or
+                        source.stat().st_mtime_ns != rom['modified_ns']):
+                    raise ValueError('La ROM cambió en origen; revisa la copia local.')
+                # Publish each finished, fully verified ROM immediately.
+                if not any(r['id']==rom['id'] and r['availability']=='ready'
+                           for r in self.retro_catalog()['roms']):
+                    raise ValueError('La copia de ROM terminó sin coincidencia SHA-256.')
+        except (OSError, ValueError) as exc:
+            self._update_transfer(active=False,
+                                  phase='cancelled' if isinstance(exc,TransferCancelled) else 'failed',
+                                  error=str(exc))
+            raise
+        else:
+            self._update_transfer(active=False,phase='done',title='',copied_bytes=total)
+        finally:
+            self.transfer_cancel.clear()
+
     def _update_transfer(self, **changes):
         with self.transfer_state_lock:
             self.transfer_status.update(changes)
+            current = dict(self.transfer_status)
+        self.product_session.transfer_progress_changed(current)
 
     def _update_transfer_delta(self, bytes_written):
         with self.transfer_state_lock:
@@ -837,6 +1330,8 @@ class Dock:
                 self.transfer_status['total_bytes'],
                 self.transfer_status['copied_bytes'] + bytes_written,
             )
+            current = dict(self.transfer_status)
+        self.product_session.transfer_progress_changed(current)
 
     def transfer_progress(self):
         with self.transfer_state_lock:
@@ -907,6 +1402,8 @@ class Dock:
 
     def request_game_copy_from_hid(self, game_id):
         """Queue explicit XMB choice, NOT an unverified USB role command."""
+        if self.product_flow.enabled:
+            return self.product_session.request_copy(game_id)
         if self.demo or self.running() or self.session.get('exit_requested'):
             raise ValueError('No se pueden solicitar copias en esta fase.')
         if not (self.snapshot.get('controller_status',{}).get('connected')
@@ -1138,13 +1635,17 @@ class Dock:
         if self.running() or self.session.get('exit_requested'):
             raise ValueError('No se puede preparar PPSSPP mientras el Dock está en juego o retorno.')
         root = self.root()
-        if not root or self.session.get('prepared_volume') != volume_identity(root):
+        product = self.product_flow.snapshot()
+        use_pc = bool(product['enabled'] and product['use_pc_saves'] and root and
+                      self.session.get('product_volume') == volume_identity(root))
+        if not root or self.session.get('prepared_volume') != volume_identity(root) and not use_pc:
             raise ValueError('Primero confirma la sincronización de esta PSP en almacenamiento.')
         self.validate_layout(root)
-        saves = self.save_plan()
-        if saves['actions'] or saves['conflicts']:
+        saves = self.save_plan() if not use_pc else {'actions':[], 'conflicts':[]}
+        if (saves['actions'] or saves['conflicts']) and not use_pc:
             raise ValueError('Resuelve y prepara primero las partidas.')
-        if not any(g['availability'] == 'ready' for g in self.games()):
+        catalog = self.cached_game_results if product['enabled'] and self.cached_game_results is not None else self.games()
+        if not any(g['availability'] == 'ready' for g in catalog):
             raise ValueError('Copia al PC al menos un juego verificado.')
         spec = self.emulator_spec()
         if not spec:
@@ -1200,16 +1701,29 @@ class Dock:
             raise ValueError('El modo USB Storage + HID de prueba solo permite navegar; no inicia juegos.')
         if self.running():
             raise ValueError('Ya hay una sesión abierta o pendiente de recuperación.')
+        if self.window_close.pending():
+            raise ValueError('Has pedido salir del Dock. Espera a la devolución de partidas.')
         if self.session.get('exit_requested'):
             raise ValueError('La salida del Dock ya está solicitada. Devuelve las partidas antes de jugar.')
         if self.storage_polling_paused:
             raise ValueError('Hay una preparación de volumen en curso; no iniciar un juego.')
+        product = self.product_flow.snapshot()
+        native = product['enabled']
+        native_before = None
+        if native:
+            if product['phase'] != 'ready':
+                raise ValueError('Espera a que termine la preparación del modo mando.')
+            native_before = self.native_transport.assert_controller()
+            if native_before.get('exit_requested'):
+                raise ValueError('La PSP ha solicitado salir del Dock.')
+            if self.session.get('product_volume') != native_before['volume_serial']:
+                raise ValueError('La elección de entrada pertenece a otra Memory Stick.')
         self.validate_layout(self.root())
         local_saves = inside(Path(self.config['memstick']), 'PSP/SAVEDATA')
         if list(local_saves.glob('.dock-journal-*.json')):
             raise ValueError('Hay una operación interrumpida en las partidas del PC. Revisa la recuperación.')
         root = self.root()
-        if root:
+        if root and not native:
             # A launch is NEVER permission to copy saves. Until USBSTOR→HID
             # is implemented, the user must explicitly prepare/sync first.
             plan = self.save_plan()
@@ -1218,7 +1732,7 @@ class Dock:
             if self.session.get('prepared_volume') != volume_identity(root):
                 raise ValueError('Prepara las partidas explícitamente desde Windows antes de jugar.')
             raise ValueError('PSP todavía en almacenamiento USB. Entra en modo mando HID antes de iniciar un juego.')
-        elif not self.session.get('prepared_volume'):
+        elif not self.session.get('prepared_volume') and not (native and product['use_pc_saves']):
             raise ValueError('Sincroniza la PSP antes de cambiar al modo mando.')
         game = next((g for g in self.games() if g['id'] == game_id), None)
         if not game or game['availability'] != 'ready':
@@ -1231,14 +1745,15 @@ class Dock:
         # Manual HID-only mode is a verified PC-only fallback while the
         # kernel USBSTOR<->HID role bridge remains unavailable. A PDK1
         # device proves a gamepad, not firmware FAT ownership or same USB.
-        from psp_dock_identity import probe_dock
-        identity = probe_dock()
-        if identity is None or identity.get('can_play') is not True:
-            raise ValueError('Se requiere el mando Dock estable; el diagnóstico no autoriza juegos.')
-        from ppsspp_hid_session import validate_hid_only
-        first_hid = validate_hid_only()
-        if first_hid != {'path':identity['path'],'session':identity['session']}:
-            raise ValueError('La identidad HID cambió antes de preparar PPSSPP.')
+        if not native:
+            from psp_dock_identity import probe_dock
+            identity = probe_dock()
+            if identity is None or identity.get('can_play') is not True:
+                raise ValueError('Se requiere el mando Dock estable; el diagnóstico no autoriza juegos.')
+            from ppsspp_hid_session import validate_hid_only
+            first_hid = validate_hid_only()
+            if first_hid != {'path':identity['path'],'session':identity['session']}:
+                raise ValueError('La identidad HID cambió antes de preparar PPSSPP.')
         exe = self.prepared_runtime_path(verify_digest=True)
         if exe is None:
             raise ValueError('Prepara PPSSPP desde Windows MIENTRAS USBSTOR está activo antes de iniciar el mando HID.')
@@ -1254,16 +1769,23 @@ class Dock:
         self.apply_game_graphics(game_id)
         # Verify the same HID session after reading the PC runtime. A
         # watchdog expiration or new USBSTOR attachment must block spawn.
-        last_hid = validate_hid_only()
-        if first_hid != last_hid or probe_dock() != identity:
-            raise ValueError('El mando HID cambió durante la preparación: cancelo PPSSPP.')
+        if native:
+            after = self.native_transport.assert_controller(native_before['session_id'])
+            if any(after[key] != native_before[key] for key in ('path','session_id','volume_serial','usb_parent')) or after.get('exit_requested'):
+                raise ValueError('El Dock cambió durante la preparación de PPSSPP.')
+        else:
+            last_hid = validate_hid_only()
+            if first_hid != last_hid or probe_dock() != identity:
+                raise ValueError('El mando HID cambió durante la preparación: cancelo PPSSPP.')
         args = [str(exe), '--fullscreen', '--pause-menu-exit', '--graphics=' + self.config['backend'],
                 str(inside(Path(self.config['library']), game['local_relative']))]
         self.events.record('game_launch_requested', evidence='pc_action',
                            game_id=game_id,
                            render_scale=self.graphics_view(game_id)['plan']['internal_resolution'])
-        self.session.update(running=True, pending_return=True,
+        self.session.update(running=True, pending_return=True,launcher='ppsspp',
                             last_game_id=game_id)
+        if native:
+            self.product_flow.set_game_running(True)
         atomic_json(self.data / 'session.json', self.session)
         try:
             self.process = subprocess.Popen(args, cwd=exe.parent)
@@ -1274,9 +1796,105 @@ class Dock:
             focus_async(self.process)
         except OSError:
             self.session['running'] = False
+            if native:
+                self.product_flow.set_game_running(False)
             atomic_json(self.data / 'session.json', self.session)
             self.events.record('game_launch_failed', evidence='pc_observed',
                                game_id=game_id, result='popen_error')
+            raise
+
+    def launch_retro(self, rom_id):
+        """Launch an audited cartridge in an installed native Windows core.
+
+        Does not execute a PSP EBOOT in PPSSPP, write PSP files or claim that
+        incompatible emulator save states are interchangeable.
+        """
+        if self.demo or self.running() or self.recovery_required:
+            raise ValueError('No se puede iniciar una ROM en esta sesión.')
+        if self.window_close.pending():
+            raise ValueError('Has pedido salir del Dock. Espera a la devolución de partidas.')
+        if self.storage_polling_paused or self.session.get('exit_requested'):
+            raise ValueError('El Dock está saliendo o preparando el volumen.')
+        self.validate_layout(self.root())
+        product = self.product_flow.snapshot()
+        native = product['enabled']
+        native_before = None
+        if native:
+            if product['phase'] != 'ready':
+                raise ValueError('Espera a que termine la preparación del modo mando.')
+            native_before = self.native_transport.assert_controller()
+            if native_before.get('exit_requested') or self.session.get('product_volume') != native_before['volume_serial']:
+                raise ValueError('El Dock está saliendo o pertenece a otra Memory Stick.')
+        if self.root() is not None and not native:
+            raise ValueError('Activa el mando HID antes de iniciar un juego retro.')
+        if (not self.retro_volume or
+                self.session.get('prepared_volume') != self.retro_volume and not (native and product['use_pc_saves']) or
+                self.session.get('pending_return') and self.session.get('exit_requested')):
+            raise ValueError('Prepara las partidas de esta misma Memory Stick antes de jugar.')
+        if list(inside(Path(self.config['memstick']), 'PSP/SAVEDATA').glob('.dock-journal-*.json')):
+            raise ValueError('Revisa primero una sincronización de partidas interrumpida.')
+        rom = next((r for r in self.retro_catalog()['roms'] if r['id']==rom_id),None)
+        if rom is None or rom['availability'] != 'ready':
+            raise ValueError('La ROM debe estar copiada y verificada por SHA-256.')
+        save_row=next((item for item in self.retro_save_plan()['rows'] if item['rom_id']==rom_id),None)
+        emulator=next((emu for emu in self.last_emulators if emu['id']==rom['emulator_id']),None)
+        if emulator and (emulator['name'],rom['system']) in RAW_PROFILES and save_row is None:
+            raise ValueError('Vuelve al almacenamiento USB y comprueba primero la SRAM de este juego.')
+        if save_row and (save_row['status']=='blocked' or
+                         save_row['status'] in ('psp_to_pc','conflict') and not product.get('use_pc_saves')) and not save_row['skipped']:
+            raise ValueError('Revisa la partida retro en PSP antes de abrir otra versión en Windows.')
+        selected = retroarch_core(self.config['retroarch'],rom['system'])
+        if selected is None:
+            raise ValueError('Configura RetroArch con el núcleo ' + SYSTEMS[rom['system']][1] + ' instalado en Windows.')
+        if os.name != 'nt':
+            raise ValueError('El Dock inicia juegos retro únicamente en Windows.')
+        from ppsspp_windows_flow import focus_async
+        if not native:
+            from ppsspp_hid_session import validate_hid_only
+            before = validate_hid_only()
+        exe, core = selected
+        local = inside(Path(self.config['library']),rom['local_relative'])
+        mirror = next((r for r in self.last_roms if r['id']==rom_id),None)
+        if (not local.is_file() or mirror is None or
+                not re.fullmatch('[0-9a-f]{64}',mirror.get('signature') or '') or
+                digest(local) != mirror['signature']):
+            raise ValueError('La ROM local ya no coincide con el catálogo.')
+        storage=Path(self.config['storage_root'])
+        profile=prepare_joypad_profile(storage,layout=self.config['retro_button_layout'],
+                                      product_id=0x01CD if native else 0x01CB)
+        save,state=private_save_paths(storage,self.retro_volume,rom_id)
+        save.parent.mkdir(parents=True,exist_ok=True)
+        # A savestate belongs to its core; never recycle it after a core swap.
+        state=state.with_name(state.stem+'-'+hashlib.sha256(core.name.encode()).hexdigest()[:12]+state.suffix)
+        state.parent.mkdir(parents=True,exist_ok=True)
+        if native:
+            after = self.native_transport.assert_controller(native_before['session_id'])
+            if any(after[key] != native_before[key] for key in ('path','session_id','volume_serial','usb_parent')) or after.get('exit_requested'):
+                raise ValueError('El Dock cambió antes de iniciar RetroArch.')
+        else:
+            after = validate_hid_only()
+            if before != after:
+                raise ValueError('El mando HID cambió antes de iniciar RetroArch.')
+        self.events.record('retro_launch_requested',evidence='pc_action',
+                           game_id=rom_id,system=rom['system'])
+        self.session.update(running=True,pending_return=True,
+                            launcher='retroarch',last_game_id=rom_id)
+        if native:
+            self.product_flow.set_game_running(True)
+        atomic_json(self.data/'session.json',self.session)
+        try:
+            self.process = subprocess.Popen(
+                retroarch_arguments(exe,core,local,profile,save,state),cwd=exe.parent)
+            self.events.record('retro_launched',evidence='pc_observed',
+                               game_id=rom_id,result='process_started')
+            focus_async(self.process)
+        except OSError:
+            self.session['running']=False
+            if native:
+                self.product_flow.set_game_running(False)
+            atomic_json(self.data/'session.json',self.session)
+            self.events.record('retro_launch_failed',evidence='pc_observed',
+                               game_id=rom_id,result='popen_error')
             raise
 
     def request_exit(self):
@@ -1287,8 +1905,12 @@ class Dock:
         Sony volume is back and HID is absent we can sync saves without
         requiring another mouse click. This explicit Exit action is consent.
         """
+        if self.product_flow.enabled:
+            if self.running():
+                raise ValueError('Cierra el emulador normalmente antes de salir del Dock.')
+            return self.product_session.request_exit()
         if self.running():
-            raise ValueError('Cierra PPSSPP normalmente antes de salir del Dock.')
+            raise ValueError('Cierra el emulador de Windows normalmente antes de salir del Dock.')
         if (self.transfer_status.get('active') or
                 self.copy_queue.get('status') in ('waiting_for_storage','copying')):
             raise ValueError('Cancela o termina primero la copia solicitada desde el XMB.')
@@ -1299,6 +1921,7 @@ class Dock:
         self.session['exit_requested'] = True
         self.session['return_sync_authorized'] = True
         self.session['return_sync_attempted'] = False
+        self.session['retro_save_skipped_ids'] = []
         # The user approved closing the Windows app AFTER the return
         # is complete and verified, never merely on pressing Exit.
         self.session['close_after_verified_return'] = True
@@ -1331,6 +1954,17 @@ class Dock:
         if (not report.get('supported') or report.get('errors')
                 or report.get('devices')):
             raise ValueError('El modo HID no ha desaparecido de Windows; no sincronizar todavía.')
+        # Battery saves are not PSP/SAVEDATA slots: they can have a different
+        # format and must be reviewed separately before closing the XMB.
+        # No automatic SRAM writes to the PSP, even after Exit was pressed.
+        retro_plan=self.retro_save_plan()
+        if retro_plan['pending']:
+            if self.session.get('return_result')!='retro_review':
+                self.session['return_result']='retro_review'
+                atomic_json(self.data/'session.json',self.session)
+                self.events.record('retro_sram_review_required',evidence='pc_observed',
+                                   count=retro_plan['pending'],result='needs_explicit_choice')
+            return None
         plan=self.save_plan()
         if plan['conflicts']:
             self.session['return_sync_authorized']=False
@@ -1363,10 +1997,26 @@ class Dock:
     def settings(self, new):
         if self.running() or self.session.get('pending_return'):
             raise ValueError('Cierra y devuelve la sesión a la PSP antes de cambiar las carpetas.')
+        if (self.product_flow.enabled and self.product_flow.snapshot()['phase'] not in ('waiting_psp','safe_to_disconnect')
+                and any(key in new and new[key] != self.config.get(key)
+                        for key in ('library','memstick','storage_root','psp_root'))):
+            raise ValueError('Termina la sesión del Dock antes de cambiar sus carpetas.')
         if ('storage_root' in new and
                 new['storage_root'] != self.config['storage_root']):
             raise ValueError('Para mover los datos usa la migración verificada.')
         config = {**self.config, **{k:v for k,v in new.items() if k in self.config}}
+        with self.retro_installer_lock:
+            if self.retro_install_progress['active']:
+                raise ValueError('Termina la instalación de emuladores antes de cambiar ajustes.')
+        if config.get('retro_install_policy') not in ('ask','auto','off'):
+            raise ValueError('Política de instalación de emuladores desconocida.')
+        if config.get('retro_button_layout') not in LAYOUTS:
+            raise ValueError('Distribución del mando retro desconocida.')
+        if (not isinstance(config.get('retroarch'),str) or
+                config['retroarch'] and
+                (not Path(config['retroarch']).is_absolute() or
+                 Path(config['retroarch']).name.casefold() != 'retroarch.exe')):
+            raise ValueError('Selecciona un ejecutable retroarch.exe de Windows o deja la opción vacía.')
         if type(config['scale']) is not int or not 1 <= config['scale'] <= 6 or config['backend'] not in ('directx11','vulkan','gles'):
             raise ValueError('Perfil gráfico inválido.')
         for key in ('library','memstick'):
@@ -1385,12 +2035,24 @@ class Dock:
         if any(config[k] != previous_config[k] for k in ('library','psp_root')):
             self.last_games = []
             self.cached_game_results = None
+            self.last_emulators = []
+            self.last_roms = []
+            self.retro_volume = ''
+            self.cached_retro_results = None
+            self.retro_save_volume=''
+            self.last_retro_save_rows=[]
         self.cache.clear()
         atomic_json(self.config_path, config)
 
     def relocate_storage(self, target):
         """Copy PC games, saves, textures and media into an empty folder."""
         from storage_layout import migrate_pc_data
+        product = self.product_flow.snapshot()
+        if product['enabled'] and product['phase'] not in ('waiting_psp','safe_to_disconnect'):
+            raise ValueError('Termina la sesión del Dock antes de cambiar la carpeta de datos.')
+        with self.retro_installer_lock:
+            if self.retro_install_progress['active']:
+                raise ValueError('La instalación retro debe terminar antes de mover los datos.')
         if self.demo or self.running() or self.session.get('pending_return'):
             raise ValueError('Termina la sesión y devuelve partidas antes de cambiar la carpeta.')
         if (self.session.get('exit_requested') or self.transfer_status['active']
@@ -1401,15 +2063,21 @@ class Dock:
         report=migrate_pc_data(target=Path(target),
                                library=Path(self.config['library']),
                                memstick=Path(self.config['memstick']),
-                               old_data=self.data)
+                               old_data=self.data,
+                               old_storage=Path(self.config['storage_root']))
         updated={**self.config,'storage_root':report['path'],
                  'library':report['library'],'memstick':report['memstick']}
+        old_managed=managed_retroarch(self.config['storage_root'])
+        if self.config.get('retroarch') and Path(self.config['retroarch'])==old_managed:
+            updated['retroarch']=str(managed_retroarch(report['path']))
         self.validate_layout(self.root(),updated)
         atomic_json(self.config_path,updated)
         self.config=updated
         self.session.pop('prepared_volume',None)
         atomic_json(self.data/'session.json',self.session)
         self.cached_game_results=None
+        self.retro_save_volume=''
+        self.last_retro_save_rows=[]
         self.last_storage_scan_at=0
         self.xmb_media_catalog_key=None
         self.events.record('pc_storage_relocated',evidence='pc_action',
@@ -1476,6 +2144,8 @@ class Dock:
         if self.storage_polling_paused:
             return {**unavailable, 'mode': 'host_lock_preparation',
                     'reason': 'Sondeo FAT suspendido; no es prueba de bloqueo Windows.'}
+        if self.product_flow.enabled:
+            return self.native_transport.controller_status()
         if storage_mounted:
             return {**unavailable, 'mode': 'usb_storage',
                     'reason': 'Almacenamiento Sony conectado. Abre PSP Dock para usar su mando.'}
@@ -1503,6 +2173,30 @@ class Dock:
                 'reason': 'Mando HID PDK1 confirmado; no es prueba del bridge USB automático.'}
 
     def psp_launcher_input(self):
+        frame = self._psp_launcher_input()
+        flow = self.product_flow.snapshot()
+        if flow['phase'] == 'choosing':
+            # Bounded selector-only trace, PC metadata only. Do not silently
+            # turn a blocked reader into a generic 'controller connected'.
+            current = self.native_transport.current or {}
+            item = {key:frame.get(key) for key in ('connected','source','reason','button_mask','up','down','left','right','accept')}
+            item.update(firmware_phase=current.get('phase'), activity=current.get('activity'),
+                        host_confirmed=current.get('host_confirmed'))
+            previous = getattr(self, '_selector_input_last', None)
+            if previous != item:
+                self._selector_input_last = dict(item)
+                rows = getattr(self, '_selector_input_events', [])
+                rows = (rows + [{'utc':datetime.now(timezone.utc).isoformat(), **item}])[-64:]
+                self._selector_input_events = rows
+                now = time.monotonic()
+                if now - getattr(self, '_selector_input_saved_at', 0.0) >= 0.25:
+                    self._selector_input_saved_at = now
+                    try:atomic_json(self.data/'selector-input.json', {'events':rows})
+                    except OSError:pass
+            frame = {**frame, 'selector_diagnostic':item}
+        return frame
+
+    def _psp_launcher_input(self):
         """Read a single WinMM PSP gamepad frame for the XMB, never launch.
 
         This GET is intentionally outside Dock.lock so an expensive optional
@@ -1511,33 +2205,97 @@ class Dock:
         snapshot never creates a USB role bridge or grants FAT ownership.
         """
         from psp_launcher_input import PSPWinMMReader, idle
-        if self.demo or self.storage_polling_paused:
+        if self.demo or self.storage_polling_paused or self.native_shutdown_pending():
             return idle("El mando PSP HID no está disponible en esta fase.")
         seen = self.snapshot.get('controller_status', {})
+        if self.product_flow.enabled and self.product_flow.snapshot()['phase'] == 'choosing':
+            # CHOOSING input becomes available after the last progress ACK.
+            # A presentation snapshot from inventory can lag behind that ACK.
+            seen = self.native_transport.controller_status()
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
+        from native_dock import (PID as NATIVE_PID, VERSION as NATIVE_VERSION,
+                                 FIRMWARE_CAPABILITIES, FIRMWARE_BUILDS)
         profiles = {'hid_manual': (0x01CB, 0x0104),
                     'msc_diagnostic': (0x01CC, 0x0207)}
+        if self.product_flow.enabled and self.product_flow.snapshot()['phase'] not in ('choosing','ready','attention'):
+            return idle('La navegación está bloqueada mientras se prepara o copia el contenido.')
         expected = profiles.get(seen.get('mode'))
-        if expected is None or (seen.get('product_id'), seen.get('revision')) != expected:
+        if seen.get('mode') == 'native_dock':
+            firmware = seen.get('firmware_revision')
+            valid = (seen.get('product_id') == NATIVE_PID and seen.get('protocol_version') == NATIVE_VERSION
+                     and type(firmware) is int and firmware in FIRMWARE_BUILDS
+                     and seen.get('build_id') == FIRMWARE_BUILDS[firmware]
+                     and seen.get('capabilities') == FIRMWARE_CAPABILITIES[firmware] and seen.get('host_confirmed') is True
+                     and seen.get('synthetic_storage') is False)
+            expected = (NATIVE_PID, firmware) if valid else None
+        elif expected is not None and (seen.get('product_id'), seen.get('revision')) != expected:
+            expected = None
+        if expected is None:
             return idle("La identidad del mando no corresponde a un modo Dock admitido.")
         try:
             return PSPWinMMReader(expected_product=expected[0]).read()
         except (OSError, ValueError, RuntimeError) as exc:
             return idle(str(exc))
 
-    def state(self):
+    def waiting_state(self, devices, *, running, controller):
+        """Reuse presentation data while USB has not admitted a session.
+
+        No filesystem, catalog, or identity checks belong here. In particular,
+        empty materialized caches must not trigger a PC inventory on startup
+        or after an unsuccessful HOST_BEGIN. Recovery and copy intent survive;
+        only connection and launch permission are removed from the view.
+        """
+        preflight = self.snapshot.get('preflight')
+        return {**self.snapshot,
+                'devices':devices, 'selected_device':None,
+                'scanning':False, 'error':self.error,
+                'connection_state':'waiting_psp',
+                'controller_status':{**controller, 'connected':False, 'can_play':False},
+                'can_launch_game':False, 'can_launch_retro':False,
+                'session':{**self.session, 'running':running},
+                'copy_queue':dict(self.copy_queue),
+                'recovery_required':self.recovery_required,
+                'product_flow':self.product_session.snapshot(),
+                'preflight':({**preflight, 'connected':False} if preflight else None),
+                'retro_saves':{**self.snapshot.get('retro_saves',{}), 'offline':True},
+                'library_source':('cached_manifest' if self.last_games else 'empty')}
+
+    def state(self, *, cached_catalogs=False):
         running = self.running()
         device = self.root()
-        games = self.games()
-        saves = (self.save_plan() if not running
-                 else {'actions': [], 'conflicts': [], 'unchanged': 0})
-        remembered_serial = volume_identity(device) if device is not None else self.catalog_volume
+        # A native callback has just audited these catalogs. Publishing its
+        # UI result must not walk thousands of PSP ROMs a second time while
+        # the worker still holds the data lock. This cache is presentation
+        # only: copy/launch callbacks retain their fresh identity/file checks.
+        # None is explicit invalidation (for example a newly installed core
+        # or copied game), so never replace it with an older UI snapshot.
+        games = (self.cached_game_results if cached_catalogs and self.cached_game_results is not None
+                 else self.games())
+        retro = (self.cached_retro_results if cached_catalogs and self.cached_retro_results is not None
+                 else self.retro_catalog())
+        retro_install=self.retro_install_state()
+        product = self.product_session.snapshot()
+        if cached_catalogs and product['enabled']:
+            # Publishing a phase is NOT another synchronization operation.
+            # In particular it must not scan all SRAMs three times between
+            # EXIT_SYNC, sync_return and finalize_exit (56s on real hardware).
+            saves, retro_saves = self.product_session.presentation_save_plans()
+        else:
+            retro_saves=self.retro_save_plan() if not running else {
+                'rows':[], 'pending':0,'conflicts':0,'unmanaged':0,'offline':True}
+            saves = (self.save_plan() if not running
+                     else {'actions': [], 'conflicts': [], 'unchanged': 0})
+            if product['enabled'] and product['purpose']=='exit' and device is not None and not running:
+                saves = self.product_session.return_plan()
+                retro_saves = self.product_session.retro_return_view()
+        remembered_serial = volume_identity(device) if device is not None else (self.catalog_volume or self.retro_volume)
         controller = self.controller_status(device is not None)
         hid_eligible = bool(controller.get('connected') is True and
-                            controller.get('mode') == 'hid_manual' and
+                            controller.get('mode') in ('hid_manual','native_dock') and
                             controller.get('can_play') is True and
-                            controller.get('synthetic_storage') is False)
+                            controller.get('synthetic_storage') is False and
+                            (not product['enabled'] or product['phase']=='ready'))
         preflight = assess_storage(
             connected=device is not None, demo=self.demo, games=games,
             saves=saves, session={**self.session, 'running': running},
@@ -1548,20 +2306,31 @@ class Dock:
         local_saves = inside(Path(self.config['memstick']), 'PSP/SAVEDATA')
         local_journal = bool(list(local_saves.glob('.dock-journal-*.json')))
         can_launch = bool(
-            hid_eligible and preflight.saves_prepared and
+            hid_eligible and (preflight.saves_prepared or product['enabled'] and product['use_pc_saves']) and
             preflight.ready_games > 0 and not running and
             not self.recovery_required and not local_journal and
             not self.session.get('exit_requested') and
             self.prepared_runtime_path() is not None
         )
+        can_launch_retro = bool(
+            hid_eligible and (preflight.saves_prepared or product['enabled'] and product['use_pc_saves']) and
+            not running and not self.recovery_required and not local_journal and
+            not self.session.get('exit_requested') and
+            any(rom['availability']=='ready' and rom['core_available'] for rom in retro['roms'])
+        )
         return {'demo': self.demo, 'devices': self.devices(), 'selected_device': str(device) if device else None,
                 'connection_state': 'dock_connected' if controller.get('connected') is True else 'waiting_psp',
-                'games': games, 'saves': saves,
+                'games': games, 'retro':retro,'retro_install':retro_install,
+                'retro_saves':retro_saves,
+                'retro_button_layout':self.config['retro_button_layout'],
+                'product_flow':product,
+                'saves': saves,
                 'copy_queue':dict(self.copy_queue),
                 'copy_policy': self.copy_policy(),
                 'preflight': preflight.snapshot(),
                 'controller_status': controller,
                 'can_launch_game': can_launch,
+                'can_launch_retro': can_launch_retro,
                 'runtime_prepared': self.prepared_runtime_path() is not None,
                 'runtime_error': getattr(self, 'runtime_error', ''),
                 'library_source': ('psp_live' if device else
@@ -1654,6 +2423,51 @@ class Dock:
             temporary.unlink(missing_ok=True)
         return artwork
 
+    def play_ui_sound(self, name, at_ms):
+        import math
+        from xmb_sounds import SOUNDS
+        if (not isinstance(name, str) or name not in SOUNDS or type(at_ms) not in (int, float)
+                or not math.isfinite(at_ms)):
+            raise ValueError('Solicitud de sonido inválida.')
+        # Never queue menu sounds behind a game launch or a long sync.
+        if not -250 <= time.time() * 1000 - at_ms <= 750 or not self.lock.acquire(blocking=False):
+            return {'played': False}
+        try:
+            flow = self.product_flow.snapshot()
+            if (self.stop.is_set() or self.running() or self.session.get('exit_requested') or
+                    self.recovery_required or self.transfer_status.get('active') or
+                    (flow['enabled'] and flow['phase'] not in ('choosing', 'ready', 'attention'))):
+                return {'played': False}
+            return {'played': self.ui_sound_player.play(name)}
+        finally:
+            self.lock.release()
+
+    def xmb_background_hd(self, game_id):
+        """Enhance ONLY the original already cached on PC. Never reads PSP."""
+        from psp_xmb_media import XMBAssetCache, media_key
+        if not isinstance(game_id, str) or not re.fullmatch('[0-9a-f]{24}', game_id):
+            raise ValueError('Juego del XMB desconocido.')
+        game = next((g for g in self.last_games if g.get('id') == game_id), None)
+        if game is None or not self.catalog_volume or self.stop.is_set():
+            return None
+        root = Path(self.config.get('storage_root') or self.data)
+        cache = XMBAssetCache(root / 'xmb-assets')
+        original = cache.cached(media_key(volume=self.catalog_volume, game=game), 'background')
+        if original is None:
+            return None
+        with self._background_cache_lock:
+            if self.stop.is_set():
+                return None
+            if self._background_cache is None:
+                try:
+                    from xmb_backgrounds import BackgroundCache
+                except ImportError:
+                    # Artwork enhancement is optional. A missing Pillow
+                    # installation must leave the original preview usable.
+                    return None
+                self._background_cache = BackgroundCache(self.data / 'xmb-backgrounds')
+            return self._background_cache.request(original)
+
     def xmb_media(self, game_id, kind):
         """Read PIC0/PIC1 or browser-safe SND0 from audited game, PC cached.
 
@@ -1684,6 +2498,8 @@ class Dock:
         if selected and selected.get('availability')=='ready':
             source=inside(Path(self.config['library']),selected['local_relative'])
         else:
+            if self.native_shutdown_pending():
+                return None
             attached=self.snapshot.get('selected_device')
             if attached:
                 root=Path(attached)
@@ -1734,97 +2550,168 @@ class Dock:
                     break
                 try:
                     running = self.running()
-                    root = self.root()
-                    if root and not running:
-                        identity = volume_identity(root)
-                        if self.session.get('pending_return') and self.session.get('prepared_volume') != identity:
-                            raise ValueError('La sesión pertenece a otra Memory Stick. No se sincroniza con esta unidad.')
-                        if (self.copy_queue.get('status')=='waiting_for_storage'
-                                and not self.session.get('exit_requested')):
-                            self.complete_queued_game_copy()
-                        # Explicit Exit from XMB is the consent to return saves.
-                        # Only automatic on manual restoration of the SAME
-                        # USBSTOR, with no HID simultaneously and one-shot
-                        # durable attempt tracking. Never auto sync on attach.
-                        previous_exit = bool(
-                            self.session.get('close_after_verified_return') and
-                            self.session.get('exit_requested'))
-                        result = self.complete_authorized_return()
-                        if (previous_exit and result is not None and
-                                not result['actions'] and not result['conflicts'] and
-                                self.session.get('return_result') == 'verified' and
-                                not self.session.get('pending_return')):
+                    close_advanced = self.window_close.advance()
+                    if self.stop.is_set():
+                        break
+                    with self.product_session.diagnostics.measure('usb.devices'):
+                        devices = self.devices()
+                    if self.stop.is_set():
+                        break
+                    product_advanced = self.product_session.tick(devices)
+                    if self.stop.is_set():
+                        break
+                    close_advanced = self.window_close.advance() or close_advanced
+                    self._native_observation = self.product_session.observation
+                    if self.product_flow.enabled:
+                        self.error = None
+                        product = self.product_flow.snapshot()
+                        current = self.native_transport.current
+                        if not current or not current.get('host_confirmed') or current.get('shutdown_pending'):
+                            with self.product_session.diagnostics.measure('ui.publish_native_waiting'):
+                                self.snapshot = self.waiting_state(devices, running=running,
+                                    controller=self.native_transport.controller_status())
+                        elif (product_advanced or close_advanced or self.snapshot.get('product_flow',{}).get('revision') != product['revision']
+                                or self.snapshot.get('session',{}).get('running') != running):
+                            with self.product_session.diagnostics.measure('ui.publish'):
+                                self.snapshot = {**self.state(cached_catalogs=True), 'scanning':False}
+                        else:
+                            controller=self.native_transport.controller_status()
+                            self.snapshot={**self.snapshot,'controller_status':controller,
+                                           'connection_state':'dock_connected' if controller.get('connected') else 'waiting_psp'}
+                        if (product['phase']=='safe_to_disconnect' and
+                                self.session.get('close_after_verified_return')):
                             close_on_verified=True
                             self.session['close_after_verified_return']=False
                             atomic_json(self.data/'session.json',self.session)
-                        if not self.session.get('pending_return'):
-                            saves = self.save_plan()
-                            if (self.session.get('prepared_volume') and
-                                    (self.last_device != identity or
-                                     self.session['prepared_volume'] != identity or
-                                     saves['actions'] or saves['conflicts'])):
-                                self.session.pop('prepared_volume', None)
-                                atomic_json(self.data/'session.json', self.session)
-                            # When EVERY save is identical, a no-copy review
-                            # can be prepared automatically. Never auto-copy
-                            # a changed save or an absent title.
-                            if not saves['actions'] and not saves['conflicts']:
-                                if self.prepare_identical_saves_without_copy():
-                                    try:
-                                        self.prepare_runtime()
-                                    except (OSError, ValueError, subprocess.SubprocessError) as exc:
-                                        self.runtime_error=str(exc)
-                        # A connection is a READ-ONLY audit, never implicit
-                        # writes to game/save files. Invalidation changes only
-                        # metadata on the PC. User approves save sync in UI.
-                        open_on_attach = bool(
-                            self.on_connected and self.last_device != identity
-                            and not self.session.get('pending_return')
-                            and not self.session.get('exit_requested')
-                            and not close_on_verified
-                        )
-                        if self.last_device != identity:
-                            self.events.record('sony_storage_seen', evidence='pc_observed',
-                                               volume_serial=identity, mode='usb_storage')
-                        self.last_device = identity
-                    elif not root:
-                        if self.last_device is not None:
-                            self.events.record('sony_storage_absent', evidence='pc_observed',
-                                               mode='storage_not_visible')
-                        self.last_device = None
-                    # Full game + SAVEDATA auditing is deliberately expensive
-                    # over PSP USB. Do it on new storage attachment, on state
-                    # changes and occasionally for freshness, NOT every 3s.
-                    # Mutating API requests publish their own fresh snapshot.
-                    now = time.monotonic()
-                    same_storage = bool(
-                        root and self.last_storage_scan_identity == identity
-                        and self.snapshot.get('selected_device') == str(root)
-                        and self.snapshot.get('scanning') is False
-                        and self.snapshot.get('session', {}).get('running') == running
-                    )
-                    if not (same_storage and not self.error and
-                            now-self.last_storage_scan_at < self.storage_scan_interval):
+                    elif self.awaiting_native_app(devices):
                         self.error = None
-                        self.snapshot = {**self.state(),'scanning':False}
-                        self.last_storage_scan_identity = identity if root else ''
-                        self.last_storage_scan_at = time.monotonic()
-                    if root and not running:
-                        self.start_xmb_media_prefetch()
-                    # A PSP-first session enumerates PDK1 HID, not the
-                    # original Sony USBSTOR. Open the selector once on the
-                    # rising edge of that verified controller, never a game.
-                    hid_now = bool(
-                        self.snapshot.get('controller_status',{}).get('connected')
-                    ) if root is None else False
-                    if (self.on_connected and hid_now and
-                            not self.last_hid_present and not running and
-                            not self.session.get('exit_requested')):
-                        open_on_attach = True
-                        self.events.record('sony_hid_seen',evidence='pc_observed',
-                                           mode='hid_manual')
-                    self.last_hid_present = hid_now
-                except (OSError, ValueError) as e:
+                        self.last_device = None
+                        self.snapshot = {**self.snapshot, 'devices':devices,
+                            'selected_device':None, 'scanning':False, 'error':None,
+                            'connection_state':'waiting_psp',
+                            'controller_status':{'connected':False, 'can_play':False,
+                                'synthetic_storage':False, 'mode':'await_native',
+                                'reason':'Abre PSP Dock en la PSP para iniciar la sesión.'},
+                            'can_launch_game':False, 'can_launch_retro':False}
+                    else:
+                        root = self.root()
+                        if root and not running:
+                            identity = volume_identity(root)
+                            if self.session.get('pending_return') and self.session.get('prepared_volume') != identity:
+                                raise ValueError('La sesión pertenece a otra Memory Stick. No se sincroniza con esta unidad.')
+                            if (self.copy_queue.get('status')=='waiting_for_storage'
+                                    and not self.session.get('exit_requested')):
+                                self.complete_queued_game_copy()
+                            # Explicit Exit from XMB is the consent to return saves.
+                            # Only automatic on manual restoration of the SAME
+                            # USBSTOR, with no HID simultaneously and one-shot
+                            # durable attempt tracking. Never auto sync on attach.
+                            previous_exit = bool(
+                                self.session.get('close_after_verified_return') and
+                                self.session.get('exit_requested'))
+                            result = self.complete_authorized_return()
+                            if (previous_exit and result is not None and
+                                    not result['actions'] and not result['conflicts'] and
+                                    self.session.get('return_result') == 'verified' and
+                                    not self.session.get('pending_return')):
+                                close_on_verified=True
+                                self.session['close_after_verified_return']=False
+                                atomic_json(self.data/'session.json',self.session)
+                            if not self.session.get('pending_return'):
+                                saves = self.save_plan()
+                                if (self.session.get('prepared_volume') and
+                                        (self.last_device != identity or
+                                         self.session['prepared_volume'] != identity or
+                                         saves['actions'] or saves['conflicts'])):
+                                    self.session.pop('prepared_volume', None)
+                                    atomic_json(self.data/'session.json', self.session)
+                                # When EVERY save is identical, a no-copy review
+                                # can be prepared automatically. Never auto-copy
+                                # a changed save or an absent title.
+                                if not saves['actions'] and not saves['conflicts']:
+                                    if self.prepare_identical_saves_without_copy():
+                                        # A PSP with only retro emulators should
+                                        # not fail PPSSPP prewarming; the RetroArch
+                                        # runtime is validated per selected ROM.
+                                        if any(g['availability']=='ready' for g in self.games()):
+                                            try:
+                                                self.prepare_runtime()
+                                            except (OSError, ValueError, subprocess.SubprocessError) as exc:
+                                                self.runtime_error=str(exc)
+                            # A connection is a READ-ONLY audit, never implicit
+                            # writes to game/save files. Invalidation changes only
+                            # metadata on the PC. User approves save sync in UI.
+                            open_on_attach = bool(
+                                self.on_connected and self.last_device != identity
+                                and not self.session.get('pending_return')
+                                and not self.session.get('exit_requested')
+                                and not close_on_verified
+                            )
+                            if self.last_device != identity:
+                                self.events.record('sony_storage_seen', evidence='pc_observed',
+                                                   volume_serial=identity, mode='usb_storage')
+                            self.last_device = identity
+                        elif not root:
+                            if self.last_device is not None:
+                                self.events.record('sony_storage_absent', evidence='pc_observed',
+                                                   mode='storage_not_visible')
+                            self.last_device = None
+                        controller = None
+                        if root is None:
+                            with self.product_session.diagnostics.measure('usb.legacy_controller'):
+                                controller = self.controller_status(False)
+                        if root is None and not controller.get('connected'):
+                            # Waiting for USB must not walk the remembered PC
+                            # library. Even cached_catalogs=True rebuilds empty
+                            # caches on first startup, delaying the next USB poll.
+                            # Reuse presentation data only; keep durable recovery,
+                            # queued copies and the active game intact. No identity
+                            # or launch permission is inferred from that mirror.
+                            with self.product_session.diagnostics.measure('ui.publish_legacy_waiting'):
+                                self.snapshot = self.waiting_state(devices, running=running,
+                                                                   controller=controller)
+                                # Even the same Memory Stick must be audited
+                                # after reattachment, before reusing readiness.
+                                self.last_storage_scan_identity = ''
+                                self.last_storage_scan_at = 0.0
+                        else:
+                            # Full game + SAVEDATA auditing is deliberately expensive
+                            # over PSP USB. Do it on new storage attachment, on state
+                            # changes and occasionally for freshness, NOT every 3s.
+                            # Mutating API requests publish their own fresh snapshot.
+                            now = time.monotonic()
+                            same_storage = bool(
+                                root and self.last_storage_scan_identity == identity
+                                and self.snapshot.get('selected_device') == str(root)
+                                and self.snapshot.get('scanning') is False
+                                and self.snapshot.get('session', {}).get('running') == running
+                            )
+                            if not (same_storage and not self.error and
+                                    now-self.last_storage_scan_at < self.storage_scan_interval):
+                                self.error = None
+                                with self.product_session.diagnostics.measure('ui.publish_legacy'):
+                                    self.snapshot = {**self.state(),'scanning':False}
+                                self.last_storage_scan_identity = identity if root else ''
+                                self.last_storage_scan_at = time.monotonic()
+                        if root and not running:
+                            self.start_xmb_media_prefetch()
+                        # A PSP-first session enumerates PDK1 HID, not the
+                        # original Sony USBSTOR. Open the selector once on the
+                        # rising edge of that verified controller, never a game.
+                        hid_now = bool(
+                            self.snapshot.get('controller_status',{}).get('connected')
+                        ) if root is None else False
+                        if (self.on_connected and hid_now and
+                                not self.last_hid_present and not running and
+                                not self.session.get('exit_requested')):
+                            open_on_attach = True
+                            self.events.record('sony_hid_seen',evidence='pc_observed',
+                                               mode='hid_manual')
+                        self.last_hid_present = hid_now
+                except Exception as e:
+                    # Report adapter errors and timeouts without killing the
+                    # only worker. A failed operation is never replayed here.
+                    self.native_transport.connection_error(e)
                     self.error = str(e)
                     self.snapshot = {**self.snapshot,'error':self.error,'scanning':False,
                                      'controller_status':{
@@ -1832,7 +2719,7 @@ class Dock:
                                          'synthetic_storage':False,
                                          'reason':'No se pudo actualizar la conexión de la PSP.'},
                                      'can_launch_game':False,'connection_state':'waiting_psp',
-                                     'session':{**self.session,'running':self.running()}}
+                                     'session':{**self.session,'running':bool(self.session.get('running'))}}
             if open_on_attach and self.on_connected:
                 # Browser opening is best-effort after the read-only audit,
                 # outside Dock's lock. It never activates the USB controller.
@@ -1846,7 +2733,7 @@ class Dock:
                 except (OSError,ValueError):
                     # User can still close XMB manually. No save retries.
                     pass
-            self.stop.wait(3)
+            self.stop.wait(self.watch_interval())
 
 def make_demo(data):
     psp = Path(data) / 'sample-psp'
@@ -1910,10 +2797,10 @@ def recover_session(data):
         if os.name != 'nt':
             raise ValueError('La comprobación de procesos de recuperación requiere Windows.')
         result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',
-            '$ErrorActionPreference="Stop"; @(Get-CimInstance Win32_Process -Filter "Name=\'PPSSPPWindows64.exe\' OR Name=\'PPSSPPWindows.exe\'").Count'],
+            '$ErrorActionPreference="Stop"; @(Get-CimInstance Win32_Process -Filter "Name=\'PPSSPPWindows64.exe\' OR Name=\'PPSSPPWindows.exe\' OR Name=\'retroarch.exe\'").Count'],
             capture_output=True,text=True,timeout=30,creationflags=0x08000000)
         if result.returncode != 0 or result.stdout.strip() != '0':
-            raise ValueError('No se puede recuperar mientras PPSSPP siga abierto o no se pueda comprobar su cierre.')
+            raise ValueError('No se puede recuperar mientras PPSSPP o RetroArch sigan abiertos o no se pueda comprobar su cierre.')
         session_file=data/'session.json'
         session=read_json(session_file,{'running':False,'pending_return':False})
         session['running']=False
@@ -1995,6 +2882,29 @@ def app_close_blocker(dock, *, settle_finished_game=False):
         dock.lock.release()
 
 
+def request_app_close(dock, lifecycle, client_id, reason):
+    """Queue a native close in the visible UI, or release an idle UI lease."""
+    lifecycle.client_id(client_id)
+    if reason == 'button':
+        # Keep the document alive while the existing worker completes the
+        # verified return/cancel. Releasing the lease here would stop that
+        # worker and leave the PSP connection behind.
+        with lifecycle.lock:
+            if lifecycle.stopping or client_id not in lifecycle.clients:
+                raise ValueError('Esta ventana ya se está cerrando; espera a comprobar el resultado.')
+        if dock.window_close.request(reason=reason, visible=True):
+            return {'ok':True, 'close_pending':True, 'closing':False,
+                    'product_flow':dock.product_session.snapshot(),
+                    'pending_return_preserved':bool(dock.session.get('pending_return'))}
+        blocker = app_close_blocker(dock)
+        if blocker:
+            raise ValueError(blocker)
+    result = lifecycle.release(client_id, reason)
+    result.update(close_pending=False,
+                  pending_return_preserved=bool(dock.session.get('pending_return')))
+    return result
+
+
 def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
           *, ui_lifecycle=False):
     instance_lock = acquire_instance_lock(dock.data)
@@ -2065,13 +2975,32 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         'closing': ui_state.get('closing', False),
                     })
                 if self.path == '/api/state':
-                    return self.reply(dock.snapshot)
+                    return self.reply({**dock.snapshot, 'product_flow':dock.product_session.snapshot()})
+                if self.path == '/api/connection-diagnostics':
+                    return self.reply(dock.product_session.diagnostics.snapshot())
                 if self.path == '/api/controller-input':
                     # Safe read-only WinMM frame; no USB commands and no
                     # expensive Dock.lock while rendering the XMB.
                     return self.reply(dock.psp_launcher_input())
                 if self.path == '/api/media-status':
                     return self.reply(dock.xmb_media_progress)
+                if self.path.startswith('/api/media-hd/'):
+                    data = dock.xmb_background_hd(self.path[len('/api/media-hd/'):])
+                    if data is None:
+                        return self.reply({'status': 'pending_or_unavailable'}, 202)
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/png')
+                    self.send_header('Content-Length', str(len(data)))
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.end_headers()
+                    self.wfile.write(data)
+                    return
+                if self.path == '/api/retro-install-status':
+                    # Network downloads do not own Dock.lock or block USB
+                    # scanning, so status can be polled independently.
+                    with dock.retro_installer_lock:
+                        return self.reply(dict(dock.retro_install_progress))
                 if self.path == '/api/copy-queue':
                     return self.reply(dock.copy_queue)
                 if self.path == '/api/texture-status':
@@ -2095,7 +3024,9 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     self.send_header('Content-Type',
                                      'audio/mpeg' if kind=='sound' else 'image/png')
                     self.send_header('Content-Length',str(len(data)))
-                    self.send_header('Cache-Control','private, max-age=120')
+                    # The same public game id can exist on another card.
+                    # PC caches remain versioned; browser URLs are not.
+                    self.send_header('Cache-Control','no-store')
                     self.send_header('X-Content-Type-Options','nosniff')
                     self.end_headers()
                     self.wfile.write(data)
@@ -2136,7 +3067,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 self.send_response(200)
                 self.send_header('Content-Type',{'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8'}[name.split('.')[-1]])
                 self.send_header('Content-Length',str(len(content)))
-                self.send_header('Content-Security-Policy',"default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+                self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
                 self.end_headers()
                 self.wfile.write(content)
             except (OSError, ValueError) as e:
@@ -2160,18 +3091,12 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         if not result.get('ignored'):
                             start_watcher()
                         return self.reply(result)
-                    reason = body.get('reason')
-                    # A rejected explicit close leaves the document's lease
-                    # intact. A real pagehide queues a safe drain instead.
-                    if reason == 'button':
-                        blocker = app_close_blocker(dock)
-                        if blocker:
-                            raise ValueError(blocker)
-                    result = ui.release(body.get('client_id'), reason)
-                    result['pending_return_preserved'] = bool(dock.session.get('pending_return'))
-                    return self.reply(result)
+                    return self.reply(request_app_close(
+                        dock, ui, body.get('client_id'), body.get('reason')))
                 if ui is not None and ui.stopping:
                     raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
+                if self.path == '/api/ui-sound':
+                    return self.reply(dock.play_ui_sound(body.get('sound'), body.get('at_ms')))
                 if self.path == '/api/cancel-transfer':
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.
@@ -2180,6 +3105,15 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     from storage_layout import choose_pc_storage_parent
                     chosen=choose_pc_storage_parent()
                     return self.reply({'path':chosen,'cancelled':chosen is None})
+                if self.path == '/api/session-forget-automatic':
+                    # Revocation is metadata-only; it never starts a sync.
+                    with dock.lock:
+                        current = dock.native_transport.current
+                        pref = dock.device_memory.preference(current, dock.config)
+                        if not current or not pref:
+                            raise ValueError('Conecta la PSP cuya preferencia quieres cambiar.')
+                        dock.device_memory.remember(current, dock.config, pref['choice'], False)
+                    return self.reply({'ok': True})
                 if self.path == '/api/copy-policy':
                     # A click to SKIP missing games only changes one PC JSON
                     # preference. Never block the browser for a new USB game
@@ -2194,10 +3128,28 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 with dock.lock:
                     if ui is not None and ui.stopping:
                         raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
+                    product = dock.product_flow.snapshot()
+                    if product['enabled']:
+                        if self.path in ('/api/transfer','/api/retro-transfer'):
+                            raise ValueError('Elige la sincronización inicial o solicita la copia desde el menú del juego.')
+                        if (self.path in ('/api/sync','/api/resolve','/api/retro-save-sync') and
+                                (product['phase']!='attention' or not product['can_review_saves'])):
+                            raise ValueError('La sincronización se realiza durante la preparación o la salida del Dock.')
                     previous_pending_return = bool(dock.session.get('pending_return'))
                     save_result = None
-                    if self.path == '/api/transfer':
+                    if self.path == '/api/session-choice':
+                        dock.product_session.choose(body.get('choice'),body.get('offer_id'),
+                                                    automatic=body.get('automatic', False))
+                    elif self.path == '/api/session-retry':
+                        dock.product_session.retry(body.get('offer_id'))
+                    elif self.path == '/api/session-cancel':
+                        dock.product_session.request_cancel()
+                    elif self.path == '/api/transfer':
                         dock.transfer(body['ids'])
+                    elif self.path == '/api/retro-transfer':
+                        dock.transfer_retro(body['ids'])
+                    elif self.path == '/api/install-retro':
+                        dock.start_retro_install(automatic=False)
                     elif self.path == '/api/queue-game-copy':
                         dock.request_game_copy_from_hid(body.get('id'))
                     elif self.path == '/api/cancel-game-copy':
@@ -2207,7 +3159,14 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     elif self.path == '/api/resolve':
                         save_result = dock.sync(body)
                     elif self.path == '/api/launch':
+                        dock.ui_sound_player.stop()
                         dock.launch(body['id'])
+                    elif self.path == '/api/retro-launch':
+                        dock.ui_sound_player.stop()
+                        dock.launch_retro(body['id'])
+                    elif self.path == '/api/retro-save-sync':
+                        dock.sync_retro_save(body.get('id'),body.get('choice'),
+                                             body.get('revision'))
                     elif self.path == '/api/exit-dock':
                         dock.request_exit()
                     elif self.path == '/api/graphics':
@@ -2231,6 +3190,14 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         dock.settings({'psp_root':body['root']})
                     else:
                         return self.reply({'error':'No encontrado'},404)
+                    if (dock.product_flow.enabled and self.path in (
+                            '/api/session-choice','/api/session-retry','/api/session-cancel','/api/queue-game-copy','/api/exit-dock')):
+                        # Intent is already durable; the existing worker owns
+                        # all USB/file operations. Do not block this POST on
+                        # another expensive inventory or execute it twice.
+                        dock.snapshot={**dock.snapshot,'product_flow':dock.product_session.snapshot(),
+                                       'can_launch_game':False,'can_launch_retro':False}
+                        return self.reply({'ok':True})
                     if (save_result is not None and not previous_pending_return and
                             not dock.demo and not save_result['actions'] and
                             not save_result['conflicts'] and
@@ -2239,10 +3206,12 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         # after consent. A runtime error must not turn an
                         # already committed save sync into an HTTP failure
                         # (client could otherwise repeat a write).
-                        try:
-                            dock.prepare_runtime()
-                        except (OSError, ValueError, subprocess.SubprocessError) as e:
-                            dock.runtime_error = str(e)
+                        # Retro-only PSPs never require a PPSSPP runtime.
+                        if any(g['availability']=='ready' for g in dock.games()):
+                            try:
+                                dock.prepare_runtime()
+                            except (OSError, ValueError, subprocess.SubprocessError) as e:
+                                dock.runtime_error = str(e)
                     try:
                         dock.snapshot = {**dock.state(),'scanning':False}
                     except (OSError,ValueError) as e:
@@ -2253,7 +3222,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                                          'session':{**dock.session,'running':dock.running()}}
                     return self.reply({'ok':True})
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as e:
-                if self.path == '/api/transfer':
+                if self.path in ('/api/transfer','/api/retro-transfer'):
                     progress = dock.transfer_progress()
                     # A rejected request can fail before copy progress is
                     # initialized (invalid game, no space, missing PSP).
@@ -2271,7 +3240,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 # games as ready rather than waiting for the 3s watch tick.
                 # Never wait on Dock.lock when cancelling: its cancellation
                 # flag must be delivered while the transfer still owns it.
-                if self.path in ('/api/transfer', '/api/prepare-ppsspp',
+                if self.path in ('/api/transfer', '/api/retro-transfer',
+                                 '/api/prepare-ppsspp',
                                  '/api/sync', '/api/resolve'):
                     with dock.lock:
                         try:
@@ -2305,8 +3275,20 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     # A failed Win32 observation is not a closed window.
                     native_visible = None
                     native_handles = frozenset()
+            if native_visible is True:
+                try:
+                    dock.window_close.confirm_visible(clients=ui.snapshot()['clients'])
+                except OSError as exc:
+                    dock.window_close.abandon(str(exc))
+                    dock.error = str(exc)
             if not ui.should_stop(native_visible):
                 continue
+            if (app_window and native_visible is False and ui.native_seen and
+                    dock.window_close.restore_once(
+                        ui, lambda:launch_xmb_window(url,app_window=True,reuse_existing=False))):
+                lifecycle_record('finishing_session','native_window_close')
+                continue
+            dock.window_close.abandon(ui.reason)
             # Stop new USB observations immediately. Active requests and an
             # already running emulator retain the data lock until safe exit.
             dock.stop.set()
@@ -2377,6 +3359,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
     finally:
         lifecycle_done.set()
         dock.stop.set()
+        dock.ui_sound_player.stop()
+        with dock._background_cache_lock:
+            if dock._background_cache is not None:
+                dock._background_cache.close(wait=False)
         server.server_close()
         # No daemon performing an existing copy may outlive our instance
         # lock. Both workers check stop before beginning another item.

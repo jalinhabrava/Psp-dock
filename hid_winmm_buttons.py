@@ -15,7 +15,7 @@ import json
 import os
 import time
 
-from bridge_hid import VID, PID, MSC_TEST_PID, probe as hid_probe
+from bridge_hid import VID, PID, MSC_TEST_PID, NATIVE_PID, probe as hid_probe
 
 
 class JoyProbeError(ValueError):
@@ -59,7 +59,7 @@ class JoySnapshot:
 
 def matching_joystick_capabilities(candidates: list[dict], *, expected_product: int = PID) -> dict:
     """Never infer a physical PSP by name alone."""
-    if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID):
+    if type(expected_product) is not int or expected_product not in (PID, MSC_TEST_PID, NATIVE_PID):
         raise JoyProbeError('PID PSP Dock no reconocido.')
     matches = [item for item in candidates
                if item.get("vendor_id") == VID and item.get("product_id") == expected_product]

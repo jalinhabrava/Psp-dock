@@ -19,6 +19,7 @@ from contextlib import contextmanager
 
 VID, PID = 0x054C, 0x01CB
 MSC_TEST_PID = 0x01CC
+NATIVE_PID = 0x01CD  # Separate PDK2 transport; not accepted by the PDK1 command API.
 MAGIC = b"PDK1"
 VERSION = 1
 STATUS, REQUEST_STORAGE = 1, 2

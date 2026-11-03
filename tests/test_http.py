@@ -61,6 +61,21 @@ class HTTPContract(unittest.TestCase):
         self.assertTrue(all(g['availability']=='ready' for g in state['games']))
     def test_post_without_token_rejected(self):
         self.assertEqual(self.request('/api/sync',{},token=False)[0],403)
+        self.assertEqual(self.request('/api/ui-sound',{'sound':'cursor','at_ms':time.time()*1000},token=False)[0],403)
+
+    def test_ui_sound_is_bounded_and_missing_original_is_silent(self):
+        status, result = self.request('/api/ui-sound', {'sound':'cursor','at_ms':time.time()*1000})
+        self.assertEqual(status, 200)
+        self.assertFalse(result['played'])
+        for sound in ('../snd_cursor', 'SystemAsterisk', 12):
+            self.assertEqual(self.request('/api/ui-sound', {'sound':sound,'at_ms':time.time()*1000})[0],409)
+        self.assertFalse(self.request('/api/ui-sound', {'sound':'cursor','at_ms':0})[1]['played'])
+
+    def test_background_hd_does_not_read_a_game_or_start_a_usb_scan(self):
+        before = self.artwork_iso.read_bytes()
+        self.assertEqual(self.request('/api/media-hd/'+'0'*24)[0],202)
+        self.assertEqual(self.request('/api/media-hd/../outside')[0],409)
+        self.assertEqual(self.artwork_iso.read_bytes(),before)
     def test_foreign_origin_rejected(self):
         self.assertEqual(self.request('/api/sync',{},origin='https://example.com')[0],403)
     def test_demo_cannot_launch_synthetic_games(self):

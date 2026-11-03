@@ -31,6 +31,12 @@ equal(view(null).waiting, true, 'The initial HTML stays on the connection screen
 equal(view(null).kind, 'loading', 'Initial state does not claim a missing PSP');
 equal(view({}).waiting, true, 'An empty state never opens the menu');
 equal(view(absent).waiting, true, 'No verified PSP means waiting');
+const discovering = view({ ...absent, product_flow:{ enabled:false, phase:'waiting_psp',
+  connection:{phase:'searching', message:'Comprobando dispositivos USB.'} } });
+equal(discovering.kind, 'searching', 'A slow Windows device enumeration is visible immediately');
+equal(discovering.working, true);
+equal(discovering.canPlay, false);
+equal(discovering.title, 'Buscando tu PSP');
 equal(view({ ...absent, games: [{ id: 'cached', availability: 'ready' }], library_source: 'cached_manifest' }).waiting,
   true, 'A remembered PC catalog does not act as a connected PSP');
 const storage = { selected_device: 'G:\\', controller_status: { connected: false, mode: 'usb_storage', can_play: false } };
@@ -214,7 +220,8 @@ async function lifetimeTests() {
   equal(context.ui.appClosing, false);
   equal(context.closedWindows, 0);
   equal(context.$('dock-connect-error').hidden, false);
-  equal(context.$('dock-connect-error').textContent, 'La copia sigue activa.');
+  equal(context.$('dock-connect-error').textContent, 'No se pudo cerrar la aplicación. Puedes intentarlo de nuevo.');
+  equal(context.ui.connectionRequestError, 'La copia sigue activa.', 'The exact rejection remains available to the diagnostic details');
   equal(context.calls[1].route, '/api/app/heartbeat', 'Lease resumes after a rejected close');
 
   context = windowScope();

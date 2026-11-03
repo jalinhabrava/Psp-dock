@@ -10,6 +10,8 @@ const end = code.indexOf('\nfunction xmbGoto(', start);
 assert(start > 0 && end > start);
 const calls = [];
 const context = {
+  connection: {waiting:false,product:{enabled:false,blocking:false}},
+  xmbConnectionView: () => context.connection,
   xmb: {gfx:{}},
   xmbGfxSummary: () => 'Automático',
   bytes: (n) => String(n),
@@ -45,5 +47,14 @@ context.xmbGameMenu(ready);
 assert.equal(context.options[0].t,'Jugar');
 context.choose(0);
 assert.equal(calls.filter(v=>v==='launch').length,1);
+for (const connection of [
+  {waiting:true,product:{enabled:false,blocking:false}},
+  {waiting:false,product:{enabled:true,blocking:true}},
+]) {
+  context.connection=connection;
+  const before=calls.length;
+  context.xmbGameMenu(game);
+  assert.equal(calls.length,before,'Waiting and blocked product phases cannot open the hidden game menu or prefetch');
+}
 assert(code.includes('menu: () => xmbGameMenu(game)'));
 console.log('TRIANGLE opens XMB right-side menu; copy requires explicit selection: OK');

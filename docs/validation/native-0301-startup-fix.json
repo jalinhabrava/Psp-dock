@@ -1,0 +1,309 @@
+{
+  "schema": "pspdock-native-startup-fix-validation-v1",
+  "recorded_utc": "2026-11-02T11:46:08.482378+00:00",
+  "revision": "0301",
+  "status": "software_checks_and_installation_passed_hardware_pending",
+  "baseline_commit": "69f5363eadca3131e4b71251879109c8f4fa5f48",
+  "prior_physical_failure": "native-0300-start-failure.json",
+  "historical_product_validation": "product-session-0300.json",
+  "correction": {
+    "observed_0300_failure": {
+      "code": "8002013C",
+      "stage": 3,
+      "dependency": 5,
+      "module": "flash0:/kd/usbstorboot.prx",
+      "before_hid_registration_and_usb_activation": true,
+      "missing_library_not_identified_from_photo": true
+    },
+    "mandatory_sony_modules": [
+      "flash0:/kd/semawm.prx",
+      "flash0:/kd/usbstor.prx",
+      "flash0:/kd/usbstormgr.prx",
+      "flash0:/kd/usbstorms.prx"
+    ],
+    "optional_bootstrap_modules": [],
+    "mandatory_module_errors_remain_fatal": true,
+    "sony_storage_registration_checked_before_bus_start": true,
+    "launch_magic": "314E4450",
+    "mixed_0300_0301_launcher_driver_rejected": true,
+    "expected_usb_identity": {
+      "vid": "054C",
+      "pid": "01CD",
+      "revision": "0301"
+    },
+    "retired_revision_0300_readonly_inspector_only": true,
+    "hid_feature_wValue_remains": "0300",
+    "ui_error_precedes_phase": true,
+    "ui_unknown_interface_label": "sin_asignar",
+    "ui_exit_requires_safe_to_unload_and_successful_module_unload": true,
+    "no_windows_service_or_autostart": true
+  },
+  "software_validation": {
+    "source_transfer": {
+      "files": 26,
+      "normalized_crlf_to_lf_hashes_match": true,
+      "hashes": {
+        "dock.py": "9df14cdf5a816521465aa97ec21c3527c22e385d5a239ec7a76b8626f5541e45",
+        "dock_product_session.py": "ca9d9803dcb559193b19587aed85ad53695dbfbfeb2eed4004491654e7473d6e",
+        "inspect_native_dock.py": "25bb16bfc9035fcc48fb562dabd36bb775e4374ea8b6de706bb368d1e7aea42c",
+        "native_dock.py": "d926d869eadf37e1e56d9ee0fad7af0b97c8c0eee636bb19b0cf8dad52337b50",
+        "psp_native_install.py": "e872f070720c56304558da38a031695341b4ef73f3fa1b151d5e4a24695f0def",
+        "psp_native_package.py": "34652e0906a83334d29706bd34ff572bf0c409bdf33f09a89756f8e23f4719d5",
+        "psp_native_upgrade.py": "0dbc170a5f9f0b368a4fd41b5bb97c2a2b65b5a1a6463044f896d245efe7b155",
+        "tests/test_dock_product_session.py": "f85a29f8c1865863768a5561d7a5f0defc1e4a1a9d28342b7719b24362b16b31",
+        "tests/test_inspect_native_dock.py": "516b347dc3a6e18d4389bddf46a5ca5e5c5be40ac9641449c0b3c4bc05eb22ca",
+        "tests/test_native_dock.py": "3c6dd9117214e3c38d540d84c0f4ec5c83e2837cc4610c043e0856009549d697",
+        "tests/test_psp_native_package.py": "c0aaf8bf2fad7ebe93013d74356a51f1d0b9c487ece0e5c4a07d2a280fea9f5b",
+        "tests/test_psp_native_upgrade.py": "a9c9b7f9559f65f32c5113b1eb9b4ad1735288881a6a8e84853fec50e6cf5f17",
+        "tests/xmb_product_flow.test.js": "f931e04f0e088a56abc933c823e4755cdf045a8e88d115d34005e78a6a767752",
+        "tools/product_ui_preview.py": "eab57aa2388cb61cccd52a92b414d677d9395b40668b835f5bd67a8160d0e7c1",
+        "web/app.js": "d38b665b533037bcfbb3b906e754512f5024787ecd7f3563d5b0992a7eb7c10a",
+        "homebrew/native-dock/native_driver.c": "3f77ddb73aaf3e3e23dec66681990d5b4983f3b030defc784fb19df9f8af15d0",
+        "homebrew/native-dock/native_common.h": "6af57a363a19e4675ea8925567919b3efc1e0ddcbcb8b09855157dde8f07e95f",
+        "homebrew/native-dock/Makefile": "a59eaa466baa2b08ac4919ffcbf4d33fbb99136ce8d675fad03cac91cf699bf9",
+        "homebrew/native-dock/Makefile.app": "743ea8da0fa5d85bf688dc20b31e3c647b7f446485b9a1ea5a1c969639fe97b9",
+        "homebrew/native-dock/build-wsl.sh": "d58f9c72a1d530922137f4beb2d719999315f1f4acddc0f451c2c092e9055fff",
+        "homebrew/native-dock/audit_elf.py": "941cd0ef4ece187070e507c564bf792c3979382802cca4a3755944c4f9c787c5",
+        "homebrew/native-dock/tests/test_native_transport.c": "16c7aa7e70e344e8fce0463c7cbfdbc1e25857ed1eba5c577e7762d43cd2f0a4",
+        "homebrew/native-dock/README.md": "3b4e82608427852f786970d86fbe889a37337a3ad0694c2f704cc7a9968e6dee",
+        "homebrew/native-dock/app.c": "412103066caebe77e2eefd4c893ca34657bfd87cf799c8075dd8be3bd65707a1",
+        "homebrew/native-dock/native_ui.h": "70613610a4ff86e21f03622b107a4f344552c8783acd5c9813d88ebbafa613c3",
+        "homebrew/native-dock/tests/test_native_ui.c": "e450e9f49f34f7be76693a3f6262e55ec6f1e18dc5dea0edf818957cde51f90b"
+      },
+      "at_build_and_test_time": true
+    },
+    "firmware_driver_harness": {
+      "result": "PASS",
+      "actual_native_driver_source": true,
+      "normal_gcc": true,
+      "asan_ubsan": true,
+      "mandatory_bootstrap_failures": true,
+      "removed_boot_library_notfound_regression": true
+    },
+    "firmware_ui_harness": {
+      "result": "PASS",
+      "actual_native_ui_helper": true,
+      "photo_failure_state": true,
+      "error_precedence": true,
+      "unload_gate": true,
+      "unknown_interface": true
+    },
+    "psp_cross_compile": {
+      "result": "PASS",
+      "compiler": "PSP GCC",
+      "warnings_as_errors": true,
+      "build_directory": "/home/david/projects/psp-dock-build/native-dock-0301"
+    },
+    "compiled_audit": {
+      "result": "PASS",
+      "machine": "MIPS",
+      "kernel_module": "3.1",
+      "mandatory_module_count": 4,
+      "optional_module_count": 0,
+      "kernel_filesystem_imports": [],
+      "early_sony_boot_imports": [],
+      "xmb_artwork_embedded_exactly": true,
+      "report": {
+        "bytes": 2321,
+        "sha256": "1001e05080b6cbecb4c198e02cad55295dc482cca3c8028f2921d4cd217ca3f9"
+      }
+    },
+    "windows_python": {
+      "result": "PASS",
+      "tests": 65,
+      "failures": 0,
+      "errors": 0,
+      "skips": 0,
+      "duration_seconds": 33.655,
+      "real_usb_test_guard": true,
+      "command": "python -B -m unittest tests.test_psp_native_upgrade tests.test_native_dock tests.test_inspect_native_dock tests.test_psp_native_package tests.test_psp_native_install tests.test_dock_product_session.DockProductSessionTests.test_launcher_input_requires_current_native_revision -v"
+    },
+    "windows_ui": {
+      "result": "PASS",
+      "assertions": 163,
+      "command": "node tests/xmb_product_flow.test.js"
+    },
+    "independent_upgrade_review": {
+      "result": "no_blocking_findings",
+      "scope": [
+        "pinned_0300_files",
+        "pc_backup_before_first_psp_write",
+        "identity_and_no_links",
+        "two_rename_windows",
+        "explicit_rollback",
+        "preserve_partial_and_previous"
+      ]
+    },
+    "broader_0300_results_are_historical_not_rerun_or_0301_acceptance": true,
+    "post_build_formatting_only": [
+      {
+        "path": "homebrew/native-dock/app.c",
+        "change": "Remove one empty final line for git diff --check; no code or compiler options changed.",
+        "compiled_snapshot_sha256": "412103066caebe77e2eefd4c893ca34657bfd87cf799c8075dd8be3bd65707a1",
+        "final_source_sha256": "7571235042803623dd6797f4a5ceecac9b6b0b5e6884da7262e678dce804a454"
+      }
+    ]
+  },
+  "package": {
+    "revision": "0301",
+    "files": {
+      "EBOOT.PBP": {
+        "sha256": "955d61312134275de9412177c54495ededde01505af9f36b3b3e9f3b8c371f29",
+        "size": 310072
+      },
+      "docknative.prx": {
+        "sha256": "607722612f72cf220f4760750d7bc52c2f6224cd39051527c422e246d382caf9",
+        "size": 20938
+      },
+      "LICENSE-FuSa-GPL-3.0.txt": {
+        "sha256": "230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809",
+        "size": 35823
+      },
+      "LICENSE-DejaVu.txt": {
+        "sha256": "24dc6361beb5925c789c056222029b44093854e5f94e5509b833b5a02d511baf",
+        "size": 2555
+      }
+    },
+    "bytes": 369388,
+    "xmb": {
+      "title": "PSP Dock - Memory Stick + Mando 0301",
+      "embedded": true,
+      "artwork": {
+        "ICON0.PNG": {
+          "sha256": "8056770888b1aa6c02996cd83414edea50d478794ad5da4152337fc3e1c2ce18",
+          "size": 9179,
+          "width": 144,
+          "height": 80
+        },
+        "PIC0.PNG": {
+          "sha256": "5e2eade820a95bf3c0d81698562a9ca0098142a863759b0e79bdcea659f68b28",
+          "size": 44965,
+          "width": 310,
+          "height": 180
+        },
+        "PIC1.PNG": {
+          "sha256": "718e6e1435a685404dab0da2fdcd796c439918aad3d394d5ee434279c3de2dda",
+          "size": 80294,
+          "width": 480,
+          "height": 272
+        }
+      }
+    },
+    "manifest": {
+      "bytes": 2721,
+      "sha256": "1a789ac64c29404dac988e566f15a4cea0fd372743df24dc4222aff1e4eeee57"
+    }
+  },
+  "installation": {
+    "installed": true,
+    "verified_utc": "2026-11-02T11:46:08.482378+00:00",
+    "target": "G:\\PSP\\GAME\\PSPDockNative",
+    "via": "psp_native_upgrade.py explicit --upgrade from pinned 0300",
+    "sony_xmb_identity": "054C:02D2",
+    "device_identity_rechecked_during_operation": true,
+    "critical_backup_revalidated": true,
+    "specific_0300_application_backup_verified_before_first_psp_write": true,
+    "application_backup_basename": "native-app-0300-before-0301",
+    "old_application_preserved_outside_game": true,
+    "parked_relative_path": "PSP/.pspdock-native-upgrade-19f1b39846a3499c81ac1506dce89bcd/previous",
+    "files_rehashed_after_publish": true,
+    "rollback_implemented_tested_and_not_executed_on_psp": true,
+    "other_game_save_plugin_system_firmware_changes": false,
+    "receipt": "data/native-dock-0301-evidence/upgrade.json",
+    "receipt_digest": {
+      "bytes": 3744,
+      "sha256": "bc1ab5d87922dc35d5e16aab814ff32d2230749dd501383d91a87353b92cc684"
+    },
+    "journal_digest": {
+      "bytes": 9219,
+      "sha256": "b79d1df15e47a53dcea26e6de3e23e00108029ab796f64d703160ba29094ea60"
+    },
+    "old_install_receipt_unchanged": {
+      "bytes": 2597,
+      "sha256": "e608ccd22a96bf82c6ae88ddf8a364740c602c40d0c04c66010c51055670dab2"
+    }
+  },
+  "retained_local_artifact_hashes": {
+    "homebrew/native-dock/dist/EBOOT.PBP": {
+      "bytes": 310072,
+      "sha256": "955d61312134275de9412177c54495ededde01505af9f36b3b3e9f3b8c371f29"
+    },
+    "homebrew/native-dock/dist/docknative.prx": {
+      "bytes": 20938,
+      "sha256": "607722612f72cf220f4760750d7bc52c2f6224cd39051527c422e246d382caf9"
+    },
+    "homebrew/native-dock/dist/docknative.elf": {
+      "bytes": 27172,
+      "sha256": "18c03d74757617e16e58c597bb4c4248dad4db1621534222500393928c1f2460"
+    },
+    "homebrew/native-dock/dist/pspdocknative.elf": {
+      "bytes": 1075696,
+      "sha256": "3783e6dd245c6d092a27e679a0475998fa614da5747279ec4625274fe419ecd1"
+    },
+    "homebrew/native-dock/dist/compiled-audit.json": {
+      "bytes": 2321,
+      "sha256": "1001e05080b6cbecb4c198e02cad55295dc482cca3c8028f2921d4cd217ca3f9"
+    },
+    "data/native-dock-0301-package/manifest.json": {
+      "bytes": 2721,
+      "sha256": "1a789ac64c29404dac988e566f15a4cea0fd372743df24dc4222aff1e4eeee57"
+    },
+    "data/native-dock-0301-evidence/upgrade.json": {
+      "bytes": 3744,
+      "sha256": "bc1ab5d87922dc35d5e16aab814ff32d2230749dd501383d91a87353b92cc684"
+    },
+    "data/native-dock-0301-evidence/upgrade.json.journal.jsonl": {
+      "bytes": 9219,
+      "sha256": "b79d1df15e47a53dcea26e6de3e23e00108029ab796f64d703160ba29094ea60"
+    },
+    "data/native-dock-0301-evidence/build.log": {
+      "bytes": 6149,
+      "sha256": "bd38bb8aa95a72b7ecb6f70f4c38a9ab94687b7dabb778943441a8ff0a562afc"
+    },
+    "data/native-dock-0301-evidence/host-tests.log": {
+      "bytes": 11101,
+      "sha256": "c46df5ff9a19161b23a86d287cbb7b5a8533f501bcd3222dcbcc50cb02647cf9"
+    },
+    "data/native-dock-0301-evidence/ui-tests.log": {
+      "bytes": 70,
+      "sha256": "ff7699ecf06520b48db70904798b9ddafe88f2535dc40f7322f8ee9cccca37dd"
+    },
+    "data/native-dock-0301-evidence/source-hashes.json": {
+      "bytes": 2688,
+      "sha256": "300361102ad173012633db2c19ac3a1e2d8030552b989c3a21344a69eaf2e084"
+    },
+    "data/native-dock-0300-evidence/installation.json": {
+      "bytes": 2597,
+      "sha256": "e608ccd22a96bf82c6ae88ddf8a364740c602c40d0c04c66010c51055670dab2"
+    }
+  },
+  "physical_validation": {
+    "native_0300_startup_passed": false,
+    "native_0301_executed": false,
+    "real_memory_stick_mounted_with_hid": false,
+    "wire_identity_observed": false,
+    "hid_input_verified": false,
+    "entry_sync_and_selection_verified": false,
+    "on_demand_copy_verified": false,
+    "exit_save_sync_and_windows_eject_verified": false,
+    "full_native_product_session_accepted": false,
+    "synthetic_0207_acceptance_is_not_native_acceptance": true
+  },
+  "next_physical_trial": [
+    "Exit ordinary XMB USB and remove cable.",
+    "Open PSP Dock in Windows manually.",
+    "Launch PSP Dock - Memory Stick + Mando 0301 on PSP; press X.",
+    "Connect only after LISTO appears.",
+    "Observe PDK2, actual USB identity, HID and real Memory Stick under the same parent before writes.",
+    "If startup fails again, preserve the code/module/bus diagnostics in a photo."
+  ],
+  "product_scope_preserved": {
+    "entry_inventory": true,
+    "user_sync_choice": true,
+    "controller_after_preparation": true,
+    "blocked_controls_during_copy": true,
+    "exit_changed_saves_only": true,
+    "compatible_raw_sram_only": true,
+    "universal_cross_emulator_savestate_conversion": false
+  }
+}

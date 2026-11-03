@@ -1,13 +1,94 @@
-# PSP Dock · prototipo para Windows
+# PSP Dock
+
+## Estado actual: PSP Dock instalado; aceptación física pendiente
+
+La aplicación se llama **PSP Dock** en Windows y en la PSP. Conserva el nombre,
+thumbnail y fondos aprobados. La pantalla normal explica qué está ocurriendo
+y qué debe hacer el usuario; las revisiones y los códigos quedan en el
+diagnóstico opcional.
+
+La revisión de desarrollo actual es **0302**. Su instalación terminó y se
+verificó el 2 de noviembre de 2026 a las **13:14:30 UTC**: cuatro archivos,
+**371.488 bytes**, releídos y comprobados. Han pasado la compilación MIPS,
+las auditorías, el conjunto de 182 pruebas Windows registrado para esta
+integración y 15 vistas de la interfaz centradas en conexión, progreso y
+cancelación. **La aceptación física de 0302 sigue pendiente:** ni la copia
+del paquete ni las pruebas de software demuestran el ciclo completo en la
+consola. [Evidencia actual](docs/validation/native-0302-product-fix.json).
+
+Windows distingue **Conecta tu PSP**, **Identificando tu PSP**, preparación de
+la biblioteca y conexión bloqueada. Un fallo muestra una explicación y una
+acción visible; los detalles técnicos se pueden desplegar. La PSP espera la
+confirmación de Windows antes de anunciar una sincronización. Detectar el
+cable por sí solo no inicia la sesión.
+
+El progreso usa bytes copiados o guardados comprobados de un plan real. Si aún
+no se conoce el total, muestra actividad sin inventar un porcentaje. La
+verificación de la copia y la preparación de la desconexión tienen su propio
+estado: alcanzar el total de bytes no significa que ya se pueda retirar el cable.
+
+Antes del primer modo mando, cancelar impide iniciar nuevas copias. Si ya hay
+una operación admitida, termina su comprobación antes de cerrar la conexión.
+La cancelación no se anuncia como una sincronización completada.
+[Flujo completo de entrada y salida](docs/FLUJO-PRODUCTO.md).
+
+**Lo observado en 0301:** la PSP sí arrancó y Windows observó almacenamiento
+real y mando bajo el mismo padre USB. El host rechazó la revisión del
+descriptor Sony al confundirla con la versión del producto. No hubo
+sincronización ni aceptación de la sesión completa. La consola anunciaba
+actividad antes de la confirmación de Windows, mientras Windows ocultaba
+el rechazo tras la espera. Esa observación motiva la corrección actual.
+Los valores técnicos y el contrato están en la
+[validación actual](docs/validation/native-0302-product-fix.json);
+la instalación y las pruebas anteriores permanecen en el
+[registro histórico 0301](docs/validation/native-0301-startup-fix.json).
+
+Las aplicaciones anteriores `PSPDock` y `PSPDockStorageTest` se retiraron el
+2 de noviembre a las **13:22:12 UTC**, después de verificar su copia completa
+en el PC. En el XMB queda una sola entrada: **PSP Dock**. El recibo conserva
+los ocho archivos y hashes retirados; no se borraron juegos ni partidas.
+
+## Integración 0300: historial del flujo, superada por 0302
+
+Esta rama integra el flujo completo pedido el 2 de noviembre: **Sincronizando
+PSP**, inventario de juegos/ROMs/partidas, elección **Todo / Partidas y estados /
+Sólo juegos / Sin copiar ahora**, modo mando y copia puntual con navegación
+bloqueada. Cerrar un juego vuelve al menú sin cambiar de fase. **Salir del Dock**
+devuelve sólo los guardados modificados durante la sesión; los juegos permanecen
+en el PC. Los conflictos requieren una elección explícita.
+
+La variante **PSP Dock - Memory Stick + Mando 0300** usa Sony USBSTOR junto con
+el HID PDK2 y se instala en `PSP/GAME/PSPDockNative`. El paquete conserva el
+nombre, thumbnail y fondos aprobados. La 0207 se mantiene como referencia
+física validada del disco sintético. **0300 fue compilada e instalada;
+su primer arranque físico falló antes de activar USB.** Los resultados de
+software de esta integración se conservan como evidencia histórica.
+
+Los estados instantáneos sin compatibilidad verificada se conservan en su
+dispositivo. La continuidad con emuladores de Windows incluye únicamente los
+formatos de guardado reconocidos; no se presenta la copia de seguridad de un
+estado como una conversión entre emuladores.
+
+La app sigue siendo de apertura manual, sin servicios ni autoarranque.
+La primera X durante una sesión nativa restaura una sola ventana para completar
+la salida y mostrar cualquier conflicto; una segunda X conserva la recuperación
+y drena únicamente el trabajo admitido. **Puedes desconectar** requiere tanto
+copias verificadas como expulsión aceptada por Windows.
+
+[Flujo y límites](docs/FLUJO-PRODUCTO.md) ·
+[Verificación de esta integración](docs/validation/product-session-0300.json).
 
 ## Inicio en Windows: abrir la app y conectar la PSP
 
 El flujo elegido por David es **manual en Windows**:
 
-1. Abre `Iniciar-PSP-Dock.cmd` (o el acceso PSP Dock).
+1. Abre **PSP Dock** en Windows con su acceso directo o `Iniciar-PSP-Dock.cmd`.
 2. La ventana muestra **Conecta tu PSP**.
-3. Abre PSP Dock en la consola y conecta el cable USB.
-4. Cuando se verifica el mando Dock, aparece el menú automáticamente.
+3. Abre **PSP Dock** en la consola con el cable retirado. Conéctalo cuando
+   la PSP indique **LISTO**.
+4. Windows muestra la identificación de la PSP. Cuando confirma la conexión,
+   empieza **Sincronizando PSP**, compara la biblioteca y permite elegir qué
+   preparar. Después de completar esa elección entra al menú.
 
 La detección pertenece a la aplicación abierta. No se instala un servicio,
 un monitor al iniciar sesión ni una tarea que abra la app con Windows cerrado.
@@ -25,7 +106,7 @@ explícito a la preparación anterior; no inicia juegos ni cambia el modo USB.
 
 Detalles y estado de verificación: [inicio manual](docs/ARRANQUE-HID-AUTOMATICO.md).
 
-**Windows comprobado:** apertura real, segunda apertura sobre la misma ventana,
+**Flujo manual anterior comprobado:** apertura real, segunda apertura sobre la misma ventana,
 cierre con la X en 4,172 s, proceso terminado, bloqueo liberado y sesión
 idéntica por SHA-256. El acceso **PSP Dock** del escritorio lleva el thumbnail
 aprobado como icono y abre esta versión sin consola adicional. El instalador
@@ -38,9 +119,22 @@ sin errores. La vuelta a espera está respaldada por su observación; ese sondeo
 no captura retrospectivamente la transición ni añade una prueba de movimiento HID.
 [Registro de verificación](docs/validation/windows-manual-entry.json).
 
-## USBSTOR + HID 0207: aceptación física completada con el disco de prueba
+## Retirada de versiones anteriores
 
-**PSP Dock - USB Storage + HID 0207** está instalada en
+`psp_dock_retire.py` permite retirar las dos aplicaciones anteriores, sólo
+con un plan revisado que enumere sus archivos y hashes exactos. Primero exige
+que la instalación actual coincida con el paquete aprobado y conserva una
+copia completa y verificada en el PC, con manifiesto y journal. Después retira
+únicamente `PSP/GAME/PSPDock` y `PSP/GAME/PSPDockStorageTest` que figuren en ese
+plan. No selecciona por prefijo ni toca la aplicación actual, partidas,
+homebrew ajeno o aparcamientos anteriores. Una interrupción conserva el
+respaldo y exige revisar el estado antes de otra acción; no reanuda el borrado.
+La disponibilidad de esta herramienta no acredita que la retirada ya se haya
+realizado en una consola concreta.
+
+## Historial 0207: aceptación física del disco de prueba
+
+**PSP Dock - USB Storage + HID 0207** se instaló en
 `PSP/GAME/PSPDockStorageTest`: cuatro archivos, **368.243 bytes**, releídos
 por SHA-256. La 0206 anterior quedó archivada en el PC. Mantiene el nombre
 PSP DOCK, thumbnail, placa de presentación y fondo grafito dentro del EBOOT;
