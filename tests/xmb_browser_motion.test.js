@@ -77,7 +77,15 @@ async function main() {
     let port;
     for (let i = 0; i < 120; i++) {
       const file = path.join(profile, 'DevToolsActivePort');
-      if (fs.existsSync(file)) { port = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0]; break; }
+      if (fs.existsSync(file)) {
+        try {
+          const candidate = fs.readFileSync(file, 'utf8').split(/\r?\n/)[0];
+          if (/^\d+$/.test(candidate)) { port = candidate; break; }
+        } catch (error) {
+          // Windows may briefly lock this file while Chrome initializes.
+          if (!['EBUSY', 'EPERM', 'ENOENT'].includes(error.code)) throw error;
+        }
+      }
       await sleep(50);
     }
     assert(port, 'Chrome debugging endpoint did not start');

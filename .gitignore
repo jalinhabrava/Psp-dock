@@ -12,6 +12,9 @@ session.json
 settings.json
 server.json
 inventory-cache.json
+retro-inventory-cache.json
+retro-save-catalog.json
+retro-save-baselines.json
 runtime-prepared.json
 graphics-profiles.json
 hd-generator.json
