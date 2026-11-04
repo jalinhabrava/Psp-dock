@@ -3,7 +3,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from connection_diagnostics import ConnectionDiagnostics
+from psp_dock.core.connection_diagnostics import ConnectionDiagnostics
 
 
 class ConnectionDiagnosticsTests(unittest.TestCase):

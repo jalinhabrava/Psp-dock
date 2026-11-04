@@ -5,10 +5,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import psp_backup
-import vsh_plugin_enable as vsh
-import vsh_plugin_recovery as recovery
-from vsh_plugin_stage import CONFIG, STAGE_DIR, ENTRY, FILES
+import tools.psp.psp_backup as psp_backup
+import tools.psp.vsh_plugin_enable as vsh
+import tools.psp.vsh_plugin_recovery as recovery
+from tools.psp.vsh_plugin_stage import CONFIG, STAGE_DIR, ENTRY, FILES
 
 
 USB = "USB\\VID_054C&PID_02D2\\PSP_FIXTURE"

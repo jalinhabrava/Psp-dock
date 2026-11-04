@@ -6,7 +6,7 @@ from unittest.mock import patch
 import zipfile
 
 from dock import game_inventory
-from psp_retro import emulator_inventory, emulator_profile, retroarch_core, SYSTEMS
+from psp_dock.emulation.psp_retro import emulator_inventory, emulator_profile, retroarch_core, SYSTEMS
 
 
 class RetroInventoryTests(unittest.TestCase):
@@ -69,7 +69,7 @@ class RetroInventoryTests(unittest.TestCase):
         ):
             with self.subTest(title=title):
                 folder=self.install('HOME_'+str(len(list(self.game.iterdir()))))
-                with patch('psp_retro.read_metadata',return_value={'TITLE':title}):
+                with patch('psp_dock.emulation.psp_retro.read_metadata',return_value={'TITLE':title}):
                     profile=emulator_profile(folder,folder/'EBOOT.PBP')
                 self.assertIsNotNone(profile)
                 self.assertIn(expected,profile['systems'])
@@ -94,7 +94,7 @@ class RetroInventoryTests(unittest.TestCase):
 
     def test_sfo_title_matches_when_folder_name_is_generic(self):
         folder = self.install('GAMES_01')
-        with patch('psp_retro.read_metadata',return_value={'TITLE':'TempGBA4PSP v1.45'}):
+        with patch('psp_dock.emulation.psp_retro.read_metadata',return_value={'TITLE':'TempGBA4PSP v1.45'}):
             self.assertEqual(emulator_profile(folder,folder/'EBOOT.PBP')['systems'],['gba'])
         self.assertIsNone(emulator_profile(folder,folder/'EBOOT.PBP'))
 

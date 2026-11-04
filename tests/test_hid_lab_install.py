@@ -2,9 +2,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import psp_backup
-import hid_lab_install as lab
-from vsh_plugin_stage import CONFIG
+import tools.psp.psp_backup as psp_backup
+import tools.labs.hid_lab_install as lab
+from tools.psp.vsh_plugin_stage import CONFIG
 
 
 SERIAL = "2958455453"

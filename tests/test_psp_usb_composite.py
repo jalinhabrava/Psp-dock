@@ -2,7 +2,7 @@
 import struct
 import unittest
 
-from psp_usb_composite import (
+from psp_dock.devices.psp_usb_composite import (
     DescriptorError,descriptor_set,audit_configuration,
     CONFIG_SIZE,DEVICE_SIZE,
 )

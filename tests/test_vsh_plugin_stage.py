@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import vsh_plugin_stage as vsh
+import tools.psp.vsh_plugin_stage as vsh
 
 
 class VshStageTests(unittest.TestCase):

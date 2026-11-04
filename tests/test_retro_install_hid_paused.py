@@ -11,8 +11,8 @@ import unittest
 from unittest.mock import patch
 
 from dock import Dock
-from psp_retro import SYSTEMS
-from retro_installer import managed_retroarch
+from psp_dock.emulation.psp_retro import SYSTEMS
+from psp_dock.emulation.retro_installer import managed_retroarch
 
 
 class RetroInstallDuringHid(unittest.TestCase):

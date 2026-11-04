@@ -9,7 +9,7 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from psp_native_package import FILES, REMOTE_FOLDER
+from tools.psp.psp_native_package import FILES, REMOTE_FOLDER
 from tests.test_psp_native_package import fixture_native_package
 
 SERIAL = '12345678'
@@ -23,11 +23,11 @@ def load_isolated():
     eject = ModuleType('lab_eject');eject.ppsspp_open = eject.real_dock_open = forbidden
     usb = ModuleType('psp_usb');usb.identify = forbidden;usb.PspStorage = object
     usb.UsbTransitionError = type('UsbTransitionError', (RuntimeError,), {})
-    with patch.dict(sys.modules, {'dock': dock, 'lab_eject': eject, 'psp_usb': usb}):
-        for name in ('psp_backup', 'psp_composite_install', 'psp_native_install'):
+    with patch.dict(sys.modules, {'dock': dock, 'tools.labs.lab_eject': eject, 'psp_dock.devices.psp_usb': usb}):
+        for name in ('tools.psp.psp_backup', 'tools.psp.psp_composite_install', 'tools.psp.psp_native_install'):
             sys.modules.pop(name, None)
-        backup = importlib.import_module('psp_backup')
-        installer = importlib.import_module('psp_native_install')
+        backup = importlib.import_module('tools.psp.psp_backup')
+        installer = importlib.import_module('tools.psp.psp_native_install')
     return backup, installer
 
 

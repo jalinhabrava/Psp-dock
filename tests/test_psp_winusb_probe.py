@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-import psp_winusb_probe as w
+import psp_dock.devices.psp_winusb_probe as w
 
 
 class BulkWinUsbPrototypeTests(unittest.TestCase):

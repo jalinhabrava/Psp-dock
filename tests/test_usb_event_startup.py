@@ -5,8 +5,8 @@ import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
-import on_psp_hid_arrival as entry
-import setup_usb_event as setup
+import tools.system.on_psp_hid_arrival as entry
+import psp_dock.core.setup_usb_event as setup
 
 
 class PnpEventTaskTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class PnpEventTaskTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as base:
             root=Path(base)
             xml=setup.task_xml(python_exe=root/"pythonw.exe",
-                               event_script=root/"on_psp_hid_arrival.py",
+                               event_script=root/"tools/system/on_psp_hid_arrival.py",
                                user_sid="S-1-5-21-100-200-300-400")
         self.assertIn("Kernel-PnP/Configuration",xml)
         self.assertIn("EventID=410",xml)

@@ -12,7 +12,7 @@ import shutil
 import subprocess
 import unittest
 
-import native_dock as native
+import psp_dock.devices.native_dock as native
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -2,12 +2,12 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import k1_proof_admin as proof
-import k1_proof_marker as marker
-import psp_backup
-from k1_plugin_enable import K1_ON_LINE
-from k1_plugin_stage import K1_FILE, K1_STAGE_DIR, K1_BIN, CONFIG
-from vsh_plugin_stage import FILES, STAGE_DIR
+import tools.psp.k1_proof_admin as proof
+import tools.labs.k1_proof_marker as marker
+import tools.psp.psp_backup as psp_backup
+from tools.psp.k1_plugin_enable import K1_ON_LINE
+from tools.psp.k1_plugin_stage import K1_FILE, K1_STAGE_DIR, K1_BIN, CONFIG
+from tools.psp.vsh_plugin_stage import FILES, STAGE_DIR
 
 
 VSH_ON = b"vsh, ms0:/SEPLUGINS/PSPDockProbe/pspdockvsh.prx, on\n"

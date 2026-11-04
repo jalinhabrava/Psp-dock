@@ -12,8 +12,8 @@ habría solicitado el producto si un adaptador físico pudiera demostrarla.
 Desde la raíz del proyecto, con Python:
 
 ```powershell
-python experience_simulator.py --choice copy
-python experience_simulator.py --choice skip
+python -m tools.labs.experience_simulator --choice copy
+python -m tools.labs.experience_simulator --choice skip
 python -m unittest discover -s tests -p test_experience_simulator.py -v
 ```
 

@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-import xmb_window as xmb
+import psp_dock.core.xmb_window as xmb
 from dock import launch_xmb_window
 
 TITLE=xmb.TITLE

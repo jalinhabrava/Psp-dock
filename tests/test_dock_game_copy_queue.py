@@ -51,20 +51,20 @@ class DeferredXmbGameCopyTests(unittest.TestCase):
 
     def test_same_volume_and_no_hid_completes_a_single_copy(self):
         self.queue()
-        with patch('bridge_hid.probe',return_value=HID_ABSENT):
+        with patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT):
             self.assertTrue(self.dock.complete_queued_game_copy())
         copied=Path(self.dock.config['library'])/'ISO/GameMissing.iso'
         self.assertEqual(copied.read_bytes(),b'PSP_SYNTHETIC_GAME')
         self.assertEqual(self.dock.copy_queue['status'],'copied')
-        with patch('bridge_hid.probe',side_effect=AssertionError('No duplicate')):
+        with patch('psp_dock.devices.bridge_hid.probe',side_effect=AssertionError('No duplicate')):
             self.assertFalse(self.dock.complete_queued_game_copy())
 
     def test_returning_wrong_volume_or_hid_still_connected_does_not_copy(self):
         self.queue()
         with patch('dock.volume_identity',return_value='another-serial'),\
-             patch('bridge_hid.probe',side_effect=AssertionError('No USB commands')):
+             patch('psp_dock.devices.bridge_hid.probe',side_effect=AssertionError('No USB commands')):
             self.assertFalse(self.dock.complete_queued_game_copy())
-        with patch('bridge_hid.probe',return_value=HID_PRESENT):
+        with patch('psp_dock.devices.bridge_hid.probe',return_value=HID_PRESENT):
             self.assertFalse(self.dock.complete_queued_game_copy())
         self.assertEqual(self.dock.copy_queue['status'],'waiting_for_storage')
         self.assertFalse((self.home/'data/library/ISO/GameMissing.iso').exists())
@@ -77,7 +77,7 @@ class DeferredXmbGameCopyTests(unittest.TestCase):
 
     def test_interruption_is_recorded_without_implicit_retry(self):
         self.queue()
-        with patch('bridge_hid.probe',return_value=HID_ABSENT),\
+        with patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT),\
              patch.object(self.dock,'transfer',
                           side_effect=OSError('Synthetic PC disk full')):
             self.assertFalse(self.dock.complete_queued_game_copy())

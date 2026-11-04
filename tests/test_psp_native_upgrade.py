@@ -12,9 +12,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import psp_backup
-import psp_native_upgrade as upgrade
-from psp_native_package import FILES, REMOTE_FOLDER, digest
+import tools.psp.psp_backup as psp_backup
+import tools.psp.psp_native_upgrade as upgrade
+from tools.psp.psp_native_package import FILES, REMOTE_FOLDER, digest
 from tests.test_psp_native_package import fixture_native_package
 
 

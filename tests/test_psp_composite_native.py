@@ -10,8 +10,8 @@ import struct
 import tempfile
 import unittest
 
-from psp_winusb_transport import WinUSBTransport, WinUSBError, RESPONSE_CELL
-from psp_composite_client import CompositeReader, PROBE_PATH, PROBE_SIZE, PROBE_SHA256
+from psp_dock.devices.psp_winusb_transport import WinUSBTransport, WinUSBError, RESPONSE_CELL
+from psp_dock.devices.psp_composite_client import CompositeReader, PROBE_PATH, PROBE_SIZE, PROBE_SHA256
 from tests.test_psp_composite_client import FakeUSB, INFO, NONCE, PATH, CONTENT
 
 

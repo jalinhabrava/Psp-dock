@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from dock_product_flow import (FlowCallbacks, ProductFlow, ProductFlowError,
+from psp_dock.core.dock_product_flow import (FlowCallbacks, ProductFlow, ProductFlowError,
                                ProductFlowCancelled, plan_session_return)
 
 
@@ -496,7 +496,7 @@ class ProductFlowTests(unittest.TestCase):
     def test_persistence_failure_before_intent_never_calls_adapter(self):
         offer_id = self.offer()
         self.flow.choose("all", offer_id)
-        with patch("dock_product_flow._atomic_json", side_effect=OSError("disk full")):
+        with patch("psp_dock.core.dock_product_flow._atomic_json", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 self.flow.advance()
         self.assertEqual(self.adapter.names(), ["inventory"])
@@ -506,7 +506,7 @@ class ProductFlowTests(unittest.TestCase):
         self.ready()
         self.flow.request_copy(GAME)
         self.flow.observe(storage())
-        import dock_product_flow as module
+        import psp_dock.core.dock_product_flow as module
         real_save = module._atomic_json
         attempts = 0
         def save(path, value):
@@ -515,7 +515,7 @@ class ProductFlowTests(unittest.TestCase):
             if attempts >= 2:
                 raise OSError("disk full after committed copy")
             return real_save(path, value)
-        with patch("dock_product_flow._atomic_json", side_effect=save):
+        with patch("psp_dock.core.dock_product_flow._atomic_json", side_effect=save):
             self.flow.advance()
         self.assertEqual(self.flow.snapshot()["phase"], "attention")
         self.assertTrue(self.flow.snapshot()["recovery_required"])

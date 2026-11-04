@@ -1,7 +1,7 @@
 from dataclasses import asdict
 import unittest
 
-import hid_input_probe as probe
+import tools.labs.hid_input_probe as probe
 
 
 PATH = r"\\?\hid#vid_054c&pid_01cb#test#{4d1e55b2-f16f-11cf-88cb-001111000030}"

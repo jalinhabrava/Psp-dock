@@ -8,10 +8,10 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from psp_bulk_protocol import Frame, Op
-from psp_winusb_transport import (WinUSBTransport, WinUSBError, FIRMWARE_REVISION,
+from psp_dock.devices.psp_bulk_protocol import Frame, Op
+from psp_dock.devices.psp_winusb_transport import (WinUSBTransport, WinUSBError, FIRMWARE_REVISION,
     RESPONSE_CELL, parse_firmware_status, validate_device, USBInterface, SetupPacket, PipeInfo)
-from psp_composite_client import (CompositeReader, PROBE_PATH, PROBE_SHA256,
+from psp_dock.devices.psp_composite_client import (CompositeReader, PROBE_PATH, PROBE_SHA256,
     PROBE_SIZE, validate_remote_path)
 
 NONCE = bytes(range(1, 17))

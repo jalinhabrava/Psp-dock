@@ -6,8 +6,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 import dock as app
-from dock_lifecycle import UiLifecycle
-from dock_product_session import DockProductSession
+from psp_dock.core.dock_lifecycle import UiLifecycle
+from psp_dock.core.dock_product_session import DockProductSession
 from tests.test_dock_product_session import FakeTransport
 
 
@@ -55,7 +55,7 @@ class NativeWindowCloseTests(unittest.TestCase):
     def tick(self):
         self.dock.stop.clear()
         with patch.object(self.dock.stop,'wait',side_effect=lambda seconds:self.dock.stop.set()), \
-             patch('ppsspp_windows_flow.return_to_xmb',return_value=False):
+             patch('psp_dock.emulation.ppsspp_windows_flow.return_to_xmb',return_value=False):
             self.dock.watch()
         self.dock.stop.clear()  # Preserve the live-app fixture between individual worker turns.
 
@@ -416,8 +416,8 @@ class NativeWindowCloseTests(unittest.TestCase):
         self.dock.snapshot['selected_device'] = str(self.psp)
         cache = Mock()
         cache.cached.return_value = None
-        with patch('psp_xmb_media.XMBAssetCache', return_value=cache), \
-             patch('psp_xmb_media.media_key', return_value='fixture-key'), \
+        with patch('psp_dock.media.psp_xmb_media.XMBAssetCache', return_value=cache), \
+             patch('psp_dock.media.psp_xmb_media.media_key', return_value='fixture-key'), \
              patch.object(self.dock, 'running', return_value=False), \
              patch('dock.volume_identity', side_effect=AssertionError('no media identity read during close')), \
              patch.object(Path, 'is_dir', side_effect=AssertionError('no stale PSP path lookup')):
@@ -433,7 +433,7 @@ class NativeWindowCloseTests(unittest.TestCase):
                                                 Path(self.dock.config['library'])/'Game.iso')
 
     def test_native_navigation_uses_each_firmwares_capabilities_and_stops_during_close(self):
-        from native_dock import FIRMWARE_BUILDS, FIRMWARE_CAPABILITIES
+        from psp_dock.devices.native_dock import FIRMWARE_BUILDS, FIRMWARE_CAPABILITIES
         self.product.flow.enabled = False
         for firmware, build in FIRMWARE_BUILDS.items():
             self.dock.snapshot['controller_status'] = {
@@ -441,7 +441,7 @@ class NativeWindowCloseTests(unittest.TestCase):
                 'protocol_version':3, 'firmware_revision':firmware,
                 'build_id':build, 'capabilities':FIRMWARE_CAPABILITIES[firmware],
                 'host_confirmed':True, 'synthetic_storage':False}
-            with patch('psp_launcher_input.PSPWinMMReader') as reader:
+            with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
                 reader.return_value.read.return_value = {'connected':True}
                 self.assertTrue(self.dock.psp_launcher_input()['connected'])
                 reader.assert_called_once_with(expected_product=0x01cd)
@@ -452,7 +452,7 @@ class NativeWindowCloseTests(unittest.TestCase):
                 reader.assert_not_called()
         self.transport.shutdown_pending = True
         self.dock.snapshot['controller_status']['capabilities'] = FIRMWARE_CAPABILITIES[firmware]
-        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
             self.assertFalse(self.dock.psp_launcher_input()['connected'])
             reader.assert_not_called()
 

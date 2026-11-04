@@ -6,9 +6,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import dock as app
-from dock_product_session import DockProductSession
-from retro_runtime import private_save_paths
-from psp_retro import SYSTEMS
+from psp_dock.core.dock_product_session import DockProductSession
+from psp_dock.emulation.retro_runtime import private_save_paths
+from psp_dock.emulation.psp_retro import SYSTEMS
 
 
 class FakeTransport:
@@ -238,7 +238,7 @@ class DockProductSessionTests(unittest.TestCase):
     def test_choosing_uses_confirmed_transport_even_if_ui_snapshot_is_from_inventory(self):
         self.offer()
         self.dock.snapshot['controller_status']={'connected':False,'mode':'await_native'}
-        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value={'connected':True,'source':'psp_winmm','button_mask':1,'accept':True}
             frame=self.dock.psp_launcher_input()
         self.assertTrue(frame['connected'])
@@ -649,7 +649,7 @@ class DockProductSessionTests(unittest.TestCase):
     def test_active_native_session_refuses_relocation_before_migration(self):
         self.ready('none')
         before=dict(self.dock.config)
-        with patch('storage_layout.migrate_pc_data') as migrate:
+        with patch('psp_dock.core.storage_layout.migrate_pc_data') as migrate:
             with self.assertRaisesRegex(ValueError,'Termina la sesión del Dock'):
                 self.dock.relocate_storage(str(self.home/'new-library'))
         migrate.assert_not_called()
@@ -658,7 +658,7 @@ class DockProductSessionTests(unittest.TestCase):
 
     def test_launcher_input_requires_firmware_and_handshake_independent_of_sony_usb_revision(self):
         self.ready('none')
-        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
             original = dict(self.dock.snapshot['controller_status'])
             for firmware, build in ((0x0303, 0x03030001), (0x0304, 0x03040001)):
@@ -832,8 +832,8 @@ class DockProductSessionTests(unittest.TestCase):
         with self.mock_windows(), \
              patch.object(self.dock,'prepared_runtime_path',return_value=exe), \
              patch.object(self.dock,'apply_game_graphics'), \
-             patch('ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('native composite is not legacy HID-only')), \
-             patch('ppsspp_windows_flow.focus_async'), \
+             patch('psp_dock.emulation.ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('native composite is not legacy HID-only')), \
+             patch('psp_dock.emulation.ppsspp_windows_flow.focus_async'), \
              patch('dock.subprocess.Popen',return_value=process) as spawn:
             self.dock.launch(game['id'])
         self.assertEqual(spawn.call_count,1)
@@ -841,7 +841,7 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertTrue(self.dock.session['pending_return'])
         self.assertNotIn('prepared_volume',self.dock.session)
         process.poll.return_value = 0
-        with patch('ppsspp_windows_flow.return_to_xmb',return_value=False):
+        with patch('psp_dock.emulation.ppsspp_windows_flow.return_to_xmb',return_value=False):
             self.assertFalse(self.dock.running())
         self.assertEqual(self.product.snapshot()['phase'],'ready')
         self.assertEqual(self.transport.roles,[('controller','initial')])
@@ -861,8 +861,8 @@ class DockProductSessionTests(unittest.TestCase):
         process.poll.return_value = None
         with self.mock_windows(), \
              patch('dock.prepare_joypad_profile',wraps=app.prepare_joypad_profile) as profile, \
-             patch('ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('no legacy transport assertion')), \
-             patch('ppsspp_windows_flow.focus_async'), \
+             patch('psp_dock.emulation.ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('no legacy transport assertion')), \
+             patch('psp_dock.emulation.ppsspp_windows_flow.focus_async'), \
              patch('dock.subprocess.Popen',return_value=process) as spawn:
             self.dock.launch_retro(rom['id'])
         self.assertEqual(spawn.call_count,1)

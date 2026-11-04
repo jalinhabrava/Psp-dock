@@ -17,17 +17,17 @@ import uuid
 import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from dock_events import EventJournal
-from dock_lifecycle import UiLifecycle
-from catalog_paths import ReadOnlyTree
-from dock_preflight import assess_storage
-from psp_artwork import read_icon, valid_png
-from psp_retro import SYSTEMS, emulator_inventory, emulator_profile, retroarch_core
-from retro_installer import (RetroInstallError, install_plan as pc_retro_install_plan,
+from psp_dock.core.dock_events import EventJournal
+from psp_dock.core.dock_lifecycle import UiLifecycle
+from psp_dock.core.catalog_paths import ReadOnlyTree
+from psp_dock.core.dock_preflight import assess_storage
+from psp_dock.media.psp_artwork import read_icon, valid_png
+from psp_dock.emulation.psp_retro import SYSTEMS, emulator_inventory, emulator_profile, retroarch_core
+from psp_dock.emulation.retro_installer import (RetroInstallError, install_plan as pc_retro_install_plan,
                              install_required as install_pc_retro, managed_retroarch)
-from retro_runtime import (LAYOUTS, prepare_joypad_profile,
+from psp_dock.emulation.retro_runtime import (LAYOUTS, prepare_joypad_profile,
                            private_save_paths, retroarch_arguments)
-from retro_saves import (plan_retro_saves, copy_sram_verified, _baseline_key,
+from psp_dock.emulation.retro_saves import (plan_retro_saves, copy_sram_verified, _baseline_key,
                          _sha as retro_sha, RAW_PROFILES)
 
 ROOT = Path(__file__).resolve().parent
@@ -327,7 +327,7 @@ def require_psp_identity_before_writing(root):
     if drive_type == 2:
         if root != anchor:
             raise ValueError('La PSP extraíble debe identificarse desde la raíz del volumen.')
-        from psp_usb import identify, UsbTransitionError
+        from psp_dock.devices.psp_usb import identify, UsbTransitionError
         try:
             device, _ = identify(str(anchor))
         except (OSError, UsbTransitionError) as exc:
@@ -398,7 +398,7 @@ def prepare_psp_controls(memstick, backups):
     with an atomic PC backup, or validate an already-correct one. On first
     launch, seed from the independently verified PSP Dock laboratory profile.
     """
-    from ppsspp_psp_button_map import MappingError, apply_profile, remap_controls
+    from psp_dock.emulation.ppsspp_psp_button_map import MappingError, apply_profile, remap_controls
 
     memstick, backups = Path(memstick), Path(backups)
     profile = inside(memstick, 'PSP/SYSTEM/controls.ini')
@@ -449,7 +449,7 @@ class Dock:
         self.config.setdefault('retro_button_layout','nintendo')
         # Opt-in, per-DISC_ID PC texture capture/generation. The worker never
         # accesses PSP USB, game saves or an existing community texture pack.
-        from psp_hd_textures import TextureWorker
+        from psp_dock.emulation.psp_hd_textures import TextureWorker
         self.hd_jobs_path=self.data/'hd-generator.json'
         self.hd_jobs=read_json(self.hd_jobs_path,{'schema':1,'games':{}})
         if (not isinstance(self.hd_jobs,dict) or self.hd_jobs.get('schema')!=1
@@ -459,7 +459,7 @@ class Dock:
         self.hd_scan_lock=threading.Lock()
         self.hd_scan_state={'active':False,'status':'idle','disc_id':None,'error':''}
         self.process = None
-        from xmb_sounds import UiSoundPlayer
+        from psp_dock.media.xmb_sounds import UiSoundPlayer
         self.ui_sound_player = UiSoundPlayer(self.data / 'xmb-ui-sounds')
         self._background_cache = None
         self._background_cache_lock = threading.Lock()
@@ -541,7 +541,7 @@ class Dock:
         # PSP/GAME folders and their assets for EVERY thumbnail can monopolize
         # the USB worker and the launcher for minutes.
         self.cached_game_results = None
-        from device_memory import DeviceMemory
+        from psp_dock.core.device_memory import DeviceMemory
         self.device_memory = DeviceMemory(self.data, atomic_json)
         self.last_storage_scan_at = 0.0
         self.last_storage_scan_identity = ''
@@ -608,12 +608,12 @@ class Dock:
                          'error':None,'recovery_required':self.recovery_required,'scanning':True,
                          'library_source':'cached_manifest' if self.last_games else 'empty'}
         self.snapshot['games']=provisional
-        from dock_product_session import DockProductSession
+        from psp_dock.core.dock_product_session import DockProductSession
         self.product_session = DockProductSession(self)
         self.product_flow = self.product_session.flow
         self.native_transport = self.product_session.transport
         self._native_observation = None
-        from dock_window_close import NativeWindowClose
+        from psp_dock.core.dock_window_close import NativeWindowClose
         self.window_close = NativeWindowClose(
             self, persist=lambda record:atomic_json(self.data/'window-close-request.json',record))
         self.snapshot['product_flow'] = self.product_session.snapshot()
@@ -1111,7 +1111,7 @@ class Dock:
             # instead of leaving the player on another desktop window.
             # Never run Alt+Tab or focus an arbitrary process by title.
             if not self.stop.is_set():
-                from ppsspp_windows_flow import return_to_xmb
+                from psp_dock.emulation.ppsspp_windows_flow import return_to_xmb
                 restored = return_to_xmb()
                 self.events.record('xmb_focus_return', evidence='pc_observed',
                                    result='focused' if restored else 'not_found')
@@ -1505,7 +1505,7 @@ class Dock:
         root=self.root()
         if root is None or volume_identity(root)!=queue.get('volume_serial'):
             return False
-        from bridge_hid import probe
+        from psp_dock.devices.bridge_hid import probe
         report=probe()
         if not report.get('supported') or report.get('errors') or report.get('devices'):
             return False
@@ -1565,7 +1565,7 @@ class Dock:
             if (exe.parent/'installed.txt').read_text(encoding='utf-8').strip() != spec['memstick']:
                 return None
             controls = inside(Path(self.config['memstick']), 'PSP/SYSTEM/controls.ini')
-            from ppsspp_psp_button_map import remap_controls
+            from psp_dock.emulation.ppsspp_psp_button_map import remap_controls
             if not controls.is_file() or remap_controls(controls.read_bytes())[1]:
                 return None
             if verify_digest and digest(exe) != record.get('sha256'):
@@ -1576,7 +1576,7 @@ class Dock:
 
     def graphics_view(self, game_id=None, *, include_gpu=False):
         """Propose PC display resolution and per-game settings; read-only."""
-        from ppsspp_graphics import (
+        from psp_dock.emulation.ppsspp_graphics import (
             GraphicsError, primary_monitor, graphics_hardware,
             preferences, per_game_choice, recommend,
         )
@@ -1599,7 +1599,7 @@ class Dock:
             # Only read PARAM.SFO from the VERIFIED LOCAL PC game. A
             # graphics preview must never trigger an unapproved large
             # USB read or a PSP FAT write, especially when HID is active.
-            from psp_game_metadata import read_metadata
+            from psp_dock.media.psp_game_metadata import read_metadata
             # Do NOT trigger a second full PSP inventory when another
             # thread is already scanning USBSTOR on first connection.
             # The first preview can show monitor/quality immediately and
@@ -1626,7 +1626,7 @@ class Dock:
                         (texture_folder/'textures.ini').is_file() or
                         (texture_folder/'textures.zip').is_file()
                     )
-                    from psp_texture_packs import offers_for_disc, sources_for_disc
+                    from psp_dock.emulation.psp_texture_packs import offers_for_disc, sources_for_disc
                     result['hd_texture_pack_offers']=offers_for_disc(game_disc)
                     result['hd_texture_pack_sources']=sources_for_disc(game_disc)
                     result['hd_pack_community_url']='https://forums.ppsspp.org/forumdisplay.php?fid=36'
@@ -1639,7 +1639,7 @@ class Dock:
 
     def set_graphics_view(self, changes):
         """Persist selected quality on the PC only. Never touch PSP FAT."""
-        from ppsspp_graphics import set_preference, clear_preference
+        from psp_dock.emulation.ppsspp_graphics import set_preference, clear_preference
         if self.demo:
             raise ValueError('La demo no modifica perfiles de juegos reales.')
         if self.running() or self.session.get('exit_requested'):
@@ -1665,7 +1665,7 @@ class Dock:
 
     def apply_game_graphics(self, game_id):
         """Apply PC-only PPSSPP ini profile before the selected game starts."""
-        from ppsspp_graphics import apply_private_ppsspp_ini
+        from psp_dock.emulation.ppsspp_graphics import apply_private_ppsspp_ini
         preview=self.graphics_view(game_id)
         generator=preview.get('hd_generator',{})
         capture=(generator.get('enabled') is True and
@@ -1731,14 +1731,14 @@ class Dock:
         # Map the PSP's own HOME (DirectInput button 9) to the PPSSPP
         # Pause menu, which supports leaving the game with controller
         # actions. No Windows-wide ESC injection is needed.
-        from ppsspp_windows_flow import add_home_pause_mapping
+        from psp_dock.emulation.ppsspp_windows_flow import add_home_pause_mapping
         add_home_pause_mapping(
             inside(Path(spec['memstick']), 'PSP/SYSTEM/controls.ini'),
             Path(self.config['storage_root']) / 'profile-backups',
         )
         # Auto-match the primary Windows monitor while USBSTOR is active.
         # This writes the private PC PPSSPP ini only, not PSP or GPU drivers.
-        from ppsspp_graphics import apply_private_ppsspp_ini
+        from psp_dock.emulation.ppsspp_graphics import apply_private_ppsspp_ini
         apply_private_ppsspp_ini(
             inside(Path(spec['memstick']),'PSP/SYSTEM/ppsspp.ini'),
             plan=self.graphics_view()['plan'],
@@ -1802,11 +1802,11 @@ class Dock:
         # kernel USBSTOR<->HID role bridge remains unavailable. A PDK1
         # device proves a gamepad, not firmware FAT ownership or same USB.
         if not native:
-            from psp_dock_identity import probe_dock
+            from psp_dock.devices.psp_dock_identity import probe_dock
             identity = probe_dock()
             if identity is None or identity.get('can_play') is not True:
                 raise ValueError('Se requiere el mando Dock estable; el diagnóstico no autoriza juegos.')
-            from ppsspp_hid_session import validate_hid_only
+            from psp_dock.emulation.ppsspp_hid_session import validate_hid_only
             first_hid = validate_hid_only()
             if first_hid != {'path':identity['path'],'session':identity['session']}:
                 raise ValueError('La identidad HID cambió antes de preparar PPSSPP.')
@@ -1815,7 +1815,7 @@ class Dock:
             raise ValueError('Prepara PPSSPP desde Windows MIENTRAS USBSTOR está activo antes de iniciar el mando HID.')
         # Existing prewarmed sessions are upgraded as needed. We only write
         # the private PC profile; PSP firmware, USB and SAVEDATA are untouched.
-        from ppsspp_windows_flow import add_home_pause_mapping, focus_async
+        from psp_dock.emulation.ppsspp_windows_flow import add_home_pause_mapping, focus_async
         add_home_pause_mapping(
             inside(Path(self.config['memstick']), 'PSP/SYSTEM/controls.ini'),
             Path(self.config['storage_root']) / 'profile-backups',
@@ -1850,7 +1850,7 @@ class Dock:
             generator=self.graphics_view(game_id).get('hd_generator',{})
             if generator.get('enabled') and generator.get('kind')=='generated':
                 try:
-                    from psp_hd_textures import TextureSettings
+                    from psp_dock.emulation.psp_hd_textures import TextureSettings
                     self.hd_worker.memstick=Path(self.config['memstick'])
                     self.hd_worker.start(
                         generator['disc_id'],
@@ -1919,9 +1919,9 @@ class Dock:
             raise ValueError('Configura RetroArch con el núcleo ' + SYSTEMS[rom['system']][1] + ' instalado en Windows.')
         if os.name != 'nt':
             raise ValueError('El Dock inicia juegos retro únicamente en Windows.')
-        from ppsspp_windows_flow import focus_async
+        from psp_dock.emulation.ppsspp_windows_flow import focus_async
         if not native:
-            from ppsspp_hid_session import validate_hid_only
+            from psp_dock.emulation.ppsspp_hid_session import validate_hid_only
             before = validate_hid_only()
         exe, core = selected
         local = inside(Path(self.config['library']),rom['local_relative'])
@@ -2020,7 +2020,7 @@ class Dock:
             return None
         if volume_identity(root) != self.session.get('prepared_volume'):
             raise ValueError('Otra Memory Stick: no se devolverán las partidas.')
-        from bridge_hid import probe as hid_probe
+        from psp_dock.devices.bridge_hid import probe as hid_probe
         report=hid_probe()
         if (not report.get('supported') or report.get('errors')
                 or report.get('devices')):
@@ -2120,7 +2120,7 @@ class Dock:
 
     def relocate_storage(self, target):
         """Copy PC games, saves, textures and media into an empty folder."""
-        from storage_layout import migrate_pc_data
+        from psp_dock.core.storage_layout import migrate_pc_data
         product = self.product_flow.snapshot()
         if product['enabled'] and product['phase'] not in ('waiting_psp','safe_to_disconnect'):
             raise ValueError('Termina la sesión del Dock antes de cambiar la carpeta de datos.')
@@ -2165,8 +2165,8 @@ class Dock:
 
     def install_curated_texture_pack(self, game_id, offer_id):
         """Explicit user download for the exact local verified game revision."""
-        from psp_texture_packs import CURATED_OFFERS, download_and_install
-        from psp_game_metadata import read_metadata
+        from psp_dock.emulation.psp_texture_packs import CURATED_OFFERS, download_and_install
+        from psp_dock.media.psp_game_metadata import read_metadata
         if self.demo or self.running() or self.session.get('pending_return'):
             raise ValueError('No se instalan packs mientras juegas o devuelves partidas.')
         if self.transfer_status['active'] or self.session.get('exit_requested'):
@@ -2221,15 +2221,15 @@ class Dock:
                     if g['id']==game_id and g['availability']=='ready'),None)
         if entry is None:
             raise ValueError('Primero transfiere y verifica el juego en el PC.')
-        from psp_game_metadata import read_metadata
-        from psp_hd_textures import verified_disc_id
+        from psp_dock.media.psp_game_metadata import read_metadata
+        from psp_dock.emulation.psp_hd_textures import verified_disc_id
         path=inside(Path(self.config['library']),entry['local_relative'])
         if not path.is_file():
             raise ValueError('La copia local del juego ya no está disponible.')
         return path, verified_disc_id(read_metadata(path).get('DISC_ID'))
 
     def hd_generator_status(self, disc_id):
-        from psp_hd_textures import installed_status
+        from psp_dock.emulation.psp_hd_textures import installed_status
         state=installed_status(Path(self.config['memstick']),disc_id)
         config=self.hd_jobs['games'].get(disc_id,{})
         if not isinstance(config,dict):
@@ -2283,7 +2283,7 @@ class Dock:
 
     def configure_hd_generator(self, game_id, *, action, scale=2, engine='lanczos'):
         """A deliberate PC-only action; no automatic community pack overwrite."""
-        from psp_hd_textures import (TextureSettings, prepare_pack,
+        from psp_dock.emulation.psp_hd_textures import (TextureSettings, prepare_pack,
                                      installed_status, TextureGenerationError)
         if self.demo or self.running() or self.session.get('exit_requested'):
             raise ValueError('Configura el generador antes de iniciar PPSSPP.')
@@ -2327,7 +2327,7 @@ class Dock:
 
     def start_hd_iso_scan(self, game_id):
         """Scan a VERIFIED PC ISO/CSO asynchronously; no USB/PSP/game writes."""
-        from psp_hd_textures import discover_iso_assets
+        from psp_dock.emulation.psp_hd_textures import discover_iso_assets
         if self.demo or self.running():
             raise ValueError('La búsqueda offline se ejecuta con PPSSPP cerrado.')
         path,disc_id=self.verified_local_texture_game(game_id)
@@ -2353,7 +2353,7 @@ class Dock:
                 else:
                     report=discover_iso_assets(path,cache,disc_id=disc_id)
                 if disc_id=='ULJM05558':
-                    from psp_dariusburst_re import (
+                    from psp_dock.emulation.psp_dariusburst_re import (
                         inventory_dariusburst,safe_report_write,
                     )
                     forensic=inventory_dariusburst(path)
@@ -2396,7 +2396,7 @@ class Dock:
 
     def start_darius_capture_snapshot(self,game_id):
         """Compare actual PPSSPP dumped PNG hashes after each finished game."""
-        from psp_dariusburst_re import (
+        from psp_dock.emulation.psp_dariusburst_re import (
             capture_inventory,compare_capture_sessions,GAME_DISC_ID,
         )
         if self.demo or self.running():
@@ -2416,7 +2416,7 @@ class Dock:
 
         def work():
             try:
-                from psp_dariusburst_re import safe_pc_path
+                from psp_dock.emulation.psp_dariusburst_re import safe_pc_path
                 safe_pc_path(cache).mkdir(parents=True,exist_ok=True)
                 current=capture_inventory(dumps)
                 if current['count']==0:
@@ -2476,7 +2476,7 @@ class Dock:
             return {**unavailable, 'mode': 'unsupported',
                     'reason': 'El mando PDK1 se comprueba únicamente en Windows.'}
         try:
-            from psp_dock_identity import probe_dock
+            from psp_dock.devices.psp_dock_identity import probe_dock
             identity = probe_dock()
             if identity is None:
                 return {**unavailable, 'mode': 'await_hid',
@@ -2485,7 +2485,7 @@ class Dock:
                 return {**identity, 'connected': True,
                         'reason': 'USB Storage + HID conectado: disco de prueba de 512 KiB. '
                                   'Puedes navegar; la Memory Stick real no está disponible.'}
-            from ppsspp_hid_session import validate_hid_only
+            from psp_dock.emulation.ppsspp_hid_session import validate_hid_only
             checked = validate_hid_only()
             if checked != {'path':identity['path'],'session':identity['session']}:
                 raise ValueError('La sesión HID cambió durante la comprobación.')
@@ -2527,7 +2527,7 @@ class Dock:
         The watcher must first have verified one PDK1 HID session. A stale
         snapshot never creates a USB role bridge or grants FAT ownership.
         """
-        from psp_launcher_input import PSPWinMMReader, idle
+        from psp_dock.devices.psp_launcher_input import PSPWinMMReader, idle
         if self.demo or self.storage_polling_paused or self.native_shutdown_pending():
             return idle("El mando PSP HID no está disponible en esta fase.")
         seen = self.snapshot.get('controller_status', {})
@@ -2537,7 +2537,7 @@ class Dock:
             seen = self.native_transport.controller_status()
         if not isinstance(seen, dict) or seen.get('connected') is not True:
             return idle("El Dock todavía no ha verificado una PSP HID PDK1.")
-        from native_dock import (PID as NATIVE_PID, VERSION as NATIVE_VERSION,
+        from psp_dock.devices.native_dock import (PID as NATIVE_PID, VERSION as NATIVE_VERSION,
                                  FIRMWARE_CAPABILITIES, FIRMWARE_BUILDS)
         profiles = {'hid_manual': (0x01CB, 0x0104),
                     'msc_diagnostic': (0x01CC, 0x0207)}
@@ -2748,7 +2748,7 @@ class Dock:
 
     def play_ui_sound(self, name, at_ms):
         import math
-        from xmb_sounds import SOUNDS
+        from psp_dock.media.xmb_sounds import SOUNDS
         if (not isinstance(name, str) or name not in SOUNDS or type(at_ms) not in (int, float)
                 or not math.isfinite(at_ms)):
             raise ValueError('Solicitud de sonido inválida.')
@@ -2767,7 +2767,7 @@ class Dock:
 
     def xmb_background_hd(self, game_id):
         """Enhance ONLY the original already cached on PC. Never reads PSP."""
-        from psp_xmb_media import XMBAssetCache, media_key
+        from psp_dock.media.psp_xmb_media import XMBAssetCache, media_key
         if not isinstance(game_id, str) or not re.fullmatch('[0-9a-f]{24}', game_id):
             raise ValueError('Juego del XMB desconocido.')
         game = next((g for g in self.last_games if g.get('id') == game_id), None)
@@ -2783,7 +2783,7 @@ class Dock:
                 return None
             if self._background_cache is None:
                 try:
-                    from xmb_backgrounds import BackgroundCache
+                    from psp_dock.media.xmb_backgrounds import BackgroundCache
                 except ImportError:
                     # Artwork enhancement is optional. A missing Pillow
                     # installation must leave the original preview usable.
@@ -2797,7 +2797,7 @@ class Dock:
         No PSP FAT reads once storage disappears. The cache key includes
         both Sony volume serial and game's verified catalog signature.
         """
-        from psp_xmb_media import XMBAssetCache, media_key, RESOURCE_NAMES
+        from psp_dock.media.psp_xmb_media import XMBAssetCache, media_key, RESOURCE_NAMES
         if kind not in RESOURCE_NAMES:
             raise ValueError('Recurso XMB desconocido.')
         if not isinstance(game_id,str) or not re.fullmatch('[0-9a-f]{24}',game_id):
@@ -3081,7 +3081,7 @@ def default_data_path(localappdata, *, demo=False):
     local = Path(localappdata)
     if demo:
         return local / 'PSP-Dock/demo'
-    from setup_startup import candidate_live_directories
+    from psp_dock.core.setup_startup import candidate_live_directories
     choices = candidate_live_directories(local)
     if len(choices) == 1:
         return choices[0]
@@ -3143,7 +3143,7 @@ def launch_xmb_window(url, *, app_window=False, reuse_existing=True, include_han
         raise ValueError('La ventana XMB solo admite la URL local del Dock.')
     if not app_window:
         return webbrowser.open(url)
-    from xmb_window import (enumerate_xmb_windows, maximize_existing_xmb,
+    from psp_dock.core.xmb_window import (enumerate_xmb_windows, maximize_existing_xmb,
                             maximize_when_ready)
     # Preserve current selection/menu state in an already opened XMB,
     # instead of spawning another Chrome app window every time the user
@@ -3332,7 +3332,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 if self.path.startswith('/api/texture-search/'):
                     # Explicit XMB action; only public catalog metadata is
                     # fetched. Remote JSON can NEVER install a new ZIP.
-                    from psp_texture_discovery import sources_online
+                    from psp_dock.emulation.psp_texture_discovery import sources_online
                     disc_id=self.path[len('/api/texture-search/'):]
                     return self.reply(sources_online(disc_id))
                 if self.path.startswith('/api/media/'):
@@ -3433,7 +3433,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     # observe the cancel flag while it owns that lock.
                     return self.reply(dock.cancel_transfer())
                 if self.path == '/api/choose-storage-root':
-                    from storage_layout import choose_pc_storage_parent
+                    from psp_dock.core.storage_layout import choose_pc_storage_parent
                     chosen=choose_pc_storage_parent()
                     return self.reply({'path':chosen,'cancelled':chosen is None})
                 if self.path == '/api/session-forget-automatic':
@@ -3603,7 +3603,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
             native_visible = None
             if os.name == 'nt' and app_window:
                 try:
-                    from xmb_window import enumerate_xmb_windows, CHROME_CLASS, TITLE
+                    from psp_dock.core.xmb_window import enumerate_xmb_windows, CHROME_CLASS, TITLE
                     native_handles = frozenset(
                         row['handle'] for row in enumerate_xmb_windows()
                         if row.get('visible') is True and row.get('title') == TITLE
@@ -3644,7 +3644,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 return
             if ui.reason == 'button':
                 try:
-                    from xmb_window import close_existing_xmb
+                    from psp_dock.core.xmb_window import close_existing_xmb
                     close_existing_xmb(include_handles=native_handles)
                 except OSError:
                     pass
@@ -3657,7 +3657,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
         def finish():
             time.sleep(2.0)
             try:
-                from xmb_window import close_existing_xmb
+                from psp_dock.core.xmb_window import close_existing_xmb
                 close_existing_xmb(include_handles=native_handles if ui else None)
             finally:
                 server.shutdown()
@@ -3685,7 +3685,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
         if open_browser:
             if ui is not None and app_window:
                 try:
-                    from xmb_window import enumerate_xmb_windows
+                    from psp_dock.core.xmb_window import enumerate_xmb_windows
                     previous_window_handles = {row['handle'] for row in enumerate_xmb_windows()}
                 except OSError:
                     pass

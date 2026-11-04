@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from tests.test_psp_msc_package import fixture_package
-from psp_msc_package import REMOTE_FOLDER, FILES, digest, verify_package
+from tools.psp.psp_msc_package import REMOTE_FOLDER, FILES, digest, verify_package
 
 
 def load_without_hardware():
@@ -26,11 +26,11 @@ def load_without_hardware():
     usb.UsbTransitionError = type('UsbTransitionError', (RuntimeError,), {})
     # Restore sys.modules on exit, including any previously loaded production
     # modules. Other tests must not retain these hardware stubs accidentally.
-    with patch.dict(sys.modules, {'dock': dock, 'lab_eject': eject, 'psp_usb': usb}):
-        for name in ('psp_backup', 'psp_composite_install', 'psp_msc_install'):
+    with patch.dict(sys.modules, {'dock': dock, 'tools.labs.lab_eject': eject, 'psp_dock.devices.psp_usb': usb}):
+        for name in ('tools.psp.psp_backup', 'tools.psp.psp_composite_install', 'tools.psp.psp_msc_install'):
             sys.modules.pop(name, None)
-        backup = importlib.import_module('psp_backup')
-        installer = importlib.import_module('psp_msc_install')
+        backup = importlib.import_module('tools.psp.psp_backup')
+        installer = importlib.import_module('tools.psp.psp_msc_install')
     return backup, installer
 
 

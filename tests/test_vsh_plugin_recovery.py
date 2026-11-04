@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import vsh_plugin_recovery as rollback
-from vsh_plugin_stage import CONFIG, ENTRY
+import tools.psp.vsh_plugin_recovery as rollback
+from tools.psp.vsh_plugin_stage import CONFIG, ENTRY
 
 
 class RecoveryTests(unittest.TestCase):

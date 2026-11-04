@@ -15,7 +15,7 @@ class KernelRoleStubTests(unittest.TestCase):
             hashlib.sha256(binary).hexdigest(),
             "759ff121788b4fbbffd98a2d903f20ecb2163bdcfb3269f4d1bf1b654cd62172"
         )
-        import vsh_plugin_stage
+        import tools.psp.vsh_plugin_stage as vsh_plugin_stage
         self.assertNotIn("pspdockkernelstub.prx", vsh_plugin_stage.FILES)
 
     def test_kernel_stub_exposes_only_inert_role_abi(self):

@@ -2,11 +2,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import psp_backup
-import k1_module_check_install as check
-from k1_plugin_enable import K1_ON_LINE
-from k1_plugin_stage import K1_FILE, K1_STAGE_DIR, K1_BIN, CONFIG
-from vsh_plugin_stage import FILES, STAGE_DIR
+import tools.psp.psp_backup as psp_backup
+import tools.psp.k1_module_check_install as check
+from tools.psp.k1_plugin_enable import K1_ON_LINE
+from tools.psp.k1_plugin_stage import K1_FILE, K1_STAGE_DIR, K1_BIN, CONFIG
+from tools.psp.vsh_plugin_stage import FILES, STAGE_DIR
 
 
 SERIAL = "2958455453"

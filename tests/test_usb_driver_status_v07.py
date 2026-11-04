@@ -5,8 +5,8 @@ import re
 import tempfile
 import unittest
 
-from install_usb_import_gate import install_package
-import install_usb_import_gate_v07 as v07
+from tools.psp.install_usb_import_gate import install_package
+import tools.psp.install_usb_import_gate_v07 as v07
 
 
 class DriverStatusV07Tests(unittest.TestCase):

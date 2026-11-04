@@ -7,8 +7,8 @@ import time
 import unittest
 
 from dock import Dock
-from psp_artwork import SECTOR
-from psp_dariusburst_re import (
+from psp_dock.media.psp_artwork import SECTOR
+from psp_dock.emulation.psp_dariusburst_re import (
     DariusburstREError, DzipHeader, GAME_DISC_ID, inventory_dariusburst,
     safe_report_write, tx2_size_hypotheses, capture_inventory,
     compare_capture_sessions, correlate_decoded_candidates,

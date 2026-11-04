@@ -14,7 +14,7 @@ import zlib
 
 from PIL import Image, ImageChops, PngImagePlugin
 
-import xmb_backgrounds as backgrounds
+import psp_dock.media.xmb_backgrounds as backgrounds
 
 
 def png(size=(16, 8), color=(35, 80, 125), mode="RGB", **options):
@@ -406,7 +406,7 @@ class BackgroundCacheTests(unittest.TestCase):
 
     def test_render_encode_and_atomic_write_failures_fall_back_and_worker_survives(self):
         source = png()
-        for target in ("xmb_backgrounds._render_background", "PIL.Image.Image.save", "xmb_backgrounds.os.replace"):
+        for target in ("psp_dock.media.xmb_backgrounds._render_background", "PIL.Image.Image.save", "psp_dock.media.xmb_backgrounds.os.replace"):
             with self.subTest(target=target):
                 cache = self.cache(target.replace(".", "-"))
                 with patch(target, side_effect=OSError("injected failure")):
@@ -429,7 +429,7 @@ class BackgroundCacheTests(unittest.TestCase):
     def test_failed_polling_is_suppressed_and_retry_is_possible_after_cooldown(self):
         cache = self.cache()
         source = png()
-        with patch("xmb_backgrounds.time.monotonic", return_value=100.0):
+        with patch("psp_dock.media.xmb_backgrounds.time.monotonic", return_value=100.0):
             with patch.object(cache, "_build", side_effect=OSError("temporary failure")) as build:
                 cache.request(source)
                 self.assertTrue(cache.wait(timeout=5))
@@ -437,7 +437,7 @@ class BackgroundCacheTests(unittest.TestCase):
                     self.assertIsNone(cache.request(source))
                 self.assertTrue(cache.wait(timeout=0))
                 build.assert_called_once()
-        with patch("xmb_backgrounds.time.monotonic", return_value=131.0):
+        with patch("psp_dock.media.xmb_backgrounds.time.monotonic", return_value=131.0):
             self.ready(cache, source)
 
     def test_ready_memory_and_failure_history_are_bounded(self):
@@ -527,7 +527,7 @@ class BackgroundCacheTests(unittest.TestCase):
         self.assertEqual(list((self.root / "old-cache").iterdir()), [])
 
     def test_worker_start_failure_is_a_nonblocking_fallback(self):
-        with patch("xmb_backgrounds.threading.Thread.start", side_effect=RuntimeError("no threads")):
+        with patch("psp_dock.media.xmb_backgrounds.threading.Thread.start", side_effect=RuntimeError("no threads")):
             cache = self.cache()
         self.assertIsNone(cache.request(png()))
         self.assertTrue(cache.wait(timeout=0))

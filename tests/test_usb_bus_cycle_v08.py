@@ -5,8 +5,8 @@ import re
 import tempfile
 import unittest
 
-from install_usb_import_gate import install_package
-import install_usb_bus_cycle_v08 as version
+from tools.psp.install_usb_import_gate import install_package
+import tools.psp.install_usb_bus_cycle_v08 as version
 
 
 class UsbBusCycleV08Tests(unittest.TestCase):

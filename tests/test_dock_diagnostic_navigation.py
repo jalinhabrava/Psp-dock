@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import dock as app
-import ppsspp_hid_session
-import psp_dock_identity
-import psp_launcher_input
+import psp_dock.emulation.ppsspp_hid_session as ppsspp_hid_session
+import psp_dock.devices.psp_dock_identity as psp_dock_identity
+import psp_dock.devices.psp_launcher_input as psp_launcher_input
 
 
 STABLE = {'path': r'\\?\hid#vid_054c&pid_01cb#psp', 'session': '01' * 16,

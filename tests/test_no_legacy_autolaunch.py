@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-import ppsspp_hid_session as legacy
+import psp_dock.emulation.ppsspp_hid_session as legacy
 
 
 class LegacyAutolaunchTests(unittest.TestCase):
@@ -13,7 +13,7 @@ class LegacyAutolaunchTests(unittest.TestCase):
         self.assertIn("DESACTIVADO",cmd)
 
     def test_old_cli_requires_explicit_autoplay_opt_in(self):
-        with patch("sys.argv", ["ppsspp_hid_session.py","--wait-and-play"]), \
+        with patch("sys.argv", ["psp_dock.emulation.ppsspp_hid_session.py","--wait-and-play"]), \
              patch.object(legacy,"plan_game") as plan, \
              patch.object(legacy,"wait_for_hid_and_play") as play:
             self.assertEqual(legacy.main(),1)
@@ -21,7 +21,7 @@ class LegacyAutolaunchTests(unittest.TestCase):
         play.assert_not_called()
 
     def test_regular_preview_never_autoplays(self):
-        with patch("sys.argv", ["ppsspp_hid_session.py"]), \
+        with patch("sys.argv", ["psp_dock.emulation.ppsspp_hid_session.py"]), \
              patch.object(legacy,"plan_game"), \
              patch.object(legacy,"start_ppsspp") as play:
             self.assertEqual(legacy.main(),0)

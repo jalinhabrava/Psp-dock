@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import psp_msc_acceptance as msc
-from psp_composite_client import PROBE_SIZE
-from psp_winusb_transport import WinUSBError
+import tools.psp.psp_msc_acceptance as msc
+from psp_dock.devices.psp_composite_client import PROBE_SIZE
+from psp_dock.devices.psp_winusb_transport import WinUSBError
 from tests.test_psp_composite_acceptance import HID_PATH as BULK_HID_PATH, hid_report as bulk_hid_report
 from tests.test_psp_composite_client import CONTENT, NONCE
 

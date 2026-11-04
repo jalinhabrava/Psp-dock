@@ -3,9 +3,9 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import psp_backup
-import k1_plugin_stage as k1
-from vsh_plugin_stage import CONFIG, FILES, STAGE_DIR
+import tools.psp.psp_backup as psp_backup
+import tools.psp.k1_plugin_stage as k1
+from tools.psp.vsh_plugin_stage import CONFIG, FILES, STAGE_DIR
 
 
 SERIAL = "2958455453"

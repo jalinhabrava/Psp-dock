@@ -3,10 +3,10 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import psp_backup
-from vsh_plugin_stage import ENTRY, FILES, CONFIG, STAGE_DIR
-from vsh_plugin_arm_enabled import plan_armed_on, arm_for_next_boot
-from vsh_plugin_enable import EnableError
+import tools.psp.psp_backup as psp_backup
+from tools.psp.vsh_plugin_stage import ENTRY, FILES, CONFIG, STAGE_DIR
+from tools.psp.vsh_plugin_arm_enabled import plan_armed_on, arm_for_next_boot
+from tools.psp.vsh_plugin_enable import EnableError
 
 
 SERIAL = "2958455453"

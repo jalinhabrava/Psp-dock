@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import psp_composite_watch as monitor
+import psp_dock.devices.psp_composite_watch as monitor
 
 
 class CompositeWatchTests(unittest.TestCase):

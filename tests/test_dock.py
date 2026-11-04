@@ -267,17 +267,17 @@ if __name__=='__main__':
 @unittest.skipUnless(os.name == 'nt', 'Windows physical USB drive identity')
 class PhysicalStorageIdentityTests(unittest.TestCase):
     def test_unknown_removable_volume_never_authorizes_writes(self):
-        from psp_usb import PspStorage, UsbTransitionError
+        from psp_dock.devices.psp_usb import PspStorage, UsbTransitionError
         anchor = Path('Q:/')
         with patch('dock.windows_drive_type',return_value=2), \
-             patch('psp_usb.identify',
+             patch('psp_dock.devices.psp_usb.identify',
                    side_effect=UsbTransitionError('not a real PSP')) as verify:
             with self.assertRaisesRegex(ValueError, 'no tiene identidad Sony'):
                 require_psp_identity_before_writing(anchor)
             verify.assert_called_once()
 
     def test_wrong_sony_pid_or_volume_serial_blocks(self):
-        from psp_usb import PspStorage
+        from psp_dock.devices.psp_usb import PspStorage
         anchor = Path('Q:/')
         for usb, serial in (
                 ('USB\\VID_054C&PID_1234\\OtherSony', '123'),
@@ -286,17 +286,17 @@ class PhysicalStorageIdentityTests(unittest.TestCase):
             with self.subTest(usb=usb, serial=serial), \
                  patch('dock.windows_drive_type',return_value=2), \
                  patch('dock.volume_identity',return_value='123'), \
-                 patch('psp_usb.identify',return_value=(
+                 patch('psp_dock.devices.psp_usb.identify',return_value=(
                      PspStorage('Q:\\',serial,'usb-sony',usb,'PSP'),0)):
                 with self.assertRaisesRegex(ValueError, 'no coincide'):
                     require_psp_identity_before_writing(anchor)
 
     def test_exact_sony_psp_usb_and_volume_identity_required(self):
-        from psp_usb import PspStorage
+        from psp_dock.devices.psp_usb import PspStorage
         anchor = Path('Q:/')
         with patch('dock.windows_drive_type',return_value=2), \
              patch('dock.volume_identity',return_value='123'), \
-             patch('psp_usb.identify',return_value=(
+             patch('psp_dock.devices.psp_usb.identify',return_value=(
                  PspStorage('Q:\\','123','USBSTOR\\DISK&VEN_SONY&PROD_PSP',
                             'USB\\VID_054C&PID_02D2\\PSP','PSP'),0)):
             self.assertIsNone(require_psp_identity_before_writing(anchor))

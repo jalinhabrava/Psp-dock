@@ -4,8 +4,8 @@ from dataclasses import replace
 import ctypes
 import unittest
 
-import native_storage_release as release
-from psp_usb import PspStorage
+import psp_dock.devices.native_storage_release as release
+from psp_dock.devices.psp_usb import PspStorage
 
 
 IDENTITY = PspStorage('G:\\', '12345', 'USBSTOR\\DISK&VEN_SONY&PROD_PSP\\CARD',

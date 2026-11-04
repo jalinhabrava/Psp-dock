@@ -7,7 +7,7 @@ import tempfile
 import unittest
 import zipfile
 
-from psp_texture_packs import (
+from psp_dock.emulation.psp_texture_packs import (
     TextureOffer, TexturePackError, inspect_zip, download_and_install,
     validated_url, offers_for_disc, sources_for_disc, source_catalog,
 )

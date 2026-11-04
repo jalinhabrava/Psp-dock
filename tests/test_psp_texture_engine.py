@@ -8,13 +8,13 @@ import tempfile
 import unittest
 import zlib
 
-from psp_texture_engine import (
+from psp_dock.emulation.psp_texture_engine import (
     CodecFixture, RawTextureSpec, TextureEngineError, UnsupportedCodec,
     analyze_resource, decode_raw_texture, decompress, identify, inspect_file,
     unswizzle, validate_codec,
 )
-from ppsspp_texture_hash import xxh64
-from psp_hd_textures import discover_iso_assets
+from psp_dock.emulation.ppsspp_texture_hash import xxh64
+from psp_dock.emulation.psp_hd_textures import discover_iso_assets
 from tests.test_psp_dariusburst_re import synthetic_dariusburst_iso
 
 try:

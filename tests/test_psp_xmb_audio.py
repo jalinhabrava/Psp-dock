@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 import wave
 
-import psp_xmb_audio as audio
+import psp_dock.devices.psp_xmb_audio as audio
 
 
 def frame(nibbles=(), *, predictor=0, shift=12, flags=0):

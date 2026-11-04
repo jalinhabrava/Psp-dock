@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from device_memory import DeviceMemory, _hash
+from psp_dock.core.device_memory import DeviceMemory, _hash
 from dock import atomic_json
 
 

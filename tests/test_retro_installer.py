@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 import zipfile
 
-from retro_installer import (
+from psp_dock.emulation.retro_installer import (
     RetroInstallError, _download, _check_url, _extract_core,
     install_plan, install_required, managed_retroarch, required_cores,
     STABLE_URL, CORE_BASE, STABLE_SHA256, AUTO_APPROVED_CORES,
@@ -164,7 +164,7 @@ class RetroInstallerUnitTests(unittest.TestCase):
             called.append(url)
             cb(len(sources[url]),len(sources[url]))
             return hashlib.sha256(sources[url]).hexdigest()
-        with patch('retro_installer.STABLE_SHA256',hashlib.sha256(retro).hexdigest()):
+        with patch('psp_dock.emulation.retro_installer.STABLE_SHA256',hashlib.sha256(retro).hexdigest()):
             report=install_required(self.root,[emu('gba')],download=fake_download)
             self.assertEqual(report['installed_cores'],['mgba_libretro.dll'])
             self.assertFalse(report['needed'])

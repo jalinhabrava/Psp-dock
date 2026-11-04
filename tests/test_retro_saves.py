@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from retro_saves import (plan_retro_saves, copy_sram_verified,
+from psp_dock.emulation.retro_saves import (plan_retro_saves, copy_sram_verified,
                          _baseline_key, _sha)
-from retro_runtime import private_save_paths
+from psp_dock.emulation.retro_runtime import private_save_paths
 
 
 class SaveContinuityTests(unittest.TestCase):
@@ -165,7 +165,7 @@ class SaveContinuityTests(unittest.TestCase):
         pc.parent.mkdir(parents=True)
         pc.write_bytes(b'b'*32768)
         original=pc.read_bytes()
-        with patch('retro_saves.os.replace',side_effect=OSError('simulated FAT failure')):
+        with patch('psp_dock.emulation.retro_saves.os.replace',side_effect=OSError('simulated FAT failure')):
             with self.assertRaises(OSError):
                 self.copy('psp',self.plan())
         self.assertEqual(pc.read_bytes(),original)

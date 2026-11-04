@@ -9,10 +9,10 @@ from datetime import datetime, timedelta
 import json
 import time
 
-from bridge_hid import BridgeHidError, probe, request_storage
+from psp_dock.devices.bridge_hid import BridgeHidError, probe, request_storage
 from dock import ROOT, windows_devices
-from lab_eject import ppsspp_open
-from psp_usb import UsbTransitionError, identify
+from tools.labs.lab_eject import ppsspp_open
+from psp_dock.devices.psp_usb import UsbTransitionError, identify
 
 
 def last_accepted_eject(now: datetime | None = None) -> dict:

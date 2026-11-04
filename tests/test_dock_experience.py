@@ -1,8 +1,8 @@
 import unittest
 from dataclasses import replace
 
-from dock_experience import Experience, ExperienceError, Stage
-from usb_handoff import RoleBridgeProof, ROLE_CAPABILITIES
+from psp_dock.core.dock_experience import Experience, ExperienceError, Stage
+from psp_dock.devices.usb_handoff import RoleBridgeProof, ROLE_CAPABILITIES
 
 
 SERIAL = "2958455453"

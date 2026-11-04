@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import psp_composite_diagnostics as diagnostic
+import psp_dock.devices.psp_composite_diagnostics as diagnostic
 
 
 class CompositeDiagnosticTests(unittest.TestCase):
@@ -22,7 +22,7 @@ class CompositeDiagnosticTests(unittest.TestCase):
     def test_missing_bulk_does_not_try_to_bind_a_driver(self):
         with patch.object(diagnostic, 'windows_binding_snapshot', return_value={'devices': []}), \
              patch.object(diagnostic, 'candidate_paths', return_value=[]), \
-             patch('psp_winusb_transport.WinUSBTransport') as opener:
+             patch('psp_dock.devices.psp_winusb_transport.WinUSBTransport') as opener:
             report = diagnostic.inspect(firmware=True)
         opener.assert_not_called()
         self.assertFalse(report['physical_transfer_verified'])

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import psp_dock_retire as retire
-from psp_native_package import REMOTE_FOLDER
+import tools.psp.psp_dock_retire as retire
+from tools.psp.psp_native_package import REMOTE_FOLDER
 from tests.test_psp_native_package import fixture_native_package
 
 
