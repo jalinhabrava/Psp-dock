@@ -2,7 +2,7 @@
 from unittest.mock import patch
 import unittest
 
-import test_dock_product_session as fixtures
+from tests import test_dock_product_session as fixtures
 from psp_dock.core.dock_product_flow import ProductFlowError
 from psp_dock.media.xmb_sound_import import import_from_psp
 
