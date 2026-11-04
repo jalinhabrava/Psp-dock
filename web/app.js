@@ -2238,6 +2238,40 @@ async function xmbSaveSetting(key, value, label) {
 }
 
 function xmbGameIcon(game) { return { game }; }
+function xmbRetroInstallState(state = ui.state || {}) {
+  const installer = state.retro_install || {};
+  const progress = installer.progress || {};
+  const active = progress.active === true;
+  const percent = Number(progress.bytes_total) > 0 ? Math.max(0, Math.min(100,
+    Math.round(Number(progress.bytes_done || 0) * 100 / progress.bytes_total))) : null;
+  const failed = !active && progress.phase === 'failed';
+  const policy = installer.policy || xmb.settings?.retro_install_policy || 'ask';
+  const ready = installer.status === 'ready' && !active;
+  const detail = active ? `${progress.item || 'Preparando RetroArch'} · ${percent === null ? 'Conectando…' : percent + '%'}` :
+    failed ? `Instalación pendiente: ${progress.error || 'error de descarga'}` :
+    installer.external ? 'RetroArch externo · gestionar núcleos en su instalación' :
+    policy === 'off' ? 'Descarga automática desactivada en Ajustes' :
+    ready ? 'RetroArch y núcleos preparados en Windows' :
+    'RetroArch y núcleos pendientes en Windows';
+  return { installer, progress, active, percent, failed, policy, ready, detail };
+}
+let xmbRetroInstallPending = false;
+async function xmbStartRetroInstall() {
+  const { installer, active, policy } = xmbRetroInstallState();
+  if (policy === 'off' || installer.external || !installer.needed || active || xmbRetroInstallPending ||
+      ui.serviceOffline || ui.state?.demo) return;
+  xmbRetroInstallPending = true;
+  try {
+    // A PC-only download is owned by the backend worker. This request must not
+    // mark the XMB globally busy or close its ROM side menu.
+    await request('/api/install-retro', {});
+    void refresh();
+  } catch (error) {
+    toast(`RetroArch: ${error.message}`);
+  } finally {
+    xmbRetroInstallPending = false;
+  }
+}
 function xmbBuildSections() {
   const state = ui.state || {};
   const diagnostic = state.controller_status?.mode === 'msc_diagnostic';
@@ -2385,43 +2419,27 @@ function xmbBuildSections() {
     activate: async () => { toast('Buscando PSP…'); await refresh(); } }];
 
   const retro = state.retro || {};
-  const installer=state.retro_install || {};
+  const install = xmbRetroInstallState(state);
   out.retro = (retro.emulators || []).map((emulator) => {
     const roms = (retro.roms || []).filter((rom) => rom.emulator_id === emulator.id);
     const ready = roms.filter((rom) => rom.availability === 'ready').length;
+    const missingCore = roms.some(rom => !rom.core_available);
+    const downloading = install.active && missingCore;
     return {
       key: 'emulator-' + emulator.id, t: emulator.name, icon: 'retro',
-      s: `${emulator.systems.join(' / ').toUpperCase()} · ${roms.length} ROMs · ${ready} en el PC`,
-      chip: ready ? ['pc', `${ready} EN PC`] : roms.length ? ['copy', 'COPIAR'] : ['inh', 'VACÍO'],
+      s: `${emulator.systems.join(' / ').toUpperCase()} · ${roms.length} ROMs · ${ready} en el PC` +
+        (missingCore ? ` · ${install.detail}` : ''),
+      chip: downloading ? ['inh', install.percent === null ? 'INSTALANDO' : `${install.percent}%`] :
+        ready && !missingCore ? ['pc', `${ready} EN PC`] :
+        missingCore && install.policy === 'off' ? ['inh', 'DESACTIVADO'] :
+        missingCore ? ['copy', install.failed ? 'ERROR' : 'PREPARAR'] :
+        roms.length ? ['copy', 'COPIAR'] : ['inh', 'VACÍO'],
+      installing: downloading,
+      installPercent: downloading ? install.percent : null,
       activate: () => xmbRetroEmulatorMenu(emulator),
       menu: () => xmbRetroEmulatorMenu(emulator),
     };
   });
-  if ((retro.emulators || []).length) {
-    const prog=installer.progress || {};
-    const active=prog.active === true;
-    const missing=installer.missing_cores?.length || 0;
-    const reviewed=installer.requires_license_review?.length || 0;
-    const licensing=reviewed ? ` · ${reviewed} núcleo(s) requieren licencia comercial o instalación independiente` : '';
-    const text=active ? `${prog.item || 'Descargando'} · ${prog.bytes_total ? Math.round((prog.bytes_done || 0)*100/prog.bytes_total)+'%' : 'conectando'}` :
-      prog.phase === 'failed' ? `Instalación no completada: ${prog.error || 'error de descarga'}` :
-      installer.external ? 'RetroArch externo: se respetará su ubicación original' :
-      installer.status === 'ready' ? 'Núcleos con licencia permitida instalados' + licensing :
-      `RetroArch portable y ${missing} núcleo(s) pendientes${licensing} · en ${installer.managed_path || 'la carpeta elegida'}`;
-    out.retro.unshift({ key:'retro-installer',t:active ? 'Instalando emuladores…' :
-      installer.status === 'ready' ? 'Emuladores Windows preparados' : 'Instalar emuladores Windows',
-      s:text,icon:active ? 'sync' : 'retro',
-      chip:active ? ['inh','DESCARGANDO'] : installer.status === 'ready' ? ['pc','LISTOS'] : missing ? ['copy','INSTALAR'] : null,
-      activate:()=>{
-        if (active) { toast(text);return; }
-        if (installer.external) {toast('Has elegido un RetroArch externo. El Dock no lo modificará; instala allí los núcleos mediante su actualizador.');return;}
-        if (!installer.needed) {toast(text);return;}
-        if (!state.selected_device) {toast('Conecta la PSP en modo almacenamiento USB Sony para autorizar los emuladores detectados.');return;}
-        xmbConfirm(`¿Instalar los emuladores correspondientes a esta PSP?<small>Se descargarán RetroArch 1.22.2 y ${missing} núcleo(s) permitidos para este producto en la carpeta seleccionada en Ajustes.${reviewed ? ' Los núcleos con licencia no comercial requieren revisión y NO se descargarán automáticamente.' : ''} No se descargan ROMs ni BIOS ni se escribe en la PSP.</small>`,
-          false,()=>mutate('/api/install-retro',{},'Instalación en el PC iniciada. Puedes seguir usando el XMB.'));
-      },
-    });
-  }
   if (!out.retro.length) out.retro = [{ key:'no-retro', t:'No hay emuladores reconocidos',
     s:'Se detectan gpSP, TempGBA, Snes9xTYL, NesterJ, PicoDrive, Daedalus y otros.',
     icon:'search', activate:()=>toast('Conecta la PSP en almacenamiento USB para detectar los emuladores instalados y sus ROMs.') }];
@@ -2808,25 +2826,46 @@ function xmbGameMenu(game) {
 function xmbRetroEmulatorMenu(emulator) {
   const connection = xmbConnectionView();
   if (connection.waiting || connection.product?.blocking) return;
+  const install = xmbRetroInstallState();
+  if (!install.active && !install.installer.external && install.policy !== 'off' && install.installer.needed)
+    void xmbStartRetroInstall();
   const roms = (ui.state?.retro?.roms || []).filter((rom) => rom.emulator_id === emulator.id);
   if (!roms.length) {
     xmbSide(emulator.name, [{t:'No se han encontrado ROMs',s:'Comprueba la carpeta ROMS del emulador en tu PSP.'}],
       () => toast('No se han localizado archivos ROM compatibles en la carpeta de este emulador.'));
     return;
   }
-  xmbSide(emulator.name, roms.map((rom) => ({
-    t:rom.title,
-    s:`${rom.system_name} · ${rom.availability === 'ready' ? 'En el PC' :
-      rom.availability === 'missing' ? 'Copiar desde PSP' :
-      rom.availability === 'checking' ? 'Comprobando' : 'Versión diferente'}`,
-  })), index => xmbRetroRomMenu(roms[index]));
+  xmbSide(emulator.name, roms.map((original) => ({
+    t:original.title,
+    // The panel stays open while RetroArch installs. Always render its
+    // description from the current snapshot, not the pre-download state.
+    get s() {
+      const rom=(ui.state?.retro?.roms || []).find(
+        (row) => row.id === original.id && row.emulator_id === emulator.id) || original;
+      const currentInstall=xmbRetroInstallState();
+      return `${rom.system_name} · ${rom.availability === 'ready' ? 'En el PC' :
+        rom.availability === 'missing' ? 'Copiar desde PSP' :
+        rom.availability === 'checking' ? 'Comprobando' : 'Versión diferente'}` +
+        (!rom.core_available ? ` · ${currentInstall.detail}` : '');
+    },
+  })), index => {
+    // A new core may finish downloading after the ROM list opens. Resolve
+    // its current readiness before attempting the guarded PC game launch.
+    const selected = roms[index];
+    const rom = (ui.state?.retro?.roms || []).find(
+      (row) => row.id === selected.id && row.emulator_id === emulator.id) || selected;
+    // CROSS on a verified ROM starts the Windows emulator directly. Missing
+    // files keep their explicit copy action; no transfer is automatic.
+    if (rom.availability === 'missing') xmbRetroRomMenu(rom);
+    else xmbLaunchRetro(rom);
+  });
 }
 function xmbRetroRomMenu(rom) {
   const connection = xmbConnectionView();
   if (connection.waiting || connection.product?.blocking) return;
   const save = (ui.state?.retro_saves?.rows || []).find(row => row.rom_id === rom.id);
   const items = [
-    { t:'Jugar en Windows', s:rom.windows_emulator + (rom.core_available ? ' · núcleo instalado' : ' · núcleo pendiente') },
+    { t:'Jugar en Windows', s:rom.windows_emulator + (rom.core_available ? ' · núcleo instalado' : ` · ${xmbRetroInstallState().detail}`) },
     { t:'Copiar ROM al PC', s:rom.availability === 'missing' ? bytes(rom.size) + ' · transferencia verificada' : 'No se sobrescribe el archivo local' },
     { t:'Partida retro (SRAM)', s:save ? (save.status === 'unsupported' ? save.reason :
       save.status === 'none' ? 'Aún no existe una SRAM guardada' :
@@ -2907,7 +2946,14 @@ function xmbLaunchRetro(rom) {
     return;
   }
   if (!rom.core_available) {
-    toast(`Configura RetroArch en Ajustes e instala el núcleo compatible con ${rom.system_name}.`);
+    const install = xmbRetroInstallState(state);
+    if (install.active) toast(`Instalando RetroArch en Windows: ${install.detail}. Puedes seguir explorando las ROMs.`);
+    else if (install.policy === 'off') toast('La instalación de RetroArch está desactivada en Ajustes.');
+    else if (install.installer.external) toast(`Instala el núcleo compatible con ${rom.system_name} en tu RetroArch externo.`);
+    else {
+      if (install.installer.needed) void xmbStartRetroInstall();
+      toast(`Preparando RetroArch y el núcleo de ${rom.system_name} en Windows. Puedes seguir explorando las ROMs.`);
+    }
     return;
   }
   if (!connection.product?.usePcSaves &&
@@ -3011,7 +3057,7 @@ function xmbItemNode(key, item) {
   let node = xmb.els.get(key);
   const val = (v) => typeof v === 'function' ? v() : v;
   const chip = val(item.chip);
-  const signature = JSON.stringify([item.t, val(item.s), chip, item.tag, typeof item.icon === 'string' ? item.icon : item.icon?.game?.id, !!item.dim]);
+  const signature = JSON.stringify([item.t, val(item.s), chip, item.tag, typeof item.icon === 'string' ? item.icon : item.icon?.game?.id, !!item.dim, !!item.installing, item.installPercent]);
   if (!node) {
     node = document.createElement('div');
     node.className = 'xmb-item';
@@ -3035,7 +3081,19 @@ function xmbItemNode(key, item) {
     const sub = document.createElement('small');
     sub.textContent = val(item.s) || '';
     text.append(title, sub);
-    node.append(xmbIconNode(item.icon), text);
+    const icon = xmbIconNode(item.icon);
+    if (item.installing) {
+      icon.classList.add('xmb-installing');
+      icon.setAttribute('role', 'progressbar');
+      icon.setAttribute('aria-label', 'Instalando RetroArch en Windows');
+      icon.setAttribute('aria-valuemin', '0');
+      icon.setAttribute('aria-valuemax', '100');
+      if (item.installPercent !== null) icon.setAttribute('aria-valuenow', String(item.installPercent));
+      const ring = document.createElement('span');
+      ring.className = 'xmb-install-ring';
+      icon.append(ring);
+    }
+    node.append(icon, text);
     node.classList.toggle('dim-item', !!item.dim);
   }
   return node;

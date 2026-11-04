@@ -31,7 +31,9 @@ class RetroBridgeTests(unittest.TestCase):
         empty_devices.start()
         self.addCleanup(empty_devices.stop)
         self.dock = Dock(self.root / 'data')
-        self.dock.settings({'psp_root':str(self.psp)})
+        # These are synthetic ROM fixtures; the production default now
+        # provisions RetroArch automatically. Never allow tests to download.
+        self.dock.settings({'psp_root':str(self.psp),'retro_install_policy':'off'})
 
     def item(self):
         roms = self.dock.retro_catalog()['roms']

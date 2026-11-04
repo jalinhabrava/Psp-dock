@@ -2,6 +2,15 @@
 
 **English** · [Español](CHANGELOG.es.md)
 
+## v0.1.3 — Retro games, without the setup detour · November 4, 2026
+
+- RetroArch and approved compatible cores now install on **Windows in the background** when PSP emulators are discovered; existing manual-policy users can start the installation just by selecting the emulator. Installing PC software never requires switching the PSP back to USB storage.
+- The XMB shows per-emulator installation progress with an animated status ring (or a static indicator when reduced motion is preferred), while browsing remains available.
+- Select a PSP emulator → see its ROMs in the right-hand menu → select a ready ROM to launch it directly in RetroArch with the existing verified PSP controller and save safeguards.
+- A missing PC ROM still requires an explicit USB transfer. External RetroArch installations and user-disabled downloads are never modified; restricted cores, ROMs and BIOS are not downloaded.
+- PC-only live download smoke: the official pinned RetroArch 1.22.2 archive and mGBA core were fetched, unpacked and verified in an isolated temporary directory, then removed without executing any downloaded code.
+- No firmware, PSP EBOOT, USB protocol, game-save or memory-stick transfer logic was changed.
+
 ## v0.1.2 — One Dock, two languages · November 4, 2026
 
 - **English and Spanish** are included in the *same* Windows executable and PSP EBOOT. No separate downloads or game/save migrations are needed to change language.

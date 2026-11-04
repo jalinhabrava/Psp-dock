@@ -1,25 +1,29 @@
 # PSP Dock · aprovisionamiento automático de emuladores Windows
 
-## Flujo pensado para el futuro instalador `.exe`
+## Flujo para Windows: instalación en segundo plano
 
 1. El usuario elige **una carpeta de almacenamiento en un disco fijo del PC**
-   durante el instalador. El instalador guardará esa selección en
+   en los ajustes del Dock. El programa guarda esa selección en
    `settings.json` como `storage_root`, usando el mismo selector existente
    del Dock; no instala ningún emulador hasta conocer los homebrew de la PSP.
-2. La instalación comercial puede ofrecer la opción **«Instalar automáticamente
-   los emuladores de mi PSP»** (que persiste `retro_install_policy=auto`).
-   El modo seguro para una instalación anterior es `ask`, con autorización
-   explícita desde la categoría **Retro** del XMB; `off` desactiva descargas.
+2. Las instalaciones nuevas tienen **descarga automática de emuladores
+   compatibles** (`retro_install_policy=auto`). Los ajustes antiguos en
+   `ask` pueden iniciar la instalación al elegir expresamente un emulador
+   en el XMB; `off` sigue siendo una exclusión voluntaria.
 3. Al conectar la PSP con USB Sony, Dock lee **solo** EBOOT/PARAM.SFO y ROMs
    dentro de las carpetas homebrew reconocidas. Deduce los sistemas emulados
-   y los núcleos necesarios sin duplicar los compartidos. La copia de ROMs
-   permanece independiente y necesita confirmación propia.
+   y los núcleos necesarios sin duplicar los compartidos y conserva este
+   inventario al pasar a modo **mando HID**. Instalar RetroArch **solo utiliza
+   el disco y la conexión a Internet del PC**; no requiere devolver la PSP a
+   almacenamiento. Copiar una ROM todavía ausente en Windows sí exige
+   acceder a la Memory Stick y confirmar la transferencia.
 4. Un hilo PC descarga **RetroArch portable para Windows x64** desde el servidor
    oficial y comprueba el SHA-256 *fijado para la versión 1.22.2*. Después
    instala únicamente los núcleos previamente aprobados, descargándolos como
    ZIP individual desde el servidor oficial Libretro. No ejecuta contenido
    descargado hasta que se complete la verificación. El progreso y los errores
-   se muestran en el XMB.
+   se muestran en el **icono del emulador en el XMB**, con una rueda de estado
+   y el avance real comunicado por el instalador. La navegación sigue activa.
 5. Los archivos se instalan en
    `<storage_root>/emulators/retroarch/retroarch.exe` y `cores/*.dll`. Los
    guardados siguen en `retro-saves/`; perfiles de mando en `retro-profiles/`.
@@ -31,11 +35,17 @@
    borrar los originales. La ruta configurada a RetroArch se actualiza si
    apuntaba a la instalación gestionada.
 
-**Nota importante:** el instalador `.exe` de distribución todavía no existe;
-se ha implementado la lógica que ese instalador podrá invocar tras guardar la
-carpeta y la opción de aprovisionamiento. El XMB actual puede activar el modo
-automático desde `Ajustes → Instalación de emuladores retro` o pedir la
-descarga manual mediante `Retro → Instalar emuladores Windows`.
+7. Al seleccionar un **emulador de PSP en el XMB de Windows**, aparece a la
+   derecha la lista de sus ROMs. Elegir una ROM que ya está en el PC y tiene
+   su núcleo preparado la ejecuta directamente en RetroArch con el control
+   de la PSP. No hay una fila engañosa de «Instalar emuladores» delante de
+   la biblioteca. Si el núcleo todavía se está descargando, el menú lo
+   indica y no intenta lanzar el juego prematuramente. Una ROM ausente
+   abre sus opciones de copia, sin iniciar transferencias automáticamente.
+
+**Distribución:** el ejecutable portátil de Windows existe desde v0.1.1.
+La implementación de aprovisionamiento automático y la mejora de interfaz
+forman parte de la evolución 0.1.3 del host; no requiere un EBOOT nuevo.
 
 ## Catálogo reconocido en la PSP conectada (1 noviembre 2026)
 
@@ -92,21 +102,26 @@ transformarán ni descargarán ROMs, BIOS, juegos ni materiales protegidos.
   ni bloquear el XMB. La cancelación, reanudación y gestor de actualizaciones
   requieren una futura iteración y pruebas reales de red/Windows.
 
-## Estado de la prueba real
+## Estado de las pruebas y límites
 
-Se intentó descargar el RetroArch **1.22.2** oficial al directorio aislado
-`%LOCALAPPDATA%/PSP-Dock-Retro-Lab-2026`, pero Windows devolvió
-`A socket operation was attempted to an unreachable network`. La carpeta
-de pruebas se creó vacía; **no se instaló ni ejecutó RetroArch/mGBA**. Las
-pruebas automatizadas ejecutan el instalador contra archivos ficticios sin
-acceder a red, ROMs comerciales, datos de usuario ni dispositivo USB.
+El 4 de noviembre de 2026 se descargó **el RetroArch 1.22.2 completo
+(202 MB) y el núcleo mGBA desde los servidores oficiales**, a una carpeta
+temporal aislada de Windows. El instalador verificó el SHA-256 fijado del
+paquete principal, extrajo y comprobó los archivos esperados, confirmó el
+estado instalado en el PC y limpió la carpeta temporal. **No se ejecutaron
+los binarios descargados ni se leyó/escribió la PSP**. Esta prueba terminó
+correctamente en unos 40 segundos, sin ser una garantía de conectividad en
+todas las redes. Una prueba anterior, del 1 de noviembre, había recibido
+un error de conexión; el nuevo resultado sustituye esa limitación concreta.
 
-Para verificar mGBA en hardware se requiere restablecer acceso HTTPS al
-servidor oficial o proporcionar el archivo portátil oficial verificado.
-Después: comprobar el mando PDK1 activo, cargar una ROM de prueba copiada
-con confirmación, importar su SRAM tras respaldarla, y devolverla al usuario
-solo después de prueba explícita en gpSP. No se automatiza el cambio físico
-USB Sony ↔ HID.
+Las pruebas automatizadas de flujo y regresión continúan utilizando
+archivos ficticios para simular instalación, avance y errores sin acceder
+a ROMs reales ni al dispositivo USB.
+
+Sigue pendiente la **aceptación física** del lanzamiento RetroArch con la PSP
+como mando: abrir una ROM de prueba legítima ya copiada al PC, comprobar
+controles/SRAM, salir y verificar el retorno de la partida con autorización.
+Ninguna prueba de instalación PC da permiso para alterar los guardados PSP.
 
 ## Fuentes / licencias
 

@@ -3,7 +3,7 @@
 
   ### La PSP que recuerdas. Una forma nueva de jugar.
 
-  **[🖥️ Descargar para Windows](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.2.exe)** · **[🎮 Descargar para PSP](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.2.zip)**
+  **[🖥️ Descargar para Windows](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.3.exe)** · **[🎮 Descargar para PSP](https://github.com/jalinhabrava/Psp-dock/releases/download/v0.1.2/PSP-Dock-PSP-v0.1.2.zip)**
 
   [Ver todas las versiones](https://github.com/jalinhabrava/Psp-dock/releases) · [Cómo funciona](#empieza-a-jugar)
 
@@ -31,7 +31,7 @@ Conecta tu PSP al ordenador, abre **PSP Dock** y vuelve a encontrarte con tu bib
 | 💾 **Tus partidas van contigo** | PSP Dock compara los guardados, te pide permiso para las copias y ayuda a devolver los cambios al terminar. |
 | ✨ **Un menú con alma de PSP** | Categorías deslizantes, carátulas, fondos y los pequeños sonidos del XMB cuando tu consola es compatible. |
 | ⚡ **Recuerda tu biblioteca** | La siguiente conexión es mucho más rápida: no vuelve a leer por completo los juegos que siguen igual. |
-| 🕹️ **También pensamos en lo retro** | Hay integración inicial con emuladores de otras consolas y opciones de mejora visual que seguimos desarrollando. |
+| 🕹️ **También pensamos en lo retro** | Los emuladores reconocidos de tu PSP pueden preparar sus equivalentes permitidos en Windows, en segundo plano y con indicador de progreso en el XMB. |
 
 ## Empieza a jugar
 
@@ -53,6 +53,8 @@ Conecta tu PSP al ordenador, abre **PSP Dock** y vuelve a encontrarte con tu bib
 </table>
 
 **3. Une los dos mundos.** Abre PSP Dock en Windows y en la PSP, conecta el cable USB y sigue las indicaciones de la pantalla. Elige qué copiar, disfruta de tus juegos y, cuando acabes, deja que se comprueben tus partidas antes de desconectar.
+
+**¿Tienes emuladores retro en la PSP?** También aparecerán en el XMB. Elige uno para abrir a la derecha su lista de ROMs. PSP Dock puede preparar RetroArch y los núcleos compatibles **en Windows y en segundo plano**, sin pedir otro cambio de modo USB para instalar software. Cuando la ROM y el núcleo están listos en el PC, selecciónala para jugar. Copiar una ROM que todavía falte es una operación distinta que se confirma expresamente.
 
 <div align="center">
 

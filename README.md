@@ -3,7 +3,7 @@
 
   ### The PSP you remember. A whole new way to play.
 
-  **[🖥️ Download for Windows](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.2.exe)** · **[🎮 Download for PSP](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.2.zip)**
+  **[🖥️ Download for Windows](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.3.exe)** · **[🎮 Download for PSP](https://github.com/jalinhabrava/Psp-dock/releases/download/v0.1.2/PSP-Dock-PSP-v0.1.2.zip)**
 
   [All releases](https://github.com/jalinhabrava/Psp-dock/releases) · [Getting started](#lets-play)
 
@@ -29,7 +29,7 @@ Connect your PSP to a Windows PC, launch **PSP Dock**, and rediscover your games
 | 💾 **Keep your progress close** | Compare saves, review conflicts, and sync changes back with your approval. |
 | ✨ **It still feels like PSP** | Smooth XMB navigation, game art, backgrounds, and original menu sounds when supported. |
 | ⚡ **Your library, remembered** | Reconnect without re-reading every unchanged game from your Memory Stick. |
-| 🕹️ **More than PSP** | Early RetroArch support and experiments with enhanced textures are in the works. |
+| 🕹️ **More than PSP** | Recognized retro emulators can get their approved Windows equivalents in the background, with a progress indicator right in the XMB. |
 
 ## Let's play
 
@@ -51,6 +51,8 @@ Connect your PSP to a Windows PC, launch **PSP Dock**, and rediscover your games
 </table>
 
 **3. Bring them together.** Open PSP Dock on your PC and your handheld, connect them with USB, and follow the on-screen guide. Choose what to copy, start playing, and let your saves finish syncing before you disconnect.
+
+**Got retro emulators on your PSP?** You'll find them in the XMB, too. Choose an emulator to open its ROM list on the right. PSP Dock can prepare RetroArch and the compatible cores **on Windows, in the background** — no extra USB mode switch for installing software. Once a ROM and its core are ready on the PC, select it to play. Transferring a ROM that is missing on your PC is a separate, explicit step.
 
 <div align="center">
 

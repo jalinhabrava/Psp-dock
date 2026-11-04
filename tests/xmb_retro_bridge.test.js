@@ -22,6 +22,9 @@ const ui = {busy:false,serviceOffline:false,state:{
   can_launch_retro:false,
 }};
 const scope={ui,bytes:(n)=>String(n)+' B',
+  xmb:{settings:{retro_install_policy:'off'}},
+  xmbRetroInstallState:()=>({active:false,policy:'off',installer:{needed:false,external:false},detail:'Descarga desactivada'}),
+  xmbStartRetroInstall:()=>events.push('install'),
   xmbConnectionView:()=>({waiting:false,product:{enabled:false,blocking:false},diagnostic:false,nativeController:false,canPlay:true}),
   xmbSide:(title,opts,pick)=>{events.push('side');scope.options=opts;scope.pick=pick;},
   toast:(msg)=>events.push('toast: '+msg),
@@ -34,7 +37,7 @@ vm.runInContext(source.slice(start,end),scope);
 scope.xmbRetroEmulatorMenu(emulator);
 assert.equal(scope.options.length,1);
 assert.equal(events.filter(v=>v.startsWith('copy')).length,0);
-scope.pick(0); // opens the ROM contextual menu, no copying
+scope.pick(0); // missing ROM opens contextual menu, no copying
 assert.equal(scope.options.length,4);
 assert.equal(events.filter(v=>v.startsWith('copy')).length,0);
 scope.pick(1); // explicitly choose Copiar
@@ -47,18 +50,31 @@ ui.state.selected_device=null;
 ui.state.controller_status.connected=true;
 ui.state.can_launch_retro=true;
 scope.xmbRetroEmulatorMenu(emulator);
-scope.pick(0);
-assert.equal(events.filter(v=>v.startsWith('launch')).length,0);
-scope.pick(0);
+assert.equal(scope.options.length,1);
+scope.pick(0); // ready ROM launches directly from emulator's side list
 assert.equal(events.filter(v=>v.startsWith('launch')).length,1);
 assert(events.includes('launch: /api/retro-launch'));
 
+// An emulator may finish downloading while its ROM side panel is open.
+// The menu must not capture a stale core_available=false or old status.
+const awaitingCore = {...ready,core_available:false};
+ui.state.retro.roms = [awaitingCore];
+scope.xmbRetroEmulatorMenu(emulator);
+assert.match(scope.options[0].s,/Descarga desactivada/);
+ui.state.retro.roms = [ready];
+assert.match(scope.options[0].s,/En el PC/);
+assert.doesNotMatch(scope.options[0].s,/Descarga desactivada/);
+scope.pick(0);
+assert.equal(events.filter(v=>v.startsWith('launch')).length,2,
+  'live ROM readiness launches from the already-open side menu');
+
 // Neither missing cores nor a PSP still in USB storage can bypass the gate.
 scope.xmbLaunchRetro({...ready,core_available:false});
-assert.equal(events.filter(v=>v.startsWith('launch')).length,1);
+assert.equal(events.filter(v=>v.startsWith('launch')).length,2);
+assert.equal(events.filter(v=>v === 'install').length,0, 'opt-out prevents PC downloads');
 ui.state.selected_device='X:';
 scope.xmbLaunchRetro(ready);
-assert.equal(events.filter(v=>v.startsWith('launch')).length,1);
+assert.equal(events.filter(v=>v.startsWith('launch')).length,2);
 
 assert(source.includes("['juegos', 'Juegos'], ['retro', 'Retro']"));
 console.log('Retro XMB discovery, explicit copy and native Windows launch gates: OK');

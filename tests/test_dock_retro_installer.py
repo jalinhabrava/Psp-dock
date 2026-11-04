@@ -26,6 +26,9 @@ class InstallerIntegrationTests(unittest.TestCase):
         self.addCleanup(self.no_devices.stop)
         self.dock=Dock(self.root/'data')
         self.dock.settings({'psp_root':str(self.psp)})
+        # Keep synthetic fixtures offline except in tests explicitly checking
+        # auto mode, where the downloader is mocked.
+        self.dock.settings({'retro_install_policy':'ask'})
 
     def test_manual_policy_does_not_download_from_a_connection(self):
         with patch('dock.install_pc_retro',side_effect=AssertionError('unexpected installer')) as install:
@@ -72,12 +75,59 @@ class InstallerIntegrationTests(unittest.TestCase):
             self.assertTrue(start.called)
             self.assertEqual(start.call_args.kwargs,{'automatic':True})
 
-    def test_no_usb_means_no_manual_or_auto_installation(self):
+    def test_cached_inventory_permits_pc_install_without_usb_or_psp_io(self):
         self.dock.retro_catalog()
-        with patch.object(self.dock,'root',return_value=None):
-            with self.assertRaisesRegex(ValueError,'almacenamiento'):
-                self.dock.start_retro_install()
+        completed=threading.Event()
+        original_rom=(self.homebrew/'ROMS/Example.gba').read_bytes()
+        def fake_install(*args,**kwargs):
+            completed.set()
+            return {'installed_cores':[]}
+        with (patch.object(self.dock,'root',return_value=None),
+              patch('dock.install_pc_retro',side_effect=fake_install) as install,
+              patch.object(self.dock,'retro_save_plan',side_effect=AssertionError('save IO')),
+              patch.object(self.dock,'transfer_retro',side_effect=AssertionError('ROM copy'))):
+            self.assertTrue(self.dock.start_retro_install())
+            self.assertTrue(completed.wait(4))
+            for _ in range(400):
+                if not self.dock.retro_install_progress['active']:break
+                threading.Event().wait(.01)
+            self.assertFalse(self.dock.retro_install_progress['active'])
+            install.assert_called_once()
+        self.assertEqual((self.homebrew/'ROMS/Example.gba').read_bytes(),original_rom)
+
+    def test_default_auto_and_explicit_off(self):
+        fresh=Dock(self.root/'fresh')
+        self.assertEqual(fresh.config['retro_install_policy'],'auto')
+        fresh.settings({'psp_root':str(self.psp),'retro_install_policy':'off'})
+        with patch('dock.install_pc_retro',side_effect=AssertionError('network')):
+            fresh.retro_catalog()
+            self.assertFalse(fresh.start_retro_install())
+
+    def test_hid_auto_uses_cached_serial_and_keeps_xmb_cache_fresh(self):
+        self.dock.retro_catalog()
+        self.dock.settings({'retro_install_policy':'auto'})
+        managed=managed_retroarch(self.dock.config['storage_root'])
+        done=threading.Event()
+        def install(*args,**kwargs):
+            managed.parent.mkdir(parents=True,exist_ok=True)
+            managed.write_bytes(b'SYNTHETIC-EXE')
+            core=managed.parent/'cores'/SYSTEMS['gba'][1]
+            core.parent.mkdir(exist_ok=True)
+            core.write_bytes(b'SYNTHETIC-CORE')
+            done.set()
+            return {'installed_cores':[core.name]}
+        with (patch.object(self.dock,'root',return_value=None),
+              patch('dock.install_pc_retro',side_effect=install) as installer):
+            self.assertFalse(self.dock.cached_retro_results['roms'][0]['core_available'])
+            self.assertTrue(self.dock.start_retro_install(automatic=True))
+            self.assertTrue(done.wait(4))
+            for _ in range(400):
+                if not self.dock.retro_install_progress['active']:break
+                threading.Event().wait(.01)
+            self.assertFalse(self.dock.retro_install_progress['active'])
+            self.assertTrue(self.dock.cached_retro_results['roms'][0]['core_available'])
             self.assertFalse(self.dock.start_retro_install(automatic=True))
+            installer.assert_called_once()
 
     def test_dont_modify_external_retroarch_or_swallow_network_error(self):
         self.dock.retro_catalog()
@@ -106,6 +156,37 @@ class InstallerIntegrationTests(unittest.TestCase):
         self.assertEqual(self.dock.retro_install_progress['phase'],'failed')
         self.assertIn('network unreachable',self.dock.retro_install_progress['error'])
         self.assertEqual(self.dock.config['retroarch'],'')
+
+    def test_failed_auto_install_does_not_loop_but_manual_retry_is_allowed(self):
+        self.dock.retro_catalog()
+        self.dock.settings({'retro_install_policy':'auto'})
+        calls=[]
+        def fail(*args,**kwargs):
+            calls.append('attempt')
+            raise OSError('offline test')
+        with (patch.object(self.dock,'root',return_value=None),
+              patch('dock.install_pc_retro',side_effect=fail)):
+            self.assertTrue(self.dock.start_retro_install(automatic=True))
+            for _ in range(400):
+                if self.dock.retro_install_progress['phase']=='failed' and not self.dock.retro_install_progress['active']:
+                    break
+                threading.Event().wait(.01)
+            self.assertEqual(len(calls),1)
+            self.assertFalse(self.dock.start_retro_install(automatic=True))
+            self.assertTrue(self.dock.start_retro_install(automatic=False))
+            for _ in range(400):
+                if len(calls)==2 and not self.dock.retro_install_progress['active']:
+                    break
+                threading.Event().wait(.01)
+            self.assertEqual(len(calls),2)
+
+    def test_active_session_does_not_install_even_with_cached_hid_inventory(self):
+        self.dock.retro_catalog()
+        self.dock.settings({'retro_install_policy':'auto'})
+        with (patch.object(self.dock,'root',return_value=None),
+              patch.object(self.dock,'running',return_value=True),
+              patch('dock.install_pc_retro',side_effect=AssertionError('unexpected install'))):
+            self.assertFalse(self.dock.start_retro_install(automatic=True))
 
 
 if __name__=='__main__':
