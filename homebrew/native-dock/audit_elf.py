@@ -14,7 +14,7 @@ from pathlib import Path
 import re
 import struct
 
-_baseline = Path(__file__).resolve().parent.parent / "composite-mscdemo" / "audit_elf.py"
+_baseline = Path(__file__).resolve().with_name("elf_reader.py")
 _spec = importlib.util.spec_from_file_location("pspdock_elf_reader", _baseline)
 assert _spec is not None and _spec.loader is not None
 _reader = importlib.util.module_from_spec(_spec)

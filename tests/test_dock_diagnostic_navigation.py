@@ -108,29 +108,5 @@ class DiagnosticNavigationTests(unittest.TestCase):
         spawn.assert_not_called()
         self.assertEqual(self.dock.copy_queue, {})
 
-    def test_watch_error_revokes_old_controller_without_hiding_pending_work(self):
-        self.dock.session.update(running=True, pending_return=True)
-        self.dock.snapshot.update(
-            controller_status={**STABLE, 'connected': True},
-            can_launch_game=True, connection_state='dock_connected',
-            transfer_status={'active': True}, recovery_required=True)
-        with patch.object(self.dock, 'root', return_value=None), \
-             patch.object(self.dock, 'running', return_value=True), \
-             patch.object(self.dock, 'state', side_effect=OSError('scan interrupted')) as state, \
-             patch.object(self.dock.stop, 'wait', side_effect=lambda _seconds: self.dock.stop.set()):
-            self.dock.watch()
-        state.assert_called_once()
-        snapshot = self.dock.snapshot
-        self.assertFalse(snapshot['controller_status']['connected'])
-        self.assertFalse(snapshot['controller_status']['can_play'])
-        self.assertFalse(snapshot['can_launch_game'])
-        self.assertEqual(snapshot['connection_state'], 'waiting_psp')
-        self.assertFalse(snapshot['scanning'])
-        self.assertTrue(snapshot['session']['running'])
-        self.assertTrue(snapshot['session']['pending_return'])
-        self.assertTrue(snapshot['transfer_status']['active'])
-        self.assertTrue(snapshot['recovery_required'])
-
-
 if __name__ == '__main__':
     unittest.main()

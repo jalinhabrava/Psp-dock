@@ -68,9 +68,9 @@ Connect your PSP to a Windows PC, launch **PSP Dock**, and rediscover your games
 
 ## There's more to come 🌱
 
-This is our first Windows-focused release, not the end of the story. We're exploring more retro systems, HD texture enhancements, Android TV, and Linux support.
+This is our Windows-focused release, not the end of the story. We're exploring more retro systems, HD texture enhancements, Android TV, and Linux support in separate development branches.
 
-Those platforms and experimental features are **not yet ready-to-play downloads**. We'd rather show the real progress than promise something that isn't tested.
+Only the current Windows and PSP versions are published here. Android TV and Linux experiments live in separate Git branches until they're ready, rather than cluttering the released source tree.
 
 ## Made for people who still love the PSP
 
@@ -91,7 +91,7 @@ PSP Dock is a community-minded passion project and a little love letter to one o
 
 ### Building and testing
 
-The Windows host is written mainly in Python, with HTML/CSS/JavaScript for the interface. The PSP app is built with PSPDEV. The repository also includes experiments in deterministic PSP texture handling.
+The Windows host is written mainly in Python, with HTML/CSS/JavaScript for the interface. The final PSP 0308 app is built with PSPDEV. Experimental older firmware versions are not shipped in this tree.
 
 ```shell
 python -m unittest tests.test_device_memory tests.test_dock_product_session tests.test_native_dock -q
@@ -100,7 +100,7 @@ node --test "tests/*.test.js"
 
 The XMB animation test uses a real Chromium browser and a synthetic game library. It **never accesses a real PSP**.
 
-Read about the [Python project structure](docs/PROJECT-STRUCTURE.md), [native homebrew](homebrew/native-dock/README.md), see the [changelog](CHANGELOG.md), or explore the [HD texture research](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+Read about the [project structure](docs/PROJECT-STRUCTURE.md), the [PSP 0308 homebrew](homebrew/native-dock/README.md), [RetroArch setup](docs/RETRO-AUTO-INSTALL.md), or [PPSSPP graphics](docs/GRAFICOS-PPSSPP.md). Older experiments are available in the Git history, not included in this checkout.
 
 </details>
 

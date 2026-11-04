@@ -1,1 +1,1 @@
-#include "../../../hid-only-lab/lab_gate.h"
+#include "../../lab_gate.h"

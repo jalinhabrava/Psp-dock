@@ -1,7 +1,0 @@
-.gradle/
-.kotlin/
-**/build/
-**/.cxx/
-local.properties
-third_party/
-__pycache__/

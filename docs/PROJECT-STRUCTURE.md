@@ -14,11 +14,9 @@ módulos Python se agrupa por responsabilidad.
 | `psp_dock/devices/` | USB, HID and PSP device communication | Comunicación USB, HID y PSP |
 | `psp_dock/emulation/` | PPSSPP, retro emulators and saves | PPSSPP, emuladores retro y partidas |
 | `psp_dock/media/` | Artwork, audio, XMB media and textures | Arte, sonido, XMB y texturas |
-| `tools/labs/` | Development experiments and diagnostics | Laboratorios y diagnósticos |
-| `tools/psp/` | PSP setup, packaging and maintenance tools | Instalación, paquetes y mantenimiento PSP |
-| `tools/system/` | Host setup and operating-system helpers | Configuración del host y sistema operativo |
+| `tools/psp/` | Verified backup and native 0308 package/install/upgrade utilities | Copias y herramientas verificadas del homebrew nativo 0308 |
 | `scripts/release/` | Windows and PSP release packaging | Generación de paquetes de distribución |
-| `homebrew/` | PSPDEV source and build scripts | Código y compilación PSPDEV |
+| `homebrew/native-dock/` | Final PSP 0308 source, audit, artwork and GPL notices | Fuente PSP 0308 final, auditoría, arte y licencias GPL |
 | `tests/` | Automated checks | Pruebas automatizadas |
 
 ## Running from source / Ejecución desde fuentes
@@ -33,10 +31,14 @@ py -3 -m psp_dock.core.setup_startup --status
 py -3 -m unittest discover -s tests
 ```
 
-Use `python -m tools.<area>.<module>` for one-off utilities, or
-`python -m psp_dock.<area>.<module>` for library modules with a CLI. This ensures Python
-loads package imports consistently and avoids relying on an installed copy of
-the repository. Usa `python -m tools.<area>.<module>` para utilidades puntuales.
+Use `python -m tools.psp.<module>` for maintained PSP backup and native
+package utilities, or `python -m psp_dock.<area>.<module>` for modules with a CLI.
+All retired drivers, VSH experiments and old firmware variants are available
+in Git history, not included as runnable code in this tree.
+
+Usa `python -m tools.psp.<modulo>` para utilidades de copia de seguridad o
+instalación del homebrew final. Los controladores de laboratorio y los firmwares
+anteriores permanecen accesibles en el historial Git, sin mezclarse con `main`.
 
 ## Packaging / Distribución
 

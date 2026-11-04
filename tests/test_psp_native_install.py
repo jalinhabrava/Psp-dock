@@ -20,11 +20,10 @@ def load_isolated():
     def forbidden(*args, **kwargs):
         raise AssertionError('Unit test attempted hardware discovery')
     dock = ModuleType('dock');dock.ROOT = Path(__file__).parent;dock.windows_devices = forbidden
-    eject = ModuleType('lab_eject');eject.ppsspp_open = eject.real_dock_open = forbidden
     usb = ModuleType('psp_usb');usb.identify = forbidden;usb.PspStorage = object
     usb.UsbTransitionError = type('UsbTransitionError', (RuntimeError,), {})
-    with patch.dict(sys.modules, {'dock': dock, 'tools.labs.lab_eject': eject, 'psp_dock.devices.psp_usb': usb}):
-        for name in ('tools.psp.psp_backup', 'tools.psp.psp_composite_install', 'tools.psp.psp_native_install'):
+    with patch.dict(sys.modules, {'dock': dock, 'psp_dock.devices.psp_usb': usb}):
+        for name in ('tools.psp.psp_backup', 'tools.psp.native_backup', 'tools.psp.psp_native_install'):
             sys.modules.pop(name, None)
         backup = importlib.import_module('tools.psp.psp_backup')
         installer = importlib.import_module('tools.psp.psp_native_install')

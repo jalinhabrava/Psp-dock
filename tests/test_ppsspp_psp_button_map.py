@@ -42,12 +42,12 @@ class PspButtonMapTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_physical_psp_button_order_matches_existing_hid_driver(self):
+    def test_physical_psp_button_order_matches_final_native_driver(self):
         hid_code = (
             Path(__file__).resolve().parents[1]
-            / "homebrew/bridge-hid/bridge_hid.c"
+            / "homebrew/native-dock/native_driver.c"
         ).read_text(encoding="utf-8")
-        start = hid_code.index("static const uint32_t buttons[12]")
+        start = hid_code.index("static const uint32_t masks[12]")
         order = hid_code[start:hid_code.index("};", start)]
         physical = (
             "PSP_CTRL_CROSS", "PSP_CTRL_CIRCLE", "PSP_CTRL_SQUARE",

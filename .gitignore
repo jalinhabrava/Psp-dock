@@ -3,15 +3,13 @@ data/
 runtime/
 work/
 references/
-# Historical local emulator installations live under tools/ (ignored), but
-# the reorganized Python source packages are deliberately version-controlled.
+# Local PPSSPP/emulator installs under tools/ stay private; only the current
+# supported PSP installation and backup utilities are published.
 tools/
 !tools/
 tools/*
 !tools/__init__.py
-!tools/labs/
 !tools/psp/
-!tools/system/
 backups/
 *.log
 *.jsonl
@@ -110,42 +108,21 @@ coverage/
 .DS_Store
 Thumbs.db
 
-# Exclude executable shortcuts for retired hardware experiments: some of
-# those USB/driver lab scripts previously caused PSP black-screen failures.
-# Keep only end-user product startup/backup shortcuts.
+# Keep only product startup, demo and safe-backup shortcuts.
 /*.cmd
 !/Iniciar-PSP-Dock.cmd
 !/Ver-demostracion.cmd
-!/Activar-inicio-automatico-Windows.cmd
-!/Desactivar-inicio-automatico-Windows.cmd
 !/Respaldar-PSP.cmd
 
-# Include the actual copyleft license attribution (plain text, not binaries)
-!homebrew/psp-dock-app/LICENSE-FuSa-GPL-3.0.txt
-!homebrew/bridge-hid/LICENSE
+# The native PSP 0308 firmware and licensed artwork are intentionally shipped.
+!homebrew/native-dock/assets/*.PNG
+!homebrew/native-dock/assets/sources/*.png
 
 # Local chronological handoff and machine-specific evidence
 HANDOFF.md
 docs/*
-!docs/PSP-HOMEBREW-UI.md
-!docs/psp-homebrew-ui-preview.png
-!docs/ARRANQUE-HID-AUTOMATICO.md
 !docs/GRAFICOS-PPSSPP.md
 !docs/HD-TEXTURAS-HIBRIDAS.md
-!docs/DARIUSBURST-RE.md
-!docs/MOTOR-TEXTURAS-DETERMINISTA.md
-!docs/DZIP-COMPATIBILIDAD.md
-!docs/PROTOCOLO-ROLE-BRIDGE-V2.md
-!docs/PPSSPP-WINDOWS-FLOW.md
-!docs/CONTRATO-ADAPTADOR-USB.md
-!docs/PRUEBA-INTEGRAL-SIMULADA.md
-!docs/INICIO-AUTOMATICO-WINDOWS.md
-!docs/VIABILIDAD.md
+!docs/RETRO-AUTO-INSTALL.md
 !docs/XMB-SONIDOS-DESDE-PSP.md
 !docs/PROJECT-STRUCTURE.md
-
-# Reviewed PSP Dock artwork embedded in the composite test EBOOT.
-!homebrew/composite-mscdemo/assets/ICON0.PNG
-!homebrew/composite-mscdemo/assets/PIC0.PNG
-!homebrew/composite-mscdemo/assets/PIC1.PNG
-!homebrew/composite-mscdemo/assets/sources/*.png

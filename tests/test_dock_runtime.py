@@ -5,12 +5,19 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from dock import Dock
+from dock import Dock, ROOT
 
 
 @unittest.skipUnless(os.name == "nt", "Windows-only official PPSSPP runtime")
 class RuntimePrewarmingTests(unittest.TestCase):
     def setUp(self):
+        # This integration test uses the independent physical HID mapping
+        # recorded on the developer's PC, which is intentionally excluded
+        # from the public repository. Do not invent a replacement profile or
+        # weaken prepare_psp_controls() just to make a clean clone pass.
+        reference = ROOT / 'data/ppsspp-hid-lab/memstick/PSP/SYSTEM/controls.ini'
+        if not reference.is_file():
+            self.skipTest('Requires private, physically verified PSP controller profile')
         # The launcher now classifies the Dock before its second PDK1 check.
         # This fixture is deliberately independent of any connected PSP.
         identity = {'session': 'a' * 32, 'path': 'FAKE_ONLY',

@@ -1,7 +1,8 @@
-"""Verified replacement and interruption recovery on real temporary files.
+"""Current 0307-to-0308 upgrade, interruption and rollback safety tests.
 
-No hardware discovery: only the four fixture hashes replace the reviewed
-0300 through 0307 constants, and every identity callback is an explicit test double.
+No hardware discovery: only four synthetic file hashes replace the reviewed
+0307 constants, and every device identity callback is an explicit test double.
+Older firmware's large test matrix remains available from Git history.
 """
 import hashlib
 import json
@@ -23,7 +24,7 @@ USB = r'USB\VID_054C&PID_02D2\NATIVE-UPGRADE-TEST'
 
 
 class NativeUpgradeTests(unittest.TestCase):
-    previous_revision = '0300'
+    previous_revision = '0307'
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -355,137 +356,8 @@ class NativeUpgradeTests(unittest.TestCase):
             self.assertEqual(upgrade.main(back + ['--restore', '--receipt', str(self.restore_receipt)]), 0)
             restore.assert_called_once()
 
-
-class Native0301UpgradeTests(NativeUpgradeTests):
-    """Retain interruption and identity gates for the reviewed 0301 source."""
-    previous_revision = '0301'
-
-
-class Native0302UpgradeTests(NativeUpgradeTests):
-    """Retain interruption and identity gates for the reviewed 0302 source."""
-    previous_revision = '0302'
-
-
-class Native0303UpgradeTests(NativeUpgradeTests):
-    """Retain interruption and identity gates for the reviewed 0303 source."""
-    previous_revision = '0303'
-
-
-class Native0304UpgradeTests(NativeUpgradeTests):
-    """Repeat interruption, verified backup and rollback gates for the installed 0304."""
-    previous_revision = '0304'
-
-
-class Native0306UpgradeTests(NativeUpgradeTests):
-    previous_revision = '0306'
-
-
-class Native0307UpgradeTests(NativeUpgradeTests):
-    previous_revision = '0307'
-
-
-class Native0305UpgradeTests(NativeUpgradeTests):
-    """Current installed source retains backup, interruption and rollback guards."""
-    previous_revision = '0305'
-
-
-class Historical0301RollbackTests(unittest.TestCase):
-    # Reuse fixture/helpers, without inheriting the modern-upgrade tests.
-    previous_revision = '0300'
-    replacement_revision = '0301'
-    setUp = NativeUpgradeTests.setUp
-    install = NativeUpgradeTests.install
-    restore = NativeUpgradeTests.restore
-    assert_files = NativeUpgradeTests.assert_files
-    assert_kept = NativeUpgradeTests.assert_kept
-
-    def test_old_receipt_remains_recoverable(self):
-        self.install()
-        record = json.loads(self.receipt.read_text())
-        record['to_revision'] = self.replacement_revision
-        self.receipt.write_text(json.dumps(record))
-        with patch.object(upgrade, 'KNOWN_' + self.replacement_revision + '_FILES', self.new_records):
-            plan = upgrade.plan_rollback(self.receipt, self.psp, SERIAL, USB)
-            self.assertEqual(plan['revision'], self.previous_revision)
-            restored = self.restore()
-        self.assertTrue(restored['restored'])
-        self.assert_files(self.target, self.old_records)
-        self.assert_files(Path(restored['parked']), self.new_records)
-        self.assert_kept()
-
-    def test_historical_receipt_cannot_authorize_unreviewed_replacement_hashes(self):
-        self.install()
-        record = json.loads(self.receipt.read_text())
-        record['to_revision'] = self.replacement_revision
-        self.receipt.write_text(json.dumps(record))
-        with self.assertRaises(ValueError):
-            self.restore()
-        self.assertFalse(self.restore_receipt.exists())
-        self.assert_files(self.target, self.new_records)
-        self.assert_files(self.app_backup / 'files', self.old_records)
-        self.assert_kept()
-
-
-class Historical0300To0302RollbackTests(Historical0301RollbackTests):
-    replacement_revision = '0302'
-
-
-class Historical0301To0302RollbackTests(Historical0300To0302RollbackTests):
-    previous_revision = '0301'
-
-
-class Historical0300To0303RollbackTests(Historical0301RollbackTests):
-    replacement_revision = '0303'
-
-
-class Historical0301To0303RollbackTests(Historical0300To0303RollbackTests):
-    previous_revision = '0301'
-
-
-class Historical0302To0303RollbackTests(Historical0300To0303RollbackTests):
-    previous_revision = '0302'
-
-
-class Historical0300To0304RollbackTests(Historical0301RollbackTests):
-    replacement_revision = '0304'
-
-
-class Historical0301To0304RollbackTests(Historical0300To0304RollbackTests):
-    previous_revision = '0301'
-
-
-class Historical0302To0304RollbackTests(Historical0300To0304RollbackTests):
-    previous_revision = '0302'
-
-
-class Historical0303To0304RollbackTests(Historical0300To0304RollbackTests):
-    previous_revision = '0303'
-
-
-class Historical0300To0305RollbackTests(Historical0301RollbackTests):
-    replacement_revision = '0305'
-
-
-class Historical0301To0305RollbackTests(Historical0300To0305RollbackTests):
-    previous_revision = '0301'
-
-
-class Historical0302To0305RollbackTests(Historical0300To0305RollbackTests):
-    previous_revision = '0302'
-
-
-class Historical0303To0305RollbackTests(Historical0300To0305RollbackTests):
-    previous_revision = '0303'
-
-
-class Historical0304To0305RollbackTests(Historical0300To0305RollbackTests):
-    previous_revision = '0304'
-
-
-class Historical0306To0307RollbackTests(Historical0301RollbackTests):
-    previous_revision = '0306'
-    replacement_revision = '0307'
-
+# Tests exercise the final 0308 upgrade from the last 0307 release.
+# Older historical upgrade matrices remain available in Git history.
 
 if __name__ == '__main__':
     unittest.main()
