@@ -6,7 +6,7 @@ PSP Dock comes in **two downloads**, one for your Windows PC and one for your PS
 
 ## 1 · Set up Windows
 
-Download **[PSP-Dock-Windows-v0.1.2.exe](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.2.exe)** from GitHub Releases. Save it wherever you like and run it. It's portable, **doesn't require Python**, and doesn't install an always-on background service.
+Download **[PSP-Dock-Windows-v0.1.3.exe](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.3.exe)** from GitHub Releases. Save it wherever you like and run it. It's portable, **doesn't require Python**, and doesn't install an always-on background service.
 
 You'll also need your own copy of [PPSSPP for Windows](https://www.ppsspp.org/download/). In PSP Dock's settings, choose your PPSSPP location and where you'd like to keep games and saves. No games or Sony software are included.
 
@@ -14,7 +14,7 @@ The executable is not digitally signed yet, so Windows may warn about an unknown
 
 ## 2 · Set up your PSP
 
-Download **[PSP-Dock-PSP-v0.1.2.zip](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.2.zip)**. Connect your PSP in its original USB Storage mode (or use a Memory Stick reader).
+Download **[PSP-Dock-PSP-v0.1.2.zip](https://github.com/jalinhabrava/Psp-dock/releases/download/v0.1.2/PSP-Dock-PSP-v0.1.2.zip)**. Connect your PSP in its original USB Storage mode (or use a Memory Stick reader).
 
 For a **fresh installation**, copy the complete folder structure from the ZIP to the root of your Memory Stick:
 
@@ -42,6 +42,17 @@ Launch PSP Dock on Windows, then on your PSP. Connect USB and follow the on-scre
 Once controller mode is ready, navigate the PC's XMB-style menu using the real PSP. Choose a game and play through PPSSPP. When you're finished, **close the game normally**. Check any pending saves before leaving PSP Dock, and wait for the verified sync message.
 
 Don't unplug the cable while files are being copied or verified.
+
+### Retro games
+
+If PSP Dock recognizes emulator homebrew on your PSP, select that emulator
+in the Windows XMB to see its ROMs in a right-side menu. RetroArch and
+license-approved cores can download and install **in the background on your
+PC**; the emulator icon shows progress. Installing the Windows emulator
+does **not** require switching your PSP back to USB Storage. A ROM missing
+from your PC is different: copying it from the Memory Stick requires a
+verified USB transfer and your approval. Restricted cores and BIOS files
+are never downloaded automatically.
 
 ### Language selection
 

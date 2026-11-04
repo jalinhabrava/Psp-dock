@@ -26,7 +26,8 @@ class PSPRetroSRAMFlow(unittest.TestCase):
         self.usb.start()
         self.addCleanup(self.usb.stop)
         self.dock=Dock(self.base/'data')
-        self.dock.settings({'psp_root':str(self.psp)})
+        # Isolate SRAM regression tests from the real PC-only downloader.
+        self.dock.settings({'psp_root':str(self.psp),'retro_install_policy':'off'})
         self.rom=self.dock.retro_catalog()['roms'][0]
 
     def rows(self):

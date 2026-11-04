@@ -77,6 +77,49 @@ class FakeDockHandler(http.server.SimpleHTTPRequestHandler):
                   }, 600);
                 });</script>"""
                 html = html.replace('</body>', injected + '</body>')
+            if action == 'retro-installer':
+                # Simulate an already-identified PSP emulator and a Windows
+                # core download. The browser runs the REAL XMB code, but
+                # remains in demo mode: no USB, network or game launch.
+                injected = """<script>window.addEventListener('load', () => {
+                  setTimeout(() => {
+                    const emulator = {id:'a'.repeat(24),name:'gpSP Kai',systems:['gba']};
+                    ui.state.retro = {emulators:[emulator],roms:[{
+                      id:'b'.repeat(24),emulator_id:emulator.id,title:'Aurora GBA',
+                      system:'gba',system_name:'Game Boy Advance',format:'GBA',
+                      size:1024,availability:'ready',core_available:false,
+                      windows_emulator:'RetroArch · mgba'
+                    }]};
+                    ui.state.retro_install = {
+                      policy:'auto',needed:true,status:'needs_install',
+                      external:false,missing_cores:['mgba_libretro.dll'],
+                      progress:{active:true,phase:'core_download',
+                                item:'mgba_libretro.dll',bytes_done:500,bytes_total:1000}
+                    };
+                    xmbGoto('retro');
+                    xmbRender();
+                    document.body.dataset.retroSpinner =
+                      document.querySelector('.xmb-item.on .xmb-install-ring') ? 'present' : 'missing';
+                    document.body.dataset.retroProgress =
+                      document.querySelector('.xmb-item.on [role="progressbar"]')?.getAttribute('aria-valuenow') || 'missing';
+                    xmbPress('accept');
+                    document.body.dataset.retroSide =
+                      xmb.nav.side && document.querySelector('#xmb-side-title')?.textContent.includes('GPSP') ? 'open' : 'missing';
+                    document.body.dataset.retroRom =
+                      document.querySelector('#xmb-side-list')?.textContent.includes('Aurora GBA') ? 'listed' : 'missing';
+                    // Complete PC-only installation while the ROM side list
+                    // is open. The side subtitle must refresh with the live
+                    // core readiness and the selection must remain open.
+                    ui.state.retro.roms[0].core_available = true;
+                    ui.state.retro_install.progress.active = false;
+                    ui.state.retro_install.status = 'ready';
+                    xmbRender();
+                    document.body.dataset.retroSideFresh =
+                      xmb.nav.side && !document.querySelector('#xmb-side-list')?.textContent.includes('Instalando') ?
+                      'ready' : 'stale';
+                  }, 650);
+                });</script>"""
+                html = html.replace('</body>', injected + '</body>')
             return self._answer(html.encode('utf-8'), 'text/html; charset=utf-8')
         return super().do_GET()
 
@@ -137,6 +180,16 @@ class BrowserLocaleTest(unittest.TestCase):
             again = self.browser_dom(profile, 'en-US')
             self.assertIn('<html lang="es"', again)
             self.assertIn('>Ajustes</span>', again)
+
+    def test_retro_install_spinner_keeps_rom_side_menu_and_refreshes_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            page = self.browser_dom(Path(directory) / 'retro', 'es-ES',
+                                    'retro-installer')
+            self.assertIn('data-retro-spinner="present"', page)
+            self.assertIn('data-retro-progress="50"', page)
+            self.assertIn('data-retro-side="open"', page)
+            self.assertIn('data-retro-rom="listed"', page)
+            self.assertIn('data-retro-side-fresh="ready"', page)
 
 
 if __name__ == '__main__':

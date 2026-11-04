@@ -2,6 +2,15 @@
 
 **[English](CHANGELOG.md)** · **Español**
 
+## v0.1.3 — Juega a tus ROMs sin pasos innecesarios · 4 de noviembre de 2026
+
+- RetroArch y sus núcleos compatibles permitidos se preparan **en segundo plano en Windows** al detectar emuladores PSP. Las instalaciones antiguas con política manual pueden iniciarlo al seleccionar el emulador, sin pedir que la PSP vuelva a almacenamiento USB.
+- El XMB muestra el progreso en cada icono, con una animación discreta o un indicador fijo si se prefiere reducir el movimiento.
+- Selecciona emulador → abre el menú lateral de ROMs → selecciona una ROM preparada para jugar en RetroArch, conservando las comprobaciones del mando y los guardados.
+- Las ROMs que falten en el PC requieren una copia USB aprobada expresamente. No se modifican instalaciones externas de RetroArch ni se descargan núcleos restringidos, ROMs o BIOS.
+- Prueba real PC-only: RetroArch 1.22.2 oficial y el núcleo mGBA se descargaron, extrajeron y verificaron en una carpeta temporal aislada; se limpió después, sin ejecutar el contenido descargado ni conectar la PSP.
+- No se ha cambiado el firmware, el EBOOT, el protocolo USB ni la lógica de sincronización de partidas.
+
 ## v0.1.2 — Un mismo Dock, dos idiomas · 4 de noviembre de 2026
 
 - El mismo ejecutable de Windows y el mismo EBOOT incluyen **inglés y español**; no necesitas instalar versiones separadas ni mover los guardados al cambiar de idioma.

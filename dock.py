@@ -438,14 +438,14 @@ class Dock:
         self.config_path = self.data / 'settings.json'
         bundled = ROOT / 'tools/PPSSPP/PPSSPPWindows64.exe'
         defaults = {'emulator': str(bundled) if bundled.is_file() else '', 'retroarch': '',
-                    'retro_install_policy':'ask',
+                    'retro_install_policy':'auto',
                     'retro_button_layout':'nintendo', 'library': str(self.data / 'library'),
                     'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3,
                     'backend': 'directx11','storage_root':str(self.data)}
         self.config = read_json(self.config_path, defaults)
         self.config.setdefault('storage_root',str(self.data))
         self.config.setdefault('retroarch', '')
-        self.config.setdefault('retro_install_policy', 'ask')
+        self.config.setdefault('retro_install_policy', 'auto')
         self.config.setdefault('retro_button_layout','nintendo')
         # Opt-in, per-DISC_ID PC texture capture/generation. The worker never
         # accesses PSP USB, game saves or an existing community texture pack.
@@ -843,11 +843,6 @@ class Dock:
                              'roms':found['roms']})
             self.retro_volume = serial
             self.last_emulators, self.last_roms = found['emulators'], found['roms']
-            if self.config.get('retro_install_policy')=='auto':
-                # PC-only downloads after a live read-only PSP inventory.
-                # Network traffic belongs to a separate worker, never the
-                # PSP USB scan or the /api/state HTTP thread.
-                self.start_retro_install(automatic=True)
         roms = []
         cores = {system:retroarch_core(self.config['retroarch'],system) for system in SYSTEMS}
         for index, rom in enumerate(self.last_roms, 1):
@@ -868,6 +863,10 @@ class Dock:
         self.cached_retro_results = {'emulators':list(self.last_emulators),'roms':roms,
                                      'retroarch_available':any(retroarch_core(self.config['retroarch'], system)
                                            for system in SYSTEMS)}
+        # The remembered, validated emulator inventory remains useful when
+        # the PSP switches from USB storage to HID. All installer I/O is PC-only.
+        if self.config.get('retro_install_policy') == 'auto' and self.last_emulators:
+            self.start_retro_install(automatic=True)
         return self.cached_retro_results
 
     def retro_install_state(self):
@@ -881,19 +880,30 @@ class Dock:
     def start_retro_install(self, automatic=False):
         """Schedule a *PC-only* installation of detected emulator equivalents.
 
-        Installer mode will set policy='auto' after selecting storage_root;
-        legacy installations default to 'ask' for no surprise downloads.
+        A verified remembered PSP inventory is sufficient in HID mode; the
+        PSP filesystem is never needed for the PC dependency installation.
         """
         if self.demo or self.recovery_required or self.running() or self.session.get('pending_return'):
             if automatic:return False
             raise ValueError('Termina o recupera la sesión antes de instalar emuladores.')
-        if self.storage_polling_paused or self.session.get('exit_requested'):
+        # The USB scanner is deliberately paused throughout native HID mode.
+        # That is NOT a reason to block a PC-only RetroArch download: the
+        # verified emulator catalog was remembered before the mode change.
+        if self.session.get('exit_requested'):
             if automatic:return False
-            raise ValueError('La PSP está cambiando de modo o saliendo del Dock.')
+            raise ValueError('Termina la salida del Dock antes de instalar emuladores.')
+        if (not self.last_emulators or not self.retro_volume or
+                not all(isinstance(emu.get('systems'), list) and
+                        all(system in SYSTEMS for system in emu['systems'])
+                        for emu in self.last_emulators)):
+            if automatic:return False
+            raise ValueError('Detecta primero los emuladores de una PSP verificada.')
         root=self.root()
-        if root is None or not self.last_emulators or volume_identity(root)!=self.retro_volume:
+        if root is not None and volume_identity(root)!=self.retro_volume:
             if automatic:return False
-            raise ValueError('Conecta una PSP en almacenamiento Sony y detecta primero sus emuladores.')
+            raise ValueError('El inventario pertenece a otra Memory Stick.')
+        if self.config.get('retro_install_policy') == 'off':
+            return False
         if automatic and self.config.get('retro_install_policy')!='auto':
             return False
         plan=pc_retro_install_plan(self.config['storage_root'],self.last_emulators,
@@ -938,8 +948,17 @@ class Dock:
                         raise ValueError('La ubicación cambió durante la instalación.')
                     self.config['retroarch']=str(managed_retroarch(storage))
                     atomic_json(self.config_path,self.config)
-                    self.cached_retro_results=None
-                    self.last_storage_scan_at=0
+                    # Publish core availability straight into the immutable
+                    # presentation cache. HID has no FAT volume to rescan.
+                    if self.cached_retro_results is not None:
+                        refreshed=[]
+                        for rom in self.cached_retro_results['roms']:
+                            refreshed.append({**rom,'core_available':bool(
+                                retroarch_core(self.config['retroarch'],rom['system']))})
+                        self.cached_retro_results={
+                            **self.cached_retro_results, 'roms':refreshed,
+                            'retroarch_available':any(retroarch_core(
+                                self.config['retroarch'],system) for system in SYSTEMS)}
                     self.events.record('retro_emulators_installed',evidence='pc_observed',
                                        count=len(result['installed_cores']),
                                        result='verified_pc_install')

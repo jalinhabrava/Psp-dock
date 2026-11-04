@@ -125,7 +125,8 @@ class DockProductSessionTests(unittest.TestCase):
         # Ignore a real bundled PPSSPP in the checkout. These tests exercise
         # session/file orchestration; launch cases supply their own fake exe.
         # Persist this choice so recovery fixtures inherit the same isolation.
-        self.dock.settings({'psp_root':str(self.psp), 'emulator':''})
+        self.dock.settings({'psp_root':str(self.psp), 'emulator':'',
+                            'retro_install_policy':'off'})
         self.transport = FakeTransport(self.psp)
         self.product = DockProductSession(self.dock, self.transport)
         self.dock.product_session = self.product
