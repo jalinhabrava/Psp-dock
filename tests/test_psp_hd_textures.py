@@ -10,12 +10,12 @@ try:
 except ImportError:
     Image = None
 
-import ppsspp_graphics as gfx
-import psp_hd_textures as hd
+import psp_dock.emulation.ppsspp_graphics as gfx
+import psp_dock.emulation.psp_hd_textures as hd
 from dock import Dock
 from tests.test_psp_artwork import rec, write_fixture_cso, write_fixture_iso, PNG
 from tests.test_psp_game_metadata import fixture_sfo
-from psp_artwork import SECTOR
+from psp_dock.media.psp_artwork import SECTOR
 
 
 DISC = "NPJH50053"

@@ -1,6 +1,6 @@
 import unittest
 
-from hid_lab_watch import classify
+from tools.labs.hid_lab_watch import classify
 
 
 class HidLabWatchTests(unittest.TestCase):

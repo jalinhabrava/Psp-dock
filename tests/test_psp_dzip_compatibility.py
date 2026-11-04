@@ -6,11 +6,11 @@ import tempfile
 import unittest
 import zlib
 
-from psp_dzip_compatibility import (
+from psp_dock.emulation.psp_dzip_compatibility import (
     DzipProofError, DzipEnvelope, ReferenceCase, DecodedStream,
     compare_headers, parse_envelope, probe_game_iso, verify_cross_game_decoder,
 )
-from psp_artwork import SECTOR
+from psp_dock.media.psp_artwork import SECTOR
 from tests.test_psp_dariusburst_re import synthetic_dariusburst_iso
 from tests.test_psp_game_metadata import fixture_sfo
 from tests.test_psp_artwork import PNG, rec

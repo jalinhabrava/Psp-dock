@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from vsh_plugin_disarm import plan_disarm, disarm, DisarmError
-from vsh_plugin_stage import ARM_TOKEN, STAGE_DIR
+from tools.psp.vsh_plugin_disarm import plan_disarm, disarm, DisarmError
+from tools.psp.vsh_plugin_stage import ARM_TOKEN, STAGE_DIR
 
 
 class DisarmTests(unittest.TestCase):
@@ -65,7 +65,7 @@ class DisarmTests(unittest.TestCase):
             self.marker.write_bytes(b"changed concurrently")
             return result
 
-        with patch("vsh_plugin_disarm.plan_disarm", side_effect=tamper):
+        with patch("tools.psp.vsh_plugin_disarm.plan_disarm", side_effect=tamper):
             with self.assertRaisesRegex(DisarmError, "cambió"):
                 disarm(self.root)
         self.assertEqual(call_count, 1)

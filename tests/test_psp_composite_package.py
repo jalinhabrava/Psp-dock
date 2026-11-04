@@ -2,7 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from psp_composite_package import FIRMWARE, FILES, REMOTE_FOLDER, make_package, verify_package
+from tools.psp.psp_composite_package import FIRMWARE, FILES, REMOTE_FOLDER, make_package, verify_package
 
 
 @unittest.skipUnless((FIRMWARE / 'dist/dockcomposite.elf').is_file(),

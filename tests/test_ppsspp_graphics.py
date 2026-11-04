@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import ppsspp_graphics as g
+import psp_dock.emulation.ppsspp_graphics as g
 
 
 class GraphicsTests(unittest.TestCase):

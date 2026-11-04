@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 import wave
 
-from xmb_sounds import UiSoundPlayer, validate_wav
+from psp_dock.media.xmb_sounds import UiSoundPlayer, validate_wav
 
 
 def fixture_wav():
@@ -72,7 +72,7 @@ class UiSoundsTests(unittest.TestCase):
         self.assertFalse(self.player.play('cursor'))
 
     def test_symlink_rejected(self):
-        with patch('xmb_sounds._no_links', side_effect=ValueError('symlink')):
+        with patch('psp_dock.media.xmb_sounds._no_links', side_effect=ValueError('symlink')):
             self.assertFalse(self.player.play('cursor'))
         self.native.assert_not_called()
 

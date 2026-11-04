@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 import unittest
 
-from windows_storage_identity import physical_disk
+from psp_dock.core.windows_storage_identity import physical_disk
 
 
 class FakeApi:

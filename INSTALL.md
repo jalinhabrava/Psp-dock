@@ -31,7 +31,7 @@ Memory Stick/
 
 The ZIP also contains a verification manifest and installation instructions. **The EBOOT by itself is not enough**: it must have the matching `docknative.prx` next to it.
 
-**Upgrading an existing PSP Dock?** If the `PSPDockNative` folder already exists, do **not** overwrite it without a backup. Save a copy of the previous app and your saves, then follow the verified upgrade process described in [psp_native_upgrade.py](psp_native_upgrade.py). It checks your PSP's identity and the backup before replacing the application.
+**Upgrading an existing PSP Dock?** If the `PSPDockNative` folder already exists, do **not** overwrite it without a backup. Save a copy of the previous app and your saves, then follow the verified upgrade process described in [psp_native_upgrade.py](tools/psp/psp_native_upgrade.py). It checks your PSP's identity and the backup before replacing the application.
 
 Nothing in this package writes to the PSP flash or installs ARK plugins. The primary test device is a PSP-2003 running 6.61 and ARK-5; other devices and firmwares may need additional work.
 

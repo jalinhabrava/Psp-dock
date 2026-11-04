@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import ppsspp_psp_button_map as mapping
+import psp_dock.emulation.ppsspp_psp_button_map as mapping
 
 
 DEFAULT_PROFILE = (

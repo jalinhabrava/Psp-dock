@@ -24,6 +24,7 @@ if (-not $SkipInstall) {
 & $pythonExe -m PyInstaller --noconfirm --clean --onefile --windowed `
     --name 'PSP-Dock' --icon (Join-Path $root 'windows/PSP-Dock.ico') `
     --paths $root --add-data "$(Join-Path $root 'web');web" `
+    --add-data "$(Join-Path $root 'texture_catalog_sources.json');." `
     --distpath $dist --workpath (Join-Path $work 'pyinstaller') `
     --specpath $work (Join-Path $PSScriptRoot 'windows_entry.py')
 if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }

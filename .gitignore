@@ -3,7 +3,15 @@ data/
 runtime/
 work/
 references/
+# Historical local emulator installations live under tools/ (ignored), but
+# the reorganized Python source packages are deliberately version-controlled.
 tools/
+!tools/
+tools/*
+!tools/__init__.py
+!tools/labs/
+!tools/psp/
+!tools/system/
 backups/
 *.log
 *.jsonl
@@ -134,6 +142,7 @@ docs/*
 !docs/INICIO-AUTOMATICO-WINDOWS.md
 !docs/VIABILIDAD.md
 !docs/XMB-SONIDOS-DESDE-PSP.md
+!docs/PROJECT-STRUCTURE.md
 
 # Reviewed PSP Dock artwork embedded in the composite test EBOOT.
 !homebrew/composite-mscdemo/assets/ICON0.PNG

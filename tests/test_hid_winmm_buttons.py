@@ -1,7 +1,7 @@
 import unittest
 import ctypes as C
 
-import hid_winmm_buttons as joy
+import psp_dock.devices.hid_winmm_buttons as joy
 
 
 class HidWinmmButtonTests(unittest.TestCase):

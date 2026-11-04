@@ -5,8 +5,8 @@ import re
 import tempfile
 import unittest
 
-from install_usb_import_gate import install_package
-import install_usb_import_gate_v06 as v06
+from tools.psp.install_usb_import_gate import install_package
+import tools.psp.install_usb_import_gate_v06 as v06
 
 
 class GateV06Tests(unittest.TestCase):

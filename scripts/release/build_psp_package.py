@@ -21,7 +21,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from psp_native_package import FILES, REMOTE_FOLDER, make_package, verify_package
+from tools.psp.psp_native_package import FILES, REMOTE_FOLDER, make_package, verify_package
 
 
 EN = """PSP Dock - installation (English)

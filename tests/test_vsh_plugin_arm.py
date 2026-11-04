@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import vsh_plugin_stage as stage
-from vsh_plugin_arm import arm_observer
-from vsh_plugin_status import inspect_volume
+import tools.psp.vsh_plugin_stage as stage
+from tools.psp.vsh_plugin_arm import arm_observer
+from tools.psp.vsh_plugin_status import inspect_volume
 
 
 class VshArmTests(unittest.TestCase):

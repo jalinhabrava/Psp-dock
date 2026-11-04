@@ -24,9 +24,8 @@ import wave
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 os.environ["PSP_DOCK_TEST_NO_REAL_USB"] = "1"
-from native_dock import REVISION, FIRMWARE_BUILDS, FIRMWARE_CAPABILITIES
+from psp_dock.devices.native_dock import REVISION, FIRMWARE_BUILDS, FIRMWARE_CAPABILITIES
 
 GAME = "a" * 24
 TITLE = "Synthetic entry test"

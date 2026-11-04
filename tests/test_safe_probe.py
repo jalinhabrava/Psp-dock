@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from install_safe_probe import PROBES, confirm_install, destination_for, stage_binary
+from tools.psp.install_safe_probe import PROBES, confirm_install, destination_for, stage_binary
 
 
 class SafeProbePackagingTests(unittest.TestCase):
@@ -67,8 +67,8 @@ class SafeProbePackagingTests(unittest.TestCase):
 
     def test_retired_usb_probe_is_refused_before_any_device_operation(self):
         from unittest.mock import patch
-        import install_safe_probe
-        with patch("sys.argv", ["install_safe_probe.py", "--mode", "usb-steps"]), \
+        import tools.psp.install_safe_probe as install_safe_probe
+        with patch("sys.argv", ["tools.psp.install_safe_probe.py", "--mode", "usb-steps"]), \
              patch.object(install_safe_probe, "windows_devices",
                           side_effect=AssertionError("Must not touch PSP")):
             self.assertEqual(install_safe_probe.main(), 1)

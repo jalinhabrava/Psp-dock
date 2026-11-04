@@ -12,7 +12,7 @@ import urllib.request
 from unittest.mock import Mock, patch
 
 import dock
-from dock_lifecycle import UiLifecycle
+from psp_dock.core.dock_lifecycle import UiLifecycle
 
 
 A = 'a' * 32
@@ -23,12 +23,12 @@ B = 'b' * 32
 def focus_observer():
     # The local review mirror intentionally omits this Windows adapter.
     # The complete Windows suite patches the real function directly.
-    if importlib.util.find_spec('ppsspp_windows_flow') is not None:
-        with patch('ppsspp_windows_flow.return_to_xmb') as focus:
+    if importlib.util.find_spec('psp_dock.emulation.ppsspp_windows_flow') is not None:
+        with patch('psp_dock.emulation.ppsspp_windows_flow.return_to_xmb') as focus:
             yield focus
     else:
         focus = Mock()
-        with patch.dict(sys.modules, {'ppsspp_windows_flow':Mock(return_to_xmb=focus)}):
+        with patch.dict(sys.modules, {'psp_dock.emulation.ppsspp_windows_flow':Mock(return_to_xmb=focus)}):
             yield focus
 
 

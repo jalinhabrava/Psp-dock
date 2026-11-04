@@ -9,8 +9,8 @@ import unittest
 from unittest.mock import Mock, patch
 import wave
 
-import xmb_sound_import as importer
-from xmb_sounds import SOUNDS, UiSoundPlayer
+import psp_dock.media.xmb_sound_import as importer
+from psp_dock.media.xmb_sounds import SOUNDS, UiSoundPlayer
 
 
 def synthetic_sounds():

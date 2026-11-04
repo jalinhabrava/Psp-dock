@@ -3,8 +3,8 @@ from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
-from dock_experience import Experience, ExperienceError, Stage
-from usb_role_adapter import (
+from psp_dock.core.dock_experience import Experience, ExperienceError, Stage
+from psp_dock.devices.usb_role_adapter import (
     INTENT_ONLY, OBSERVATION_ONLY,
     HostUsbStatus, IdentityMismatchError, ObservedRole,
     OneShotReturnLedger, PollingContractError, PollingMode, PollingPauseRequest,

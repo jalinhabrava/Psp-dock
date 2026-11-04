@@ -1,7 +1,7 @@
 import unittest
 from dataclasses import replace
 
-from usb_handoff import (
+from psp_dock.devices.usb_handoff import (
     Command, Handoff, HandoffError, Phase,
     ROLE_CAPABILITIES, RoleBridgeProof,
 )

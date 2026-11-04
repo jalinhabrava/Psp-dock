@@ -3,8 +3,8 @@ import json
 import unittest
 from unittest.mock import patch
 
-from dock_experience import ExperienceError, Stage
-from experience_simulator import (
+from psp_dock.core.dock_experience import ExperienceError, Stage
+from tools.labs.experience_simulator import (
     MOCK_HID_SESSION, MOCK_SERIAL, MOCK_SONY_USB, SYNTHETIC_ONLY,
     MockIdentity, MockInventory, MockPSPDockSession, run_mock_journey,
 )

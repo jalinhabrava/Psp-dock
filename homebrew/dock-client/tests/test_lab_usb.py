@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import lab_return
-from psp_usb import PspStorage, UsbTransitionError
+from tools.labs import lab_return
+from psp_dock.devices.psp_usb import PspStorage, UsbTransitionError
 
 
 class LabReturnTests(unittest.TestCase):

@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 
 from PIL import Image
 import dock as app
-from psp_xmb_media import XMBAssetCache, media_key
+from psp_dock.media.psp_xmb_media import XMBAssetCache, media_key
 
 
 class MediaIntegrationTests(unittest.TestCase):
@@ -39,8 +39,8 @@ class MediaIntegrationTests(unittest.TestCase):
         original.write_bytes(self.png)
         with patch.object(self.dock, 'root', side_effect=AssertionError('No USB root')), \
              patch.object(self.dock, 'devices', side_effect=AssertionError('No USB discovery')), \
-             patch('psp_xmb_media.read_resource', side_effect=AssertionError('No game re-extraction')), \
-             patch('xmb_backgrounds.TARGET_WIDTH', 96):
+             patch('psp_dock.media.psp_xmb_media.read_resource', side_effect=AssertionError('No game re-extraction')), \
+             patch('psp_dock.media.xmb_backgrounds.TARGET_WIDTH', 96):
             self.assertIsNone(self.dock.xmb_background_hd(self.game['id']))
             worker = self.dock._background_cache
             self.assertTrue(worker.wait(timeout=10))
@@ -62,7 +62,7 @@ class MediaIntegrationTests(unittest.TestCase):
 
     def test_optional_missing_image_library_leaves_original(self):
         self.cache.path(self.key, 'background').write_bytes(self.png)
-        with patch.dict('sys.modules', {'xmb_backgrounds': None}):
+        with patch.dict('sys.modules', {'psp_dock.media.xmb_backgrounds': None}):
             self.assertIsNone(self.dock.xmb_background_hd(self.game['id']))
         self.assertEqual(self.cache.cached(self.key, 'background'), self.png)
 

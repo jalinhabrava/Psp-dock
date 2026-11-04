@@ -98,7 +98,7 @@ node --test "tests/*.test.js"
 
 La prueba de movimiento del XMB utiliza un navegador Chromium real, una biblioteca de demostración aislada y **no accede a la PSP**.
 
-Puedes consultar el [protocolo y homebrew](homebrew/native-dock/README.md), el [historial del proyecto](CHANGELOG.es.md) y las [notas de investigación HD](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+Puedes consultar la [estructura del código Python](docs/PROJECT-STRUCTURE.md), el [protocolo y homebrew](homebrew/native-dock/README.md), el [historial del proyecto](CHANGELOG.es.md) y las [notas de investigación HD](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
 
 </details>
 

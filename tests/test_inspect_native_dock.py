@@ -7,9 +7,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-import inspect_native_dock as inspect
-import native_dock as native
-from psp_usb import PspStorage
+import tools.labs.inspect_native_dock as inspect
+import psp_dock.devices.native_dock as native
+from psp_dock.devices.psp_usb import PspStorage
 
 
 PATH = r'\\?\hid#vid_054c&pid_01cd&mi_01#7&cafe&0&0000#{guid}'

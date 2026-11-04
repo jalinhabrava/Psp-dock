@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from install_usb_import_gate import DEST, install_package
+from tools.psp.install_usb_import_gate import DEST, install_package
 
 
 class InstallUsbImportGateTests(unittest.TestCase):

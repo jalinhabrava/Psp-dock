@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import psp_retro_backup as retro
+import psp_dock.emulation.psp_retro_backup as retro
 
 
 SERIAL = '2958455453'

@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import bridge_hid as hid
+import psp_dock.devices.bridge_hid as hid
 
 SESSION = bytes(range(1, 17))
 PATH = r"\\?\hid#vid_054c&pid_01cb#test#{00000000-0000-0000-0000-000000000000}"

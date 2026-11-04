@@ -3,8 +3,8 @@ import copy
 import unittest
 from unittest.mock import Mock
 
-import bridge_hid
-from psp_dock_identity import DockIdentityError, probe_dock
+import psp_dock.devices.bridge_hid as bridge_hid
+from psp_dock.devices.psp_dock_identity import DockIdentityError, probe_dock
 
 
 SESSION = '0102030405060708090a0b0c0d0e0f10'

@@ -2,8 +2,8 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-import usb_transport_observer as obs
-from psp_usb import PspStorage, UsbTransitionError
+import psp_dock.devices.usb_transport_observer as obs
+from psp_dock.devices.psp_usb import PspStorage, UsbTransitionError
 
 
 STORAGE = {

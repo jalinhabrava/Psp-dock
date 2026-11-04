@@ -77,7 +77,7 @@ la implementación real del juego.
 
 Escanear otro juego legalmente disponible desde su copia local:
 
-    python -m psp_dzip_compatibility "RUTA_DEL_JUEGO.iso"
+    python -m psp_dock.emulation.psp_dzip_compatibility "RUTA_DEL_JUEGO.iso"
 
 Pruebas del verificador:
 

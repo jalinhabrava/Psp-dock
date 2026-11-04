@@ -35,10 +35,9 @@ from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, build_opener
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
 # These two modules are pure models. Never import/instantiate the live Dock.
-from dock_preflight import assess_storage
-from dock_product_flow import MESSAGES, PHASES, plan_session_return
+from psp_dock.core.dock_preflight import assess_storage
+from psp_dock.core.dock_product_flow import MESSAGES, PHASES, plan_session_return
 
 VOLUME = "QA-FIXTURE-ONLY"
 PSP_ROOT = "Q:\\"

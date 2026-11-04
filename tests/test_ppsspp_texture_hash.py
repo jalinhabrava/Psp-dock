@@ -1,7 +1,7 @@
 """Known XXH64 reference vectors and PPSSPP content-hash memory rules."""
 import unittest
 
-from ppsspp_texture_hash import (
+from psp_dock.emulation.ppsspp_texture_hash import (
     TextureHashError, PPSSPP_SEED, ppsspp_content_hash,
     display_content_hash, xxh64,
 )

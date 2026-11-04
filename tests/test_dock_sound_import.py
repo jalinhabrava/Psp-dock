@@ -3,8 +3,8 @@ from unittest.mock import patch
 import unittest
 
 import test_dock_product_session as fixtures
-from dock_product_flow import ProductFlowError
-from xmb_sound_import import import_from_psp
+from psp_dock.core.dock_product_flow import ProductFlowError
+from psp_dock.media.xmb_sound_import import import_from_psp
 
 
 class AutomaticSoundImportTests(unittest.TestCase):
@@ -23,7 +23,7 @@ class AutomaticSoundImportTests(unittest.TestCase):
             self.assertEqual(verify_device(), self.psp)
             calls.append('import')
             return {'status': 'imported', 'ready': True}
-        with patch('dock_product_session.import_from_psp', side_effect=import_sounds) as imported:
+        with patch('psp_dock.core.dock_product_session.import_from_psp', side_effect=import_sounds) as imported:
             for _ in range(3):
                 self.product.snapshot()
             imported.assert_not_called()
@@ -33,7 +33,7 @@ class AutomaticSoundImportTests(unittest.TestCase):
             self.assertEqual(self.product.snapshot()['ui_sounds'], {'status':'imported','ready':True})
 
     def test_unsupported_optional_audio_does_not_block_inventory(self):
-        with patch('dock_product_session.import_from_psp',
+        with patch('psp_dock.core.dock_product_session.import_from_psp',
                    return_value={'status':'unsupported','ready':False}) as imported:
             self.offer()
             self.assertEqual(self.product.snapshot()['phase'], 'choosing')
@@ -47,13 +47,13 @@ class AutomaticSoundImportTests(unittest.TestCase):
             self.assertEqual(checked.call_count, 0)
             return result
         with patch.object(self.product, '_context_root', wraps=self.product._context_root) as checked, \
-                patch('xmb_sound_import.cache_status', return_value={'status':'cached','ready':True}), \
-                patch('dock_product_session.import_from_psp', side_effect=cached):
+                patch('psp_dock.media.xmb_sound_import.cache_status', return_value={'status':'cached','ready':True}), \
+                patch('psp_dock.core.dock_product_session.import_from_psp', side_effect=cached):
             self.offer()
         self.assertEqual(self.product.snapshot()['ui_sounds']['status'], 'cached')
 
     def test_device_guard_failure_is_not_treated_as_missing_optional_audio(self):
-        with patch('dock_product_session.import_from_psp', side_effect=ProductFlowError('Device changed')):
+        with patch('psp_dock.core.dock_product_session.import_from_psp', side_effect=ProductFlowError('Device changed')):
             self.tick()
         self.assertEqual(self.product.snapshot()['phase'], 'attention')
         self.assertFalse(self.product.snapshot()['can_choose'])

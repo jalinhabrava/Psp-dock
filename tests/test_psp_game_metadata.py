@@ -3,8 +3,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import psp_game_metadata as m
-from psp_artwork import SECTOR
+import psp_dock.media.psp_game_metadata as m
+from psp_dock.media.psp_artwork import SECTOR
 from tests.test_psp_artwork import rec, write_fixture_cso, write_fixture_iso
 
 

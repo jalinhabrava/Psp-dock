@@ -18,7 +18,7 @@ from dock import (
     Dock, default_data_path, launch_xmb_window,
     service_fingerprint, serve, read_json,
 )
-from setup_startup import choose_live_dir
+from psp_dock.core.setup_startup import choose_live_dir
 
 
 def _checked_server(data: Path, *, opener=None) -> dict | None:

@@ -7,11 +7,11 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import native_dock as native
-from native_shutdown import NativeShutdown, _atomic_json
-from native_storage_release import (StorageReleaseError, verify_media_released,
+import psp_dock.devices.native_dock as native
+from psp_dock.devices.native_shutdown import NativeShutdown, _atomic_json
+from psp_dock.devices.native_storage_release import (StorageReleaseError, verify_media_released,
     FSCTL_LOCK_VOLUME, FSCTL_DISMOUNT_VOLUME, IOCTL_STORAGE_EJECT_MEDIA)
-from psp_usb import PspStorage
+from psp_dock.devices.psp_usb import PspStorage
 
 
 SESSION = '1234567890abcdef1234567890abcdef'

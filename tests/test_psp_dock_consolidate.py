@@ -6,7 +6,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from psp_dock_consolidate import (
+from tools.psp.psp_dock_consolidate import (
     LABS, PLUGINS, PRODUCT, CleanupError, clean_plugin_config,
     consolidate, inspect, verify_cleanup_backup,
 )
@@ -100,7 +100,7 @@ class ConsolidatePSPLabsTests(unittest.TestCase):
         for name in PRODUCT:
             self.assertEqual((self.psp/'PSP/GAME/PSPDock'/name).read_bytes(),
                              (self.product/name).read_bytes())
-        from psp_backup import verify_archive
+        from tools.psp.psp_backup import verify_archive
         verify_archive(Path(result['critical_backup']))
         archive=verify_cleanup_backup(Path(result['legacy_backup']))
         self.assertEqual(archive['status'],'verified')

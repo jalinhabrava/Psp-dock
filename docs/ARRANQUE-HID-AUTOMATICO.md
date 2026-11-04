@@ -50,8 +50,8 @@ La tarea histórica **PSP Dock - USB HID** usaba el evento 410 del canal
 0206/0207, incluida la aceptación de las 22:23–22:24, no generaron ese evento.
 Por tanto no sirve para prometer apertura en cada reconexión.
 
-La tarea se eliminó con `setup_usb_event.py --remove`. La comprobación
-`setup_startup.py --status` devolvió **DESACTIVADO**. No se llegó a instalar
+La tarea se eliminó con `python -m psp_dock.core.setup_usb_event --remove`. La comprobación
+`python -m psp_dock.core.setup_startup --status` devolvió **DESACTIVADO**. No se llegó a instalar
 ni crear un servicio Windows. Los modos `--install` de los scripts antiguos
 quedan retirados; `--remove` y la consulta de estado se conservan para limpiar
 instalaciones antiguas. Los helpers de localización de datos siguen usados

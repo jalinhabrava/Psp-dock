@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import psp_msc_package as package
+import tools.psp.psp_msc_package as package
 
 
 def sfo(title=package.TITLE, *, duplicate=False):

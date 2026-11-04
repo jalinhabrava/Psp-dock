@@ -32,9 +32,8 @@ import sys
 import time
 
 # The script lives in tools; import only the existing read-only identity code.
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from native_dock import NativeHid, composite_parent, hid_instance, probe_native
-from psp_usb import identify
+from psp_dock.devices.native_dock import NativeHid, composite_parent, hid_instance, probe_native
+from psp_dock.devices.psp_usb import identify
 
 
 CR_SUCCESS, CR_NO_SUCH_DEVNODE, CR_BUFFER_SMALL = 0, 0x0D, 0x1A

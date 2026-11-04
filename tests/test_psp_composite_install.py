@@ -3,9 +3,9 @@ import json
 import tempfile
 import unittest
 
-from psp_backup import backup
-from psp_composite_install import install_package, plan_install
-from psp_composite_package import FILES, REMOTE_FOLDER, digest
+from tools.psp.psp_backup import backup
+from tools.psp.psp_composite_install import install_package, plan_install
+from tools.psp.psp_composite_package import FILES, REMOTE_FOLDER, digest
 
 
 SERIAL = '123456789'

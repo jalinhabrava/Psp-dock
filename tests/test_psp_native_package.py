@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import psp_native_package as package
+import tools.psp.psp_native_package as package
 from tests.test_psp_msc_package import pbp as legacy_pbp, sfo
 
 

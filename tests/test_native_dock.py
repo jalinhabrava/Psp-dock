@@ -8,10 +8,10 @@ from unittest.mock import patch
 import subprocess
 import threading
 
-import native_dock as native
-from connection_diagnostics import ConnectionDiagnostics
-from bridge_hid import VID
-from psp_usb import PspStorage
+import psp_dock.devices.native_dock as native
+from psp_dock.core.connection_diagnostics import ConnectionDiagnostics
+from psp_dock.devices.bridge_hid import VID
+from psp_dock.devices.psp_usb import PspStorage
 
 SESSION = '1234567890abcdef1234567890abcdef'
 PATH = r'\\?\hid#vid_054c&pid_01cd&mi_01#7&cafe&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}'
@@ -624,7 +624,7 @@ class TransportTests(unittest.TestCase):
         def wire(path, session, phase, operation, **options):
             observed.append((phase, operation, options.get('diagnostics')))
             return self.begin(path, session)
-        with patch('native_dock.request_command', side_effect=wire):
+        with patch('psp_dock.devices.native_dock.request_command', side_effect=wire):
             self.transport.begin_session(self.context('storage', 'initial'))
         self.assertEqual(observed, [(native.STORAGE, native.HOST_BEGIN, trace)])
 

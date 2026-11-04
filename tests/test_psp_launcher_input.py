@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
-import psp_launcher_input as controller
-from hid_winmm_buttons import JoyProbeError
+import psp_dock.devices.psp_launcher_input as controller
+from psp_dock.devices.hid_winmm_buttons import JoyProbeError
 
 
 class WindowsLauncherControllerTests(unittest.TestCase):

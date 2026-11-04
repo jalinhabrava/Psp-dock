@@ -6,8 +6,8 @@ import unittest
 from unittest.mock import patch
 
 from dock import Dock
-from retro_installer import managed_retroarch
-from psp_retro import SYSTEMS
+from psp_dock.emulation.retro_installer import managed_retroarch
+from psp_dock.emulation.psp_retro import SYSTEMS
 
 
 class InstallerIntegrationTests(unittest.TestCase):

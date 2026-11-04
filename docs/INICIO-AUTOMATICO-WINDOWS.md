@@ -18,7 +18,7 @@ El instalador busca una carpeta LIVE de PSP Dock existente, incluyendo la
 biblioteca del contenedor Codex si es la única. Si encuentra varias o ninguna,
 se detiene **sin crear una biblioteca en blanco**: ejecutar
 
-    D:\Python312\python.exe setup_startup.py --install --data "RUTA_LIVE_REAL"
+    py -3 -m psp_dock.core.setup_startup --install --data "RUTA_LIVE_REAL"
 
 La entrada inicia en el próximo login:
 
@@ -37,12 +37,12 @@ de sesión Windows.
 
 Para comprobar estado sin cambios:
 
-    D:\Python312\python.exe setup_startup.py --status
+    py -3 -m psp_dock.core.setup_startup --status
 
 Para desinstalar el inicio (sin borrar juegos, partidas ni configuración),
 usar Desactivar-inicio-automatico-Windows.cmd o:
 
-    D:\Python312\python.exe setup_startup.py --remove
+    py -3 -m psp_dock.core.setup_startup --remove
 
 El script solo elimina una entrada que contiene su marcador de propiedad
 PSP_DOCK_STARTUP_V1; se niega a reemplazar o borrar lanzadores ajenos.

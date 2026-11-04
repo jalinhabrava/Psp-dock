@@ -40,7 +40,7 @@ FAKE_STATE = {
                'availability': 'ready', 'size': 1024}],
     'saves': {'actions': [], 'conflicts': [], 'unchanged': 0},
     'session': {'running': False}, 'retro': {'roms': [], 'emulators': []},
-    'retro_saves': {'rows': [], 'pending': 0}, 'product_flow': {'enabled': False},
+    'psp_dock.emulation.retro_saves': {'rows': [], 'pending': 0}, 'product_flow': {'enabled': False},
 }
 
 

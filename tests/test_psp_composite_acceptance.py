@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from psp_composite_acceptance import run_probe, matching_hid_session
-from psp_winusb_transport import WinUSBTransport, WinUSBError
+from tools.psp.psp_composite_acceptance import run_probe, matching_hid_session
+from psp_dock.devices.psp_winusb_transport import WinUSBTransport, WinUSBError
 from tests.test_psp_composite_client import FakeUSB, PATH, NONCE
 
 
@@ -89,8 +89,8 @@ class CombinedAcceptanceTests(unittest.TestCase):
         def sample():
             return {'connected': True, 'source': 'psp_winmm',
                     'button_mask': int(clock[0] > 0.2)}
-        with patch('psp_composite_acceptance.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('psp_composite_acceptance.time.sleep', side_effect=sleep):
+        with patch('tools.psp.psp_composite_acceptance.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('tools.psp.psp_composite_acceptance.time.sleep', side_effect=sleep):
             report = run_probe(self.root / 'paced', rounds=2, min_duration_seconds=0.4,
                                enumerate_bulk=lambda: [PATH], open_transport=self.opener,
                                hid_probe=hid_report, read_input=sample,

@@ -31,7 +31,7 @@ Memory Stick/
 
 El ZIP incluye además un manifiesto de integridad y un archivo de instrucciones. El EBOOT, por sí solo, **no es suficiente**: necesita `docknative.prx` y los avisos de licencia en la misma carpeta.
 
-**Si PSPDockNative ya existe**, no copies encima sin más. Haz una copia de seguridad de la aplicación anterior y tus partidas y utiliza el procedimiento de actualización verificada documentado en [psp_native_upgrade.py](psp_native_upgrade.py). Estas herramientas de actualización también requieren verificar la PSP y el backup. No instales dos versiones distintas en la misma carpeta.
+**Si PSPDockNative ya existe**, no copies encima sin más. Haz una copia de seguridad de la aplicación anterior y tus partidas y utiliza el procedimiento de actualización verificada documentado en [psp_native_upgrade.py](tools/psp/psp_native_upgrade.py). Estas herramientas de actualización también requieren verificar la PSP y el backup. No instales dos versiones distintas en la misma carpeta.
 
 La distribución no modifica la memoria flash de la PSP, ni instala plugins ARK. Está dirigida a consolas compatibles con homebrew; la referencia principal de pruebas es PSP-2003, firmware 6.61 y ARK-5. Otras PSP o firmwares pueden necesitar trabajo adicional.
 

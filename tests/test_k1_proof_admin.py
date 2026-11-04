@@ -3,11 +3,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import k1_proof_admin as proof
-import psp_backup
-from k1_plugin_enable import K1_ON_LINE
-from k1_plugin_stage import K1StageError, K1_FILE, K1_STAGE_DIR, K1_BIN, CONFIG
-from vsh_plugin_stage import FILES, STAGE_DIR
+import tools.psp.k1_proof_admin as proof
+import tools.psp.psp_backup as psp_backup
+from tools.psp.k1_plugin_enable import K1_ON_LINE
+from tools.psp.k1_plugin_stage import K1StageError, K1_FILE, K1_STAGE_DIR, K1_BIN, CONFIG
+from tools.psp.vsh_plugin_stage import FILES, STAGE_DIR
 
 
 VSH_ON = b"vsh, ms0:/SEPLUGINS/PSPDockProbe/pspdockvsh.prx, on\n"

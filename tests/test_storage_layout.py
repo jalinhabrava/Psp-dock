@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from storage_layout import (
+from psp_dock.core.storage_layout import (
     StorageLocationError, fixed_local_folder, migrate_pc_data,
     choose_pc_storage_parent,
 )

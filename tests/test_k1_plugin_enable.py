@@ -3,11 +3,11 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import psp_backup
-import k1_plugin_enable as enable
-import k1_plugin_recovery as recover
-from k1_plugin_stage import K1StageError, K1_ENTRY, K1_BIN, K1_FILE, K1_STAGE_DIR
-from vsh_plugin_stage import CONFIG, FILES, STAGE_DIR
+import tools.psp.psp_backup as psp_backup
+import tools.psp.k1_plugin_enable as enable
+import tools.psp.k1_plugin_recovery as recover
+from tools.psp.k1_plugin_stage import K1StageError, K1_ENTRY, K1_BIN, K1_FILE, K1_STAGE_DIR
+from tools.psp.vsh_plugin_stage import CONFIG, FILES, STAGE_DIR
 
 USB = "USB\\VID_054C&PID_02D2\\K1_ENABLE_TEST"
 SERIAL = "2958455453"

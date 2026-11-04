@@ -2,8 +2,8 @@ import tempfile
 from pathlib import Path
 import unittest
 
-from vsh_plugin_stage import STAGE_DIR, CONFIG, ENTRY
-from vsh_plugin_status import parse_boot_marker, inspect_volume
+from tools.psp.vsh_plugin_stage import STAGE_DIR, CONFIG, ENTRY
+from tools.psp.vsh_plugin_status import parse_boot_marker, inspect_volume
 
 
 MARKER = (

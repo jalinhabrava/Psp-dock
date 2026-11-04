@@ -8,7 +8,7 @@ import ctypes as C
 from types import SimpleNamespace
 import unittest
 
-import native_dock as native
+import psp_dock.devices.native_dock as native
 from tests.test_native_dock import PATH, SESSION, report, status
 
 

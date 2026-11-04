@@ -100,7 +100,7 @@ node --test "tests/*.test.js"
 
 The XMB animation test uses a real Chromium browser and a synthetic game library. It **never accesses a real PSP**.
 
-Read about the [native homebrew](homebrew/native-dock/README.md), see the [changelog](CHANGELOG.md), or explore the [HD texture research](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+Read about the [Python project structure](docs/PROJECT-STRUCTURE.md), [native homebrew](homebrew/native-dock/README.md), see the [changelog](CHANGELOG.md), or explore the [HD texture research](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
 
 </details>
 
