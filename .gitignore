@@ -48,6 +48,7 @@ copy-decisions.json
 *.mp4
 *.png
 !assets/readme-hero.png
+!assets/readme-hero-es.png
 !homebrew/psp-dock-app/assets/ICON0.PNG
 !homebrew/psp-dock-app/assets/PIC0.PNG
 !homebrew/psp-dock-app/assets/PIC1.PNG

@@ -30,7 +30,7 @@ if ($LASTEXITCODE -ne 0) { throw 'PyInstaller failed' }
 
 $exe = Join-Path $dist 'PSP-Dock.exe'
 if (-not (Test-Path -LiteralPath $exe)) { throw 'Missing PSP-Dock.exe' }
-$asset = Join-Path $dist 'PSP-Dock-Windows-v0.1.1.exe'
+$asset = Join-Path $dist 'PSP-Dock-Windows-v0.1.2.exe'
 Move-Item -Force -LiteralPath $exe -Destination $asset
 Get-FileHash -Algorithm SHA256 -LiteralPath $asset | Format-List
 Write-Output "RELEASE_ASSET=$asset"

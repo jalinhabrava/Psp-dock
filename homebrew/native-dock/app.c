@@ -7,6 +7,7 @@
 #include <pspctrl.h>
 #include <pspmodulemgr.h>
 #include <pspdisplay.h>
+#include <psputility.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -17,6 +18,13 @@ PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,8);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;
+static PdnLanguage ui_language=PDN_LANG_EN;
+static void select_system_language(void) {
+    int value=-1;
+    if(sceUtilityGetSystemParamInt(PSP_SYSTEMPARAM_ID_INT_LANGUAGE,&value)>=0 &&
+       value==PSP_SYSTEMPARAM_LANGUAGE_SPANISH)ui_language=PDN_LANG_ES;
+}
+#define UI_TR(es,en) (ui_language==PDN_LANG_ES?(es):(en))
 
 /* PSP 8888 pixels are ABGR. The SDK's MSX glyphs occupy 8x8 pixels.
  * Text uses explicit pixel positions with leading, never its terminal
@@ -37,6 +45,10 @@ static void ui_line(int y,uint32_t color,const char *format,...) {
      * paints its background, so shorter values erase their old suffix. */
     for(i=0;i<64;i++)
         pspDebugScreenPutChar(14+(int)i*7,y,color,(uint8_t)(i<length?text[i]:' '));
+}
+static void draw_language_choice(void) {
+    ui_line(208,UI_MUTED,"TRIANGLE: %s  [%s]",
+        UI_TR("IDIOMA","LANGUAGE"),ui_language==PDN_LANG_ES?"ES":"EN");
 }
 
 static void ui_clear_body(void) {
@@ -123,17 +135,17 @@ static void draw_ep0_diagnostic(const PdnUiView *view) {
     diagnostic_result(submit,retained.submit_result,1);
     diagnostic_result(retcode,retained.retcode,1);
     diagnostic_result(parser,retained.parser_result,0);
-    ui_line(40,UI_MUTED,"DIAGNOSTICO RAM / VERSION %04X",(unsigned)PDN_REVISION);
+    ui_line(40,UI_MUTED,UI_TR("DIAGNOSTICO RAM / VERSION %04X","RAM DIAGNOSTICS / VERSION %04X"),(unsigned)PDN_REVISION);
     ui_line(68,view->warning?UI_ERROR:UI_TEAL,"%s",view->heading);
     ui_line(80,UI_MUTED,"USB %08X F %u ACK %u/%d H %u",
         (unsigned)state.usb_state,(unsigned)state.phase,(unsigned)state.sequence,
         (int)state.phase_result,(unsigned)state.host_confirmed);
-    ui_line(92,view->warning?UI_ERROR:UI_MUTED,"Error %08X paso %u cierre %08X",
+    ui_line(92,view->warning?UI_ERROR:UI_MUTED,UI_TR("Error %08X paso %u cierre %08X","Error %08X stage %u close %08X"),
         (unsigned)state.error,(unsigned)state.error_stage,(unsigned)state.cleanup_error);
     ui_line(104,UI_MUTED,"SET %u ENV %u FIN %u PAR %u",
         (unsigned)retained.set_seen,(unsigned)retained.recv_submissions,
         (unsigned)retained.completions,(unsigned)retained.parser_calls);
-    ui_line(116,UI_MUTED,"Setup %08X Valor/IF %08X Envio %s",
+    ui_line(116,UI_MUTED,UI_TR("Setup %08X Valor/IF %08X Envio %s","Setup %08X Value/IF %08X Send %s"),
         (unsigned)retained.setup,(unsigned)retained.value_index,submit);
     ui_line(128,UI_MUTED,"Len %u RX %d RC %s Gen %u/%u",
         (unsigned)(retained.setup>>16),(int)retained.recvsize,retcode,
@@ -141,26 +153,26 @@ static void draw_ep0_diagnostic(const PdnUiView *view) {
     ui_line(140,UI_MUTED,"Drop %u Parser %s Flags %02X RAM %u",
         (unsigned)retained.drop_reason,parser,
         (unsigned)retained.gate_flags,(unsigned)retained.generation);
-    ui_line(152,UI_MUTED,"CPU %u Sitio %u Aplica %u / Buffer bruto:",
+    ui_line(152,UI_MUTED,UI_TR("CPU %u Sitio %u Aplica %u / Buffer bruto:","CPU %u Site %u Apply %u / Raw buffer:"),
         (unsigned)state.worker_loops,(unsigned)state.worker_site,(unsigned)state.apply_count);
     for(row=0;row<4u;row++){
         pdn_ui_ep0_hex(line,&retained,row*16u);
         ui_line(164+(int)row*12,UI_MUTED,"%s",line);
     }
-    ui_line(212,UI_MUTED,"Ctrl %u HID %u Rechazos %u/%d",
+    ui_line(212,UI_MUTED,UI_TR("Ctrl %u HID %u Rechazos %u/%d","Ctrl %u HID %u Rejected %u/%d"),
         (unsigned)state.ctrl_requests,(unsigned)state.hid_reports,
         (unsigned)state.rejected_commands,(int)state.last_rejection);
     ui_line(230,UI_TEAL,"%s",view->action[0]?view->action:view->footer);
-    ui_line(244,UI_MUTED,"Nota musical: ocultar diagnostico RAM");
+    ui_line(244,UI_MUTED,UI_TR("Nota musical: ocultar diagnostico RAM","Music note: hide RAM diagnostics"));
     ui_line(258,UI_TEAL,"%s",view->exit_hint);
 }
 static void draw_status(int module_unloaded) {
     static int last_diagnostic=-1;
-    PdnUiView view=pdn_ui_present(&state,module_unloaded);
+    PdnUiView view=pdn_ui_present_lang(&state,module_unloaded,ui_language);
     int diagnostic=state.diagnostic_visible?2:(view.warning?1:0);
     if(diagnostic!=last_diagnostic){ui_clear_body();last_diagnostic=diagnostic;}
     if(diagnostic==2){draw_ep0_diagnostic(&view);return;}
-    if(diagnostic)ui_line(40,UI_MUTED,"DIAGNOSTICO / VERSION %04X",(unsigned)PDN_REVISION);
+    if(diagnostic)ui_line(40,UI_MUTED,UI_TR("DIAGNOSTICO / VERSION %04X","DIAGNOSTICS / VERSION %04X"),(unsigned)PDN_REVISION);
     else ui_line(40,UI_MUTED,"");
     ui_line(68,view.warning?UI_ERROR:UI_TEAL,"%s",view.heading);
     ui_line(92,UI_WHITE,"%s",view.context);
@@ -169,18 +181,18 @@ static void draw_status(int module_unloaded) {
     if(diagnostic){
         ui_line(156,UI_MUTED,"USB %08X  HID %u  IF %s",
             (unsigned)state.usb_state,(unsigned)state.hid_reports,view.interface_label);
-        ui_line(168,UI_MUTED,"Sony %u Fase %u ACK %u/%d Host %u",
+        ui_line(168,UI_MUTED,UI_TR("Sony %u Fase %u ACK %u/%d Host %u","Sony %u Phase %u ACK %u/%d Host %u"),
             (unsigned)state.sony_storage_started,(unsigned)state.phase,
             (unsigned)state.sequence,(int)state.phase_result,(unsigned)state.host_confirmed);
-        ui_line(180,UI_MUTED,"Actividad %u  Gen %u  Rechazos %u/%d",
+        ui_line(180,UI_MUTED,UI_TR("Actividad %u  Gen %u  Rechazos %u/%d","Activity %u  Gen %u  Rejected %u/%d"),
             (unsigned)state.activity,(unsigned)state.link_generation,
             (unsigned)state.rejected_commands,(int)state.last_rejection);
-        ui_line(192,UI_MUTED,"Paso %u Mod %u  Carg %02X Reus %02X",
+        ui_line(192,UI_MUTED,UI_TR("Paso %u Mod %u  Carg %02X Reus %02X","Step %u Mod %u  Load %02X Reuse %02X"),
             (unsigned)state.stage,(unsigned)state.dependency,
             (unsigned)state.modules_loaded,(unsigned)state.modules_borrowed);
-        ui_line(204,view.warning?UI_ERROR:UI_MUTED,"Error %08X en %u  Cierre %08X",
+        ui_line(204,view.warning?UI_ERROR:UI_MUTED,UI_TR("Error %08X en %u  Cierre %08X","Error %08X at %u  Close %08X"),
             (unsigned)state.error,(unsigned)state.error_stage,(unsigned)state.cleanup_error);
-        ui_line(216,UI_MUTED,"Ctrl %u  SETUP %08X  IF/valor %08X",
+        ui_line(216,UI_MUTED,UI_TR("Ctrl %u  SETUP %08X  IF/valor %08X","Ctrl %u  SETUP %08X  IF/value %08X"),
             (unsigned)state.ctrl_requests,(unsigned)state.last_setup,(unsigned)state.last_value_index);
     }else{
         ui_line(168,UI_TEAL,"%s",view.progress_visible?view.progress:"");
@@ -193,14 +205,14 @@ static void draw_status(int module_unloaded) {
 }
 static void draw_launcher_failure(const char *operation,int result,int status) {
     ui_clear_body();
-    ui_line(40,UI_MUTED,"DIAGNOSTICO / VERSION %04X",(unsigned)PDN_REVISION);
-    ui_line(68,UI_ERROR,"Arranque detenido");
-    ui_line(92,UI_WHITE,"No se pudo %s el controlador.",operation);
-    ui_line(112,UI_MUTED,"Archivo: docknative.prx");
-    ui_line(126,UI_MUTED,"No se ha iniciado una sesion de Dock.");
-    ui_line(156,UI_ERROR,"Resultado %08X  Estado %08X",(unsigned)result,(unsigned)status);
-    ui_line(230,UI_WHITE,"Fotografia esta pantalla para revisar el fallo.");
-    ui_line(258,UI_TEAL,"O  VOLVER AL XMB");
+    ui_line(40,UI_MUTED,UI_TR("DIAGNOSTICO / VERSION %04X","DIAGNOSTICS / VERSION %04X"),(unsigned)PDN_REVISION);
+    ui_line(68,UI_ERROR,UI_TR("Arranque detenido","Startup stopped"));
+    ui_line(92,UI_WHITE,UI_TR("No se pudo %s el controlador.","Could not %s the controller."),operation);
+    ui_line(112,UI_MUTED,UI_TR("Archivo: docknative.prx","File: docknative.prx"));
+    ui_line(126,UI_MUTED,UI_TR("No se ha iniciado una sesion de Dock.","No Dock session has started."));
+    ui_line(156,UI_ERROR,UI_TR("Resultado %08X  Estado %08X","Result %08X  Status %08X"),(unsigned)result,(unsigned)status);
+    ui_line(230,UI_WHITE,UI_TR("Fotografia esta pantalla para revisar el fallo.","Take a photo of this screen for support."));
+    ui_line(258,UI_TEAL,UI_TR("O  VOLVER AL XMB","O  RETURN TO XMB"));
 }
 static void wait_cancel(void) {
     SceCtrlData pad;int released=0;
@@ -213,36 +225,49 @@ static void wait_cancel(void) {
 }
 int main(void) {
     SceCtrlData pad;PdnLaunchArgs launch;SceUID module;
-    int result,exit_status=-1,release_seen=0,hold=0,unload_retry=0;
-    ui_init();
-    ui_line(76,UI_WHITE,"Tu PSP, tus juegos y tus partidas en el dock.");
-    ui_line(108,UI_MUTED,"Abre PSP Dock en Windows para empezar.");
-    ui_line(128,UI_MUTED,"Elige que copiar al comenzar la sesion.");
-    ui_line(168,UI_WHITE,"1. Sal de Conexion USB del XMB.");
-    ui_line(188,UI_WHITE,"2. Manten el cable conectado y pulsa X.");
-    ui_line(236,UI_TEAL,"X  INICIAR                O  VOLVER AL XMB");
+    int result,exit_status=-1,release_seen=0,hold=0,unload_retry=0,triangle_released=0;
+    select_system_language();ui_init();
+    ui_line(76,UI_WHITE,UI_TR("Tu PSP, tus juegos y tus partidas en el dock.","Your PSP, your games and saves in the dock."));
+    ui_line(108,UI_MUTED,UI_TR("Abre PSP Dock en Windows para empezar.","Open PSP Dock on Windows to get started."));
+    ui_line(128,UI_MUTED,UI_TR("Elige que copiar al comenzar la sesion.","Choose what to copy when the session starts."));
+    ui_line(168,UI_WHITE,UI_TR("1. Sal de Conexion USB del XMB.","1. Exit USB Connection in XMB."));
+    ui_line(188,UI_WHITE,UI_TR("2. Manten el cable conectado y pulsa X.","2. Keep USB connected and press X."));
+    ui_line(236,UI_TEAL,UI_TR("X  INICIAR                O  VOLVER AL XMB","X  START                 O  RETURN TO XMB"));
+    draw_language_choice();
     for(;;){
         sceCtrlPeekBufferPositive(&pad,1);
         if(!(pad.Buttons&PSP_CTRL_CROSS))release_seen=1;
+        if(!(pad.Buttons&PSP_CTRL_TRIANGLE))triangle_released=1;
+        if(triangle_released && (pad.Buttons&PSP_CTRL_TRIANGLE)){
+            ui_language=ui_language==PDN_LANG_ES?PDN_LANG_EN:PDN_LANG_ES;
+            triangle_released=0;
+            ui_line(76,UI_WHITE,UI_TR("Tu PSP, tus juegos y tus partidas en el dock.","Your PSP, your games and saves in the dock."));
+            ui_line(108,UI_MUTED,UI_TR("Abre PSP Dock en Windows para empezar.","Open PSP Dock on Windows to get started."));
+            ui_line(128,UI_MUTED,UI_TR("Elige que copiar al comenzar la sesion.","Choose what to copy when the session starts."));
+            ui_line(168,UI_WHITE,UI_TR("1. Sal de Conexion USB del XMB.","1. Exit USB Connection in XMB."));
+            ui_line(188,UI_WHITE,UI_TR("2. Manten el cable conectado y pulsa X.","2. Keep USB connected and press X."));
+            ui_line(236,UI_TEAL,UI_TR("X  INICIAR                O  VOLVER AL XMB","X  START                 O  RETURN TO XMB"));
+            draw_language_choice();
+        }
         if(pad.Buttons&PSP_CTRL_CIRCLE){sceKernelExitGame();return 0;}
         if(release_seen && (pad.Buttons&PSP_CTRL_CROSS))break;
         sceKernelDelayThread(100000);
     }
     memset(&state,0,sizeof(state));state.magic=PDN_LAUNCH_MAGIC;state.size=sizeof(state);
     launch.magic=PDN_LAUNCH_MAGIC;launch.size=sizeof(launch);launch.shared=&state;
-    ui_clear_body();ui_line(68,UI_TEAL,"Preparando PSP Dock...");
+    ui_clear_body();ui_line(68,UI_TEAL,UI_TR("Preparando PSP Dock...","Preparing PSP Dock..."));
     /* UI assets are resident. The kernel's idle preflight grants one bounded
      * USER resource export before starting the USB bus. No file opens occur
      * after the shared export acknowledgement or during the USB session.
      */
     module=sceKernelLoadModule("ms0:/PSP/GAME/PSPDockNative/docknative.prx",0,NULL);
     if(module<0){
-        draw_launcher_failure("cargar",module,0);
+        draw_launcher_failure(UI_TR("cargar","load"),module,0);
         wait_cancel();sceKernelExitGame();return 0;
     }
     result=sceKernelStartModule(module,sizeof(launch),&launch,&exit_status,NULL);
     if(result<0 || exit_status<0){
-        draw_launcher_failure("iniciar",result,exit_status);
+        draw_launcher_failure(UI_TR("iniciar","start"),result,exit_status);
         /* module_start starts no worker on failure; no USB is reachable. */
         sceKernelUnloadModule(module);
         wait_cancel();sceKernelExitGame();return 0;
@@ -268,7 +293,7 @@ int main(void) {
                     wait_cancel();break;
                 }
             }
-            ui_clear_footer();ui_line(230,UI_ERROR,"Esperando cierre: %08X / %08X",
+            ui_clear_footer();ui_line(230,UI_ERROR,UI_TR("Esperando cierre: %08X / %08X","Waiting to close: %08X / %08X"),
                 (unsigned)result,(unsigned)stopped);unload_retry=10;
         }
         sceKernelDelayThread(100000);

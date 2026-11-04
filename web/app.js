@@ -2250,6 +2250,16 @@ function xmbBuildSections() {
 
   const settingsValue = (key, fallback) => xmb.settings?.[key] ?? fallback;
   out.ajustes = [
+    { key: 'language', t: 'Idioma / Language', icon: 'info',
+      s: () => DockI18n.mode() === 'auto' ? 'Automático · ' + (DockI18n.locale() === 'es' ? 'Español' : 'English') :
+        DockI18n.locale() === 'es' ? 'Español' : 'English',
+      activate: () => xmbValues('Idioma / Language', [['auto', 'Automático · idioma del sistema'], ['es', 'Español'], ['en', 'English']],
+        DockI18n.mode(), (value) => {
+          DockI18n.setLanguage(value);
+          xmb.els.clear();
+          $('xmb-list').replaceChildren();
+          xmbRender();
+        }) },
     { key: 'gfx-default', t: 'Gráficos predeterminados', s: () => xmbGfxSummary(xmb.gfx.default?.choice) + ' · para juegos sin perfil propio', icon: 'graficos',
       focus: () => xmbLoadGraphics(null), activate: () => xmbOpenGraphics(null) },
     { key: 'retro-buttons', t: 'Controles RetroArch · PSP', icon: 'pad',
@@ -3014,7 +3024,12 @@ function xmbItemNode(key, item) {
     const text = document.createElement('div');
     text.className = 'xmb-tx';
     const title = document.createElement('b');
-    title.textContent = item.t;
+    if (item.game || key.includes('retro-sram-') || key.includes('save-') || key.includes('conflict-')) {
+      const userTitle = document.createElement('span');
+      userTitle.dataset.i18nSkip = 'true';
+      userTitle.textContent = item.t;
+      title.append(userTitle);
+    } else title.textContent = item.t;
     if (chip) { const c = document.createElement('span'); c.className = 'xmb-chip ' + chip[0]; c.textContent = chip[1]; title.append(c); }
     if (item.tag) { const c = document.createElement('span'); c.className = 'xmb-chip ' + (item.tag === 'PROPIO' ? 'pc' : 'inh'); c.textContent = item.tag; title.append(c); }
     const sub = document.createElement('small');
@@ -3332,7 +3347,7 @@ xmbRender();
 function updateClock() {
   // Como la PSP: día/mes y hora.
   const now = new Date();
-  $('clock').textContent = `${now.getDate()}/${now.getMonth() + 1} ${new Intl.DateTimeFormat('es-ES', { hour: '2-digit', minute: '2-digit' }).format(now)}`;
+  $('clock').textContent = `${now.getDate()}/${now.getMonth() + 1} ${new Intl.DateTimeFormat(DockI18n.locale() === 'es' ? 'es-ES' : 'en-GB', { hour: '2-digit', minute: '2-digit' }).format(now)}`;
 }
 updateClock();
 setInterval(updateClock, 30000);

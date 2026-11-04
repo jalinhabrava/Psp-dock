@@ -14,8 +14,35 @@ from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 ROOT = Path(__file__).resolve().parents[2]
 LOGO = ROOT / "homebrew/native-dock/assets/PIC0.PNG"
-OUTPUT = ROOT / "assets/readme-hero.png"
 W, H = 1600, 520
+COPY = {
+    "en": {
+        "filename": "readme-hero.png",
+        "eyebrow": "PSP REIMAGINED",
+        "tagline": "ONE CABLE. A NEW WAY TO PLAY.",
+        "title1": "Your PSP deserves",
+        "title2": "the big screen.",
+        "subtitle": "Your favorite games. A fresh way to play.",
+        "chips": [
+            ("XMB on your PC", 663, 401, 238),
+            ("Your PSP, your controller", 918, 401, 296),
+            ("Your saves go with you", 1232, 401, 316),
+        ],
+    },
+    "es": {
+        "filename": "readme-hero-es.png",
+        "eyebrow": "TU PSP, MÁS VIVA",
+        "tagline": "UN CABLE. OTRA FORMA DE JUGAR.",
+        "title1": "Tu PSP se merece",
+        "title2": "una pantalla grande.",
+        "subtitle": "Tus juegos de siempre. Una experiencia nueva.",
+        "chips": [
+            ("XMB en el PC", 663, 401, 238),
+            ("Tu PSP es el mando", 918, 401, 296),
+            ("Tus partidas, contigo", 1232, 401, 316),
+        ],
+    },
+}
 
 
 def font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -26,7 +53,8 @@ def font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf", size)
 
 
-def make_banner() -> None:
+def make_banner(locale: str) -> None:
+    copy = COPY[locale]
     # Deep ocean/ink palette from the PSP Dock application, not a screenshot.
     base = Image.new("RGB", (W, H))
     pixels = base.load()
@@ -77,36 +105,34 @@ def make_banner() -> None:
     d.rounded_rectangle((56, 69, 550, 448), radius=38,
                         fill=(2, 9, 18, 137), outline=(95, 224, 220, 50), width=2)
     d.rounded_rectangle((97, 98, 253, 132), radius=16, fill=(14, 133, 144, 95))
-    d.text((121, 104), "TU PSP, MÁS VIVA", font=font(15, bold=True),
+    d.text((116, 104), copy["eyebrow"], font=font(15, bold=True),
            fill=(171, 252, 235, 238))
     logo = Image.open(LOGO).convert("RGBA")
     logo.thumbnail((405, 225), Image.Resampling.LANCZOS)
     overlay.alpha_composite(logo, (int(303 - logo.width / 2), 150))
-    d.text((119, 386), "UN CABLE. OTRA FORMA DE JUGAR.", font=font(18, bold=True),
+    d.text((119, 386), copy["tagline"], font=font(18, bold=True),
            fill=(173, 212, 223, 225))
     # A little brand accent and a single readable marketing message.
     d.rounded_rectangle((598, 116, 608, 327), radius=5, fill=(25, 224, 208, 235))
-    d.text((660, 112), "Tu PSP se merece", font=font(65, bold=True),
+    d.text((660, 112), copy["title1"], font=font(65, bold=True),
            fill=(247, 253, 255, 255))
-    d.text((660, 193), "una pantalla grande.", font=font(65, bold=True),
+    d.text((660, 193), copy["title2"], font=font(65, bold=True),
            fill=(100, 249, 224, 255))
-    d.text((663, 297), "Tus juegos de siempre. Una experiencia nueva.", font=font(27),
+    d.text((663, 297), copy["subtitle"], font=font(27),
            fill=(207, 232, 239, 244))
-    chips = [
-        ("XMB en el PC", 663, 401, 238),
-        ("Tu PSP es el mando", 918, 401, 296),
-        ("Tus partidas, contigo", 1232, 401, 316),
-    ]
+    chips = copy["chips"]
     for label, x1, y1, width in chips:
         d.rounded_rectangle((x1, y1, x1 + width, y1 + 52), radius=23,
                             fill=(12, 61, 79, 213), outline=(65, 178, 179, 102))
         d.text((x1 + 21, y1 + 13), label, font=font(19, bold=True),
                fill=(232, 249, 252, 255))
     base = Image.alpha_composite(base, overlay).convert("RGB")
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    base.save(OUTPUT, optimize=True)
-    print(f"Banner: {OUTPUT} ({base.width}x{base.height}, {OUTPUT.stat().st_size:,} bytes)")
+    output = ROOT / "assets" / copy["filename"]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    base.save(output, optimize=True)
+    print(f"Banner {locale}: {output} ({base.width}x{base.height}, {output.stat().st_size:,} bytes)")
 
 
 if __name__ == "__main__":
-    make_banner()
+    for language in COPY:
+        make_banner(language)

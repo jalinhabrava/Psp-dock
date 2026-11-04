@@ -3367,7 +3367,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     self.end_headers()
                     self.wfile.write(icon)
                     return
-                files = {'/':'index.html','/app.js':'app.js','/style.css':'style.css'}
+                # The bilingual XMB loads a local, immutable translation
+                # catalog before app.js. Keep this explicit allowlist; never
+                # expose arbitrary paths inside the host filesystem.
+                files = {'/':'index.html','/i18n.js':'i18n.js',
+                         '/app.js':'app.js','/style.css':'style.css'}
                 name = files.get(self.path)
                 if not name:
                     return self.reply({'error':'No encontrado'},404)

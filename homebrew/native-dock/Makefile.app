@@ -1,6 +1,7 @@
 TARGET = pspdocknative
 OBJS = app.o native_resource_export.o native_resource_psp.o
 CFLAGS = -std=gnu11 -O2 -G0 -Wall -Wextra -Werror
+LIBS = -lpsputility
 ASFLAGS = $(CFLAGS)
 BUILD_PRX = 1
 EXTRA_TARGETS = EBOOT.PBP

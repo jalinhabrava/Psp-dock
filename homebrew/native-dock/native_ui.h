@@ -12,6 +12,121 @@
 #define PDN_UI_USB_ACTIVATED 0x200u
 #define PDN_UI_USB_CABLE_CONNECTED 0x20u
 
+typedef enum { PDN_LANG_EN = 0, PDN_LANG_ES = 1 } PdnLanguage;
+
+/* PSP debug screen uses a 7-bit bitmap font. Keep translations ASCII. */
+static inline const char *pdn_ui_tr(const char *es,PdnLanguage lang) {
+    static const struct { const char *es,*en; } messages[]={
+        {"preparar controlador","prepare controller"},
+        {"comprobar conexion USB","check USB connection"},
+        {"cargar modulo Sony","load Sony module"},
+        {"iniciar modulo Sony","start Sony module"},
+        {"iniciar bus USB","start USB bus"},
+        {"registrar mando HID","register HID controller"},
+        {"iniciar mando HID","start HID controller"},
+        {"iniciar Memory Stick","start Memory Stick"},
+        {"activar conexion USB","activate USB connection"},
+        {"esperar cable USB","wait for USB cable"},
+        {"conexion con Windows","Windows connection"},
+        {"reconfigurar conexion USB","reset USB connection"},
+        {"esperar cierre de Windows","wait for Windows to close"},
+        {"cerrar conexion USB","close USB connection"},
+        {"conexion detenida","connection stopped"},
+        {"etapa no identificada","unknown stage"},
+        {"Modulo %u: %s","Module %u: %s"},
+        {"Dependencia %u: no reconocida en esta version","Dependency %u: unknown in this version"},
+        {"Consulta la actividad en Windows.","Check progress on Windows."},
+        {"%u%% completado","%u%% complete"},
+        {"archivos","files"},
+        {"sin_asignar","unassigned"},
+        {"Cerrando PSP Dock","Closing PSP Dock"},
+        {"Windows ha solicitado el cierre de USB.","Windows requested USB shutdown."},
+        {"Espera a que termine la conexion.","Wait for the connection to close."},
+        {"Volver al XMB aparecera cuando sea posible.","Return to XMB will appear when safe."},
+        {"Puedes mantener el cable conectado.","You can leave the cable connected."},
+        {"Arranque detenido","Startup stopped"},
+        {"Error en la conexion","Connection error"},
+        {"Etapa %u: %s","Stage %u: %s"},
+        {"Consulta los codigos de diagnostico.","Check the diagnostic codes."},
+        {"No desconectes hasta el aviso de Windows.","Keep USB connected until Windows says so."},
+        {"Cierra PSP Dock en Windows para finalizar.","Close PSP Dock on Windows to finish."},
+        {"No se ha iniciado una sesion de PSP Dock.","No PSP Dock session has started."},
+        {"Espera a que se confirme el cierre.","Wait for shutdown confirmation."},
+        {"Preparando la salida al XMB.","Getting ready to return to XMB."},
+        {"Fotografia esta pantalla para revisar el fallo.","Take a photo of this screen for support."},
+        {"Aviso al cerrar PSP Dock","PSP Dock shutdown warning"},
+        {"Un modulo Sony no se ha descargado.","A Sony module could not be unloaded."},
+        {"El codigo de cierre queda en el diagnostico.","See diagnostics for the shutdown code."},
+        {"Fotografia el aviso antes de salir.","Take a photo of the warning before exiting."},
+        {"PSP Dock detenido","PSP Dock stopped"},
+        {"Preparando el regreso al XMB.","Getting ready to return to XMB."},
+        {"Espera a que termine el cierre de la conexion.","Wait for the connection to close."},
+        {"Preparando PSP Dock","Preparing PSP Dock"},
+        {"Preparando los sonidos de tu PSP.","Preparing your PSP sounds."},
+        {"Espera un momento.","Just a moment."},
+        {"Conecta el cable cuando aparezca LISTO.","Connect USB when READY appears."},
+        {"La tarjeta de memoria aun no esta disponible.","Memory Stick is not ready yet."},
+        {"Espera en esta pantalla.","Stay on this screen."},
+        {"Conexion interrumpida","Connection interrupted"},
+        {"Conexion cancelada","Connection canceled"},
+        {"Revisa el estado de tu sesion en Windows.","Check your session status on Windows."},
+        {"Windows no ha iniciado la sincronizacion.","Windows has not started syncing."},
+        {"Cierra PSP Dock en Windows.","Close PSP Dock on Windows."},
+        {"Windows cerrara la conexion USB.","Windows will close the USB connection."},
+        {"Manten el cable conectado.","Keep the cable connected."},
+        {"Espera al aviso para pulsar O.","Wait for the prompt before pressing O."},
+        {"Restableciendo la conexion","Restoring connection"},
+        {"Abre PSP Dock en Windows y revisa su aviso.","Open PSP Dock on Windows and check its prompt."},
+        {"La navegacion esta en pausa.","Navigation is paused."},
+        {"LISTO: conecta el cable USB","READY: connect the USB cable"},
+        {"Abre PSP Dock en Windows.","Open PSP Dock on Windows."},
+        {"Esperando la conexion del PC.","Waiting for the PC connection."},
+        {"START + SELECT (1 s): cancelar","START + SELECT (1 s): cancel"},
+        {"Esperando a Windows","Waiting for Windows"},
+        {"Abre PSP Dock en Windows para continuar.","Open PSP Dock on Windows to continue."},
+        {"La sincronizacion empezara cuando se conecte.","Sync will begin after connection."},
+        {"Finalizando la conexion","Finishing connection"},
+        {"El trabajo de PSP Dock ha terminado.","PSP Dock has finished its work."},
+        {"Windows esta preparando la expulsion.","Windows is preparing safe eject."},
+        {"Espera al aviso para volver al XMB.","Wait for the prompt to return to XMB."},
+        {"Copiando el juego","Copying game"},
+        {"Sincronizando partidas","Syncing saves"},
+        {"El juego estara disponible cuando termine.","The game will be ready when copying finishes."},
+        {"Devolviendo los guardados compatibles a tu PSP.","Returning compatible saves to your PSP."},
+        {"El mando esta en pausa durante esta operacion.","Controller input is paused during this step."},
+        {"Manten el cable conectado hasta que termine.","Keep USB connected until this finishes."},
+        {"Salida solicitada; espera a que termine.","Exit requested; wait for completion."},
+        {"Salida solicitada","Exit requested"},
+        {"Sigue las instrucciones de PSP Dock en Windows.","Follow the instructions in PSP Dock on Windows."},
+        {"Si estas jugando, termina la partida primero.","Finish your game before exiting."},
+        {"No retires USB hasta el aviso de Windows.","Keep USB connected until Windows says so."},
+        {"Elige que quieres sincronizar","Choose what to sync"},
+        {"Partidas, juegos, todo o continuar sin copiar.","Saves, games, everything, or skip copying."},
+        {"Haz tu seleccion en PSP Dock de Windows.","Choose in PSP Dock on Windows."},
+        {"Puedes elegir con la cruceta y X.","Use the D-pad and X to choose."},
+        {"Sincronizando PSP","Syncing PSP"},
+        {"Comprobando tus juegos y partidas.","Checking your games and saves."},
+        {"Copiando lo que has elegido.","Copying your selections."},
+        {"El mando estara disponible al terminar.","Controller will be ready when finished."},
+        {"START + SELECT (1 s): solicitar salida","START + SELECT (1 s): request exit"},
+        {"Todo listo","All set"},
+        {"Navega y juega con los botones de tu PSP.","Browse and play with your PSP controls."},
+        {"Tus juegos y partidas estan en PSP Dock.","Your games and saves are in PSP Dock."},
+        {"Al salir se devolveran los guardados compatibles.","Compatible saves will return on exit."},
+        {"Esperando confirmacion","Waiting for confirmation"},
+        {"Consulta PSP Dock en Windows.","Check PSP Dock on Windows."},
+        {"Nota musical: mostrar u ocultar diagnostico","Music note: show or hide diagnostics"},
+        {"Fotografia los codigos para revisar este intento.","Take a photo of the codes for support."},
+        {"Ya puedes volver al menu de tu PSP.","You can return to your PSP menu."},
+        {"Pulsa O de nuevo para volver al XMB.","Press O again to return to XMB."}
+    };
+    unsigned i;
+    if(lang==PDN_LANG_ES)return es;
+    for(i=0;i<sizeof(messages)/sizeof(messages[0]);i++)
+        if(!strcmp(es,messages[i].es))return messages[i].en;
+    return es;
+}
+
 typedef struct {
     char heading[PDN_UI_LINE_SIZE],context[PDN_UI_LINE_SIZE];
     char detail[PDN_UI_LINE_SIZE],action[PDN_UI_LINE_SIZE];
@@ -60,7 +175,7 @@ static inline const char *pdn_ui_dependency_name(unsigned dependency) {
     }
 }
 
-static inline const char *pdn_ui_stage_name(unsigned stage) {
+static inline const char *pdn_ui_stage_name_es(unsigned stage) {
     switch(stage){
         case PDN_STAGE_INIT:return "preparar controlador";
         case PDN_STAGE_GUARD:return "comprobar conexion USB";
@@ -80,11 +195,17 @@ static inline const char *pdn_ui_stage_name(unsigned stage) {
         default:return "etapa no identificada";
     }
 }
+static inline const char *pdn_ui_stage_name(unsigned stage,PdnLanguage lang) {
+    return pdn_ui_tr(pdn_ui_stage_name_es(stage),lang);
+}
 
-static inline void pdn_ui_module_line(char out[PDN_UI_LINE_SIZE],unsigned dependency) {
+static inline void pdn_ui_module_line_lang(char out[PDN_UI_LINE_SIZE],unsigned dependency,PdnLanguage lang) {
     const char *name=pdn_ui_dependency_name(dependency);
-    if(name)snprintf(out,PDN_UI_LINE_SIZE,"Modulo %u: %s",dependency,name);
-    else snprintf(out,PDN_UI_LINE_SIZE,"Dependencia %u: no reconocida en esta version",dependency);
+    if(name)snprintf(out,PDN_UI_LINE_SIZE,pdn_ui_tr("Modulo %u: %s",lang),dependency,name);
+    else snprintf(out,PDN_UI_LINE_SIZE,pdn_ui_tr("Dependencia %u: no reconocida en esta version",lang),dependency);
+}
+static inline void pdn_ui_module_line(char out[PDN_UI_LINE_SIZE],unsigned dependency) {
+    pdn_ui_module_line_lang(out,dependency,PDN_LANG_ES);
 }
 
 /* Exact floor(done*100/total) without overflowing 64-bit byte counts. */
@@ -99,11 +220,11 @@ static inline unsigned pdn_ui_percent(uint64_t done,uint64_t total) {
     }
     return result;
 }
-static inline void pdn_ui_progress(PdnUiView *v,const PdnSharedStatus *s) {
+static inline void pdn_ui_progress_lang(PdnUiView *v,const PdnSharedStatus *s,PdnLanguage lang) {
     uint32_t before=s->presentation_generation,unit,after;
     uint64_t done,total;
     v->progress_visible=1;
-    snprintf(v->progress,sizeof(v->progress),"Consulta la actividad en Windows.");
+    snprintf(v->progress,sizeof(v->progress),"%s",pdn_ui_tr("Consulta la actividad en Windows.",lang));
     if(before&1u)return;
     __asm__ volatile("" ::: "memory");
     unit=s->progress_unit;done=s->completed;total=s->total;
@@ -113,20 +234,26 @@ static inline void pdn_ui_progress(PdnUiView *v,const PdnSharedStatus *s) {
     if(before!=after || (after&1u) || unit==PDN_UNIT_UNKNOWN ||
        !pdn_progress_valid((uint8_t)unit,done,total))return;
     v->progress_measured=1;v->progress_percent=pdn_ui_percent(done,total);
-    snprintf(v->progress,sizeof(v->progress),"%u%% completado",v->progress_percent);
+    snprintf(v->progress,sizeof(v->progress),pdn_ui_tr("%u%% completado",lang),v->progress_percent);
     snprintf(v->progress_detail,sizeof(v->progress_detail),"%llu / %llu %s",
         (unsigned long long)done,(unsigned long long)total,
-        unit==PDN_UNIT_BYTES?"bytes":"archivos");
+        unit==PDN_UNIT_BYTES?"bytes":pdn_ui_tr("archivos",lang));
 }
 
-static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloaded) {
+/* All translated formats are compile-time authored, never user controlled. */
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-security"
+#endif
+static inline PdnUiView pdn_ui_present_lang(const PdnSharedStatus *s,int module_unloaded,PdnLanguage lang) {
     PdnUiView v;
     int fault=s->error || s->stage==PDN_STAGE_ERROR || s->phase==PDN_PHASE_ERROR;
     int may_have_usb=(s->usb_state&(PDN_UI_USB_ACTIVATED|PDN_UI_USB_CABLE_CONNECTED)) ||
         s->sony_storage_started ||
         (s->error_stage>=PDN_STAGE_ACTIVATE && s->error_stage<=PDN_STAGE_STOPPING);
     memset(&v,0,sizeof(v));
-#define PDN_UI_TEXT(field,...) snprintf(v.field,sizeof(v.field),__VA_ARGS__)
+#define PDN_UI_TEXT(field,fmt,...) snprintf(v.field,sizeof(v.field),pdn_ui_tr(fmt,lang),##__VA_ARGS__)
+#define PDN_UI_CHOICE(field,condition,yes,no) PDN_UI_TEXT(field,"%s",pdn_ui_tr((condition)?(yes):(no),lang))
     if(s->hid_interface==UINT32_MAX)PDN_UI_TEXT(interface_label,"sin_asignar");
     else PDN_UI_TEXT(interface_label,"%u",(unsigned)s->hid_interface);
 
@@ -140,18 +267,18 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         PDN_UI_TEXT(footer,"Puedes mantener el cable conectado.");
     }else if(fault){
         v.warning=1;
-        PDN_UI_TEXT(heading,"%s",s->error_stage<=PDN_STAGE_ACTIVATE?
-            "Arranque detenido":"Error en la conexion");
-        PDN_UI_TEXT(context,"Etapa %u: %s",(unsigned)s->error_stage,pdn_ui_stage_name(s->error_stage));
+        PDN_UI_CHOICE(heading,s->error_stage<=PDN_STAGE_ACTIVATE,
+            "Arranque detenido","Error en la conexion");
+        PDN_UI_TEXT(context,"Etapa %u: %s",(unsigned)s->error_stage,pdn_ui_stage_name(s->error_stage,lang));
         if(s->error_stage==PDN_STAGE_MODULE_LOAD || s->error_stage==PDN_STAGE_MODULE_START)
-            pdn_ui_module_line(v.detail,(unsigned)s->dependency);
+            pdn_ui_module_line_lang(v.detail,(unsigned)s->dependency,lang);
         else PDN_UI_TEXT(detail,"Consulta los codigos de diagnostico.");
         if(may_have_usb && !s->safe_to_unload){
             PDN_UI_TEXT(action,"No desconectes hasta el aviso de Windows.");
             PDN_UI_TEXT(footer_note,"Cierra PSP Dock en Windows para finalizar.");
         }else{
-            PDN_UI_TEXT(action,"%s",s->error_stage<=PDN_STAGE_ACTIVATE?
-                "No se ha iniciado una sesion de PSP Dock.":"Espera a que se confirme el cierre.");
+            PDN_UI_CHOICE(action,s->error_stage<=PDN_STAGE_ACTIVATE,
+                "No se ha iniciado una sesion de PSP Dock.","Espera a que se confirme el cierre.");
             PDN_UI_TEXT(footer_note,"Preparando la salida al XMB.");
         }
         PDN_UI_TEXT(footer,"Fotografia esta pantalla para revisar el fallo.");
@@ -182,9 +309,9 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         PDN_UI_TEXT(context,"La tarjeta de memoria aun no esta disponible.");
         PDN_UI_TEXT(action,"Espera en esta pantalla.");
     }else if(s->exit_requested && !s->host_confirmed){
-        PDN_UI_TEXT(heading,"%s",s->host_session_seen?"Conexion interrumpida":"Conexion cancelada");
-        PDN_UI_TEXT(context,"%s",s->host_session_seen?
-            "Revisa el estado de tu sesion en Windows.":"Windows no ha iniciado la sincronizacion.");
+        PDN_UI_CHOICE(heading,s->host_session_seen,"Conexion interrumpida","Conexion cancelada");
+        PDN_UI_CHOICE(context,s->host_session_seen,
+            "Revisa el estado de tu sesion en Windows.","Windows no ha iniciado la sincronizacion.");
         if(s->usb_state&PDN_UI_USB_CABLE_CONNECTED){
             PDN_UI_TEXT(detail,"Cierra PSP Dock en Windows.");
             PDN_UI_TEXT(action,"Windows cerrara la conexion USB.");
@@ -215,13 +342,12 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
         PDN_UI_TEXT(detail,"Windows esta preparando la expulsion.");
         PDN_UI_TEXT(action,"Espera al aviso para volver al XMB.");
     }else if(s->phase==PDN_PHASE_COPYING || s->phase==PDN_PHASE_EXIT_SYNC){
-        PDN_UI_TEXT(heading,"%s",s->phase==PDN_PHASE_COPYING?
-            "Copiando el juego":"Sincronizando partidas");
-        PDN_UI_TEXT(context,"%s",s->phase==PDN_PHASE_COPYING?
-            "El juego estara disponible cuando termine.":"Devolviendo los guardados compatibles a tu PSP.");
+        PDN_UI_CHOICE(heading,s->phase==PDN_PHASE_COPYING,"Copiando el juego","Sincronizando partidas");
+        PDN_UI_CHOICE(context,s->phase==PDN_PHASE_COPYING,
+            "El juego estara disponible cuando termine.","Devolviendo los guardados compatibles a tu PSP.");
         PDN_UI_TEXT(detail,"El mando esta en pausa durante esta operacion.");
         PDN_UI_TEXT(action,"Manten el cable conectado hasta que termine.");
-        pdn_ui_progress(&v,s);
+        pdn_ui_progress_lang(&v,s,lang);
         if(s->exit_requested)PDN_UI_TEXT(footer,"Salida solicitada; espera a que termine.");
     }else if(s->exit_requested){
         PDN_UI_TEXT(heading,"Salida solicitada");
@@ -236,11 +362,11 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
             PDN_UI_TEXT(action,"Puedes elegir con la cruceta y X.");
         }else{
             PDN_UI_TEXT(heading,"Sincronizando PSP");
-            PDN_UI_TEXT(context,"%s",s->activity==PDN_ACTIVITY_INVENTORY?
-                "Comprobando tus juegos y partidas.":"Copiando lo que has elegido.");
+            PDN_UI_CHOICE(context,s->activity==PDN_ACTIVITY_INVENTORY,
+                "Comprobando tus juegos y partidas.","Copiando lo que has elegido.");
             PDN_UI_TEXT(detail,"El mando estara disponible al terminar.");
             PDN_UI_TEXT(action,"Manten el cable conectado.");
-            pdn_ui_progress(&v,s);
+            pdn_ui_progress_lang(&v,s,lang);
         }
         PDN_UI_TEXT(footer,"START + SELECT (1 s): solicitar salida");
     }else if(s->phase==PDN_PHASE_CONTROLLER){
@@ -259,11 +385,18 @@ static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloa
      * Neither SAFE nor any progress counter proves Windows safe eject. */
     if(s->safe_to_unload && module_unloaded){
         PDN_UI_TEXT(footer,"PSP Dock detenido");
-        PDN_UI_TEXT(footer_note,"%s",v.warning?
-            "Fotografia los codigos para revisar este intento.":"Ya puedes volver al menu de tu PSP.");
+        PDN_UI_CHOICE(footer_note,v.warning,
+            "Fotografia los codigos para revisar este intento.","Ya puedes volver al menu de tu PSP.");
         PDN_UI_TEXT(exit_hint,"Pulsa O de nuevo para volver al XMB.");
     }
 #undef PDN_UI_TEXT
+#undef PDN_UI_CHOICE
     return v;
+}
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+static inline PdnUiView pdn_ui_present(const PdnSharedStatus *s,int module_unloaded) {
+    return pdn_ui_present_lang(s,module_unloaded,PDN_LANG_ES);
 }
 #endif

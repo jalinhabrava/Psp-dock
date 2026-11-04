@@ -39,14 +39,14 @@ def main(exe: Path) -> None:
             status, state = fetch('/api/state')
             assert status == 200 and isinstance(json.loads(state), dict)
             for path, marker in [('/', b'<html'), ('/style.css', b'{'),
-                                 ('/app.js', b'function')]:
+                                 ('/i18n.js', b'DockI18n'), ('/app.js', b'function')]:
                 status, body = fetch(path)
                 assert status == 200 and marker in body, (path, status, len(body))
             assert (Path(profile) / 'PSP-Dock/demo/sample-psp').exists()
             print(json.dumps({'result': 'PASS', 'port': port,
                               'exe_sha256': hashlib.sha256(exe.read_bytes()).hexdigest(),
                               'api': ['/api/health', '/api/state'],
-                              'static': ['/', '/style.css', '/app.js']}, indent=2))
+                              'static': ['/', '/style.css', '/i18n.js', '/app.js']}, indent=2))
         finally:
             if proc.poll() is None:
                 # --no-browser intentionally serves until stopped; end both

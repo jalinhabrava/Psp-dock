@@ -63,6 +63,18 @@ class HTTPContract(unittest.TestCase):
         self.assertEqual(self.request('/api/sync',{},token=False)[0],403)
         self.assertEqual(self.request('/api/ui-sound',{'sound':'cursor','at_ms':time.time()*1000},token=False)[0],403)
 
+    def test_bilingual_ui_catalog_is_served_from_fixed_allowlist(self):
+        # A self-contained Windows executable must ship the local dictionary.
+        # It is static UI data, never a PSP or local-PC filesystem proxy.
+        for route, text in (('/', b'/i18n.js'), ('/i18n.js', b'DockI18n'),
+                            ('/app.js', b'function'), ('/style.css', b'{')):
+            with urllib.request.urlopen(self.url + route, timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(text, response.read())
+        with self.assertRaises(urllib.error.HTTPError) as missing:
+            urllib.request.urlopen(self.url + '/../../settings.json', timeout=10)
+        self.assertNotEqual(missing.exception.code, 200)
+
     def test_ui_sound_is_bounded_and_missing_original_is_silent(self):
         status, result = self.request('/api/ui-sound', {'sound':'cursor','at_ms':time.time()*1000})
         self.assertEqual(status, 200)

@@ -1,103 +1,109 @@
 <div align="center">
-  <img src="assets/readme-hero.png" alt="PSP Dock — Tu PSP se merece una pantalla grande" width="100%">
+  <img src="assets/readme-hero.png" alt="PSP Dock — Your PSP deserves the big screen" width="100%">
 
-  ### La PSP que recuerdas. Una forma nueva de jugar.
+  ### The PSP you remember. A whole new way to play.
 
-  **[🖥️ Descargar para Windows](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.1.exe)** · **[🎮 Descargar para PSP](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.1.zip)**
+  **[🖥️ Download for Windows](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.2.exe)** · **[🎮 Download for PSP](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.2.zip)**
 
-  [Ver todas las versiones](https://github.com/jalinhabrava/Psp-dock/releases) · [Cómo funciona](#empieza-a-jugar)
+  [All releases](https://github.com/jalinhabrava/Psp-dock/releases) · [Getting started](#lets-play)
+
+  **English** · [Español](README.es.md)
 </div>
 
 ---
 
-## Tu PSP todavía tiene muchas partidas por delante 💙
+## Your PSP still has adventures waiting. 💙
 
-¿Te acuerdas de llevar tu PSP a todas partes? **PSP Dock nació para que no tengas que elegir entre disfrutar de aquella consola y jugar cómodamente en una pantalla grande.**
+Remember taking your PSP everywhere? **PSP Dock brings that feeling back — only now your favorite handheld can take over the big screen, too.**
 
-Conecta tu PSP al ordenador, abre **PSP Dock** y vuelve a encontrarte con tu biblioteca en un menú inspirado en el XMB que tanto nos gusta. La consola sigue siendo tu mando; el PC pone la pantalla, la potencia y el emulador. Y cuando terminas, tus partidas pueden volver contigo a la PSP.
+Connect your PSP to a Windows PC, launch **PSP Dock**, and rediscover your games in a familiar XMB-style menu. Your actual PSP becomes your controller. Your PC handles the screen and PPSSPP. And when you're finished, your compatible save files can travel back to your handheld.
 
-**Sin dejar un programa ejecutándose todo el día. Sin copiar tu biblioteca desde cero cada vez. Y sin perder ese toque de la PSP original.**
+**No background service running all day. No copying every game again on every connection. Just your PSP, with a little more room to play.**
 
-## Lo mejor de los dos mundos
+## The best of both worlds
 
 | | |
 |---|---|
-| 🎮 **Tu PSP sigue al mando** | Navega por el menú y juega utilizando los botones y el joystick de la propia consola. |
-| 🖥️ **Tus juegos, en grande** | Elige un título en PSP Dock y disfruta en el PC a través de PPSSPP, sin renunciar al control original. |
-| 💾 **Tus partidas van contigo** | PSP Dock compara los guardados, te pide permiso para las copias y ayuda a devolver los cambios al terminar. |
-| ✨ **Un menú con alma de PSP** | Categorías deslizantes, carátulas, fondos y los pequeños sonidos del XMB cuando tu consola es compatible. |
-| ⚡ **Recuerda tu biblioteca** | La siguiente conexión es mucho más rápida: no vuelve a leer por completo los juegos que siguen igual. |
-| 🕹️ **También pensamos en lo retro** | Hay integración inicial con emuladores de otras consolas y opciones de mejora visual que seguimos desarrollando. |
+| 🎮 **Your PSP is the controller** | Browse your library and play with the buttons and analog stick you already love. |
+| 🖥️ **Your games, bigger** | Pick a game in PSP Dock and run it with PPSSPP on your Windows PC. |
+| 💾 **Keep your progress close** | Compare saves, review conflicts, and sync changes back with your approval. |
+| ✨ **It still feels like PSP** | Smooth XMB navigation, game art, backgrounds, and original menu sounds when supported. |
+| ⚡ **Your library, remembered** | Reconnect without re-reading every unchanged game from your Memory Stick. |
+| 🕹️ **More than PSP** | Early RetroArch support and experiments with enhanced textures are in the works. |
 
-## Empieza a jugar
+## Let's play
 
 <table>
   <tr>
-    <th>En tu ordenador</th>
-    <th>En tu PSP</th>
+    <th>On your Windows PC</th>
+    <th>On your PSP</th>
   </tr>
   <tr>
     <td>
-      <strong>1. Descarga PSP Dock para Windows</strong><br>
-      Abre el ejecutable y prepara tu biblioteca. No necesitas instalar Python.
+      <strong>1. Get PSP Dock for Windows</strong><br>
+      Download the portable executable. No Python installation required.
     </td>
     <td>
-      <strong>2. Descarga PSP Dock para PSP</strong><br>
-      Copia la carpeta <code>PSP/GAME/PSPDockNative/</code> del ZIP a la raíz de tu Memory Stick. [Guía paso a paso](INSTALL.md).
+      <strong>2. Get PSP Dock for PSP</strong><br>
+      Install the complete <code>PSP/GAME/PSPDockNative/</code> folder from the ZIP on your Memory Stick. <a href="INSTALL.md">Step-by-step guide</a>.
     </td>
   </tr>
 </table>
 
-**3. Une los dos mundos.** Abre PSP Dock en Windows y en la PSP, conecta el cable USB y sigue las indicaciones de la pantalla. Elige qué copiar, disfruta de tus juegos y, cuando acabes, deja que se comprueben tus partidas antes de desconectar.
+**3. Bring them together.** Open PSP Dock on your PC and your handheld, connect them with USB, and follow the on-screen guide. Choose what to copy, start playing, and let your saves finish syncing before you disconnect.
 
 <div align="center">
 
-  **[⬇️ Ir a las descargas](https://github.com/jalinhabrava/Psp-dock/releases/latest)**
+  **[⬇️ Get the latest release](https://github.com/jalinhabrava/Psp-dock/releases/latest)**
 
 </div>
 
-> **Antes de empezar:** necesitarás una PSP con homebrew compatible, un cable USB y tu propia copia de PPSSPP para Windows. La experiencia actual se ha probado principalmente con una PSP-2003 con firmware 6.61/ARK-5. PSP Dock no incluye juegos, BIOS, emuladores de terceros ni archivos de firmware de Sony. El ejecutable de Windows aún no está firmado digitalmente; comprueba su origen y el SHA-256 publicado. Si ya tienes una versión antigua de PSP Dock en la Memory Stick, haz una copia de seguridad y consulta la [guía de instalación](INSTALL.md): **no sobrescribas la carpeta anterior sin revisarla**.
+### One download, your language
 
-## Un proyecto que sigue creciendo 🌱
+**English and Spanish are included in the same Windows and PSP builds.** Windows follows your browser/UI language, while the PSP follows the language selected in its system settings. You can also choose a language inside PSP Dock on Windows. **No separate English or Spanish executable is needed.**
 
-Este es nuestro **primer lanzamiento para Windows**, pero las ideas no se acaban aquí: compatibilidad con más emuladores, texturas HD, una experiencia para Android TV y una versión para Linux están entre los caminos que estamos explorando.
+> **Before you start:** You need a homebrew-capable PSP, a USB cable, and your own copy of PPSSPP for Windows. Development and real-device testing have focused on a PSP-2003 running firmware 6.61/ARK-5. PSP Dock does **not** include games, BIOS files, other emulators, or Sony firmware. The Windows executable is currently unsigned; download it from this repository and check the published SHA-256. Already have PSP Dock installed on your handheld? Back up your saves and follow the [upgrade instructions](INSTALL.md) rather than overwriting the previous files blindly.
 
-Los proyectos de Android TV, Linux y el motor experimental de texturas **todavía no forman parte de las descargas listas para jugar**. Preferimos enseñarte cómo avanzan a prometer que todo funciona ya en cualquier dispositivo.
+## There's more to come 🌱
 
-## Creado para los que seguimos queriendo a la PSP
+This is our first Windows-focused release, not the end of the story. We're exploring more retro systems, HD texture enhancements, Android TV, and Linux support.
 
-PSP Dock es un proyecto de comunidad y una pequeña declaración de amor a una consola que se merece seguir encendida. Si lo pruebas, encuentras un fallo o se te ocurre una mejora, tu experiencia será bienvenida en [Issues](https://github.com/jalinhabrava/Psp-dock/issues).
+Those platforms and experimental features are **not yet ready-to-play downloads**. We'd rather show the real progress than promise something that isn't tested.
 
-**Hecho por [@jalinhabrava](https://github.com/jalinhabrava).** Puedes usar, estudiar y compartir el código original para fines no comerciales, manteniendo el crédito y los términos de [PolyForm Noncommercial 1.0.0](LICENSE.md). Las partes derivadas de FuSa GAMEPAD conservan **GPL-3.0**, que permite usos comerciales bajo sus propias condiciones. Detalles en [NOTICE](NOTICE.md) y [licencias de terceros](THIRD_PARTY_NOTICES.md).
+## Made for people who still love the PSP
+
+PSP Dock is a community-minded passion project and a little love letter to one of the greatest handhelds ever made. Found a bug? Have a brilliant idea? We'd love to hear from you in [Issues](https://github.com/jalinhabrava/Psp-dock/issues).
+
+**Made by [@jalinhabrava](https://github.com/jalinhabrava).** The original code is available for noncommercial use, study, modification, and sharing under [PolyForm Noncommercial 1.0.0](LICENSE.md), with attribution required. Components derived from FuSa GAMEPAD retain their **GPL-3.0** terms, including their own commercial-use permissions. See [NOTICE](NOTICE.md) and [third-party licenses](THIRD_PARTY_NOTICES.md).
 
 <details>
-<summary><strong>Para quienes quieran mirar bajo el capó 🔧</strong></summary>
+<summary><strong>Under the hood 🔧</strong></summary>
 
-### Compatibilidad y seguridad
+### Compatibility and safety
 
-- **Windows**: versión principal con interfaz XMB y conexión con homebrew PSP Dock nativo **0308** (protocolo PDK2/v3).
-- **PSP**: instala el contenido completo del ZIP de PSP: el `EBOOT.PBP` necesita estar acompañado por `docknative.prx` y sus avisos de licencia en la misma carpeta. No modifiques flash ni plugins de ARK para instalar este paquete.
-- **PPSSPP**: se configura o instala por separado. PSP Dock no distribuye su ejecutable ni contenidos de juegos.
-- **Guardados**: antes de copiar, revisa los conflictos y mantén conectado el cable durante la comprobación. Haz siempre una copia de seguridad de tus partidas importantes.
-- **Linux y Android TV**: prototipos en desarrollo; todavía no están disponibles como versiones probadas.
+- **Windows:** The main release uses the XMB launcher and native PSP Dock **0308** homebrew (PDK2/v3).
+- **PSP:** Install the entire PSP ZIP. `EBOOT.PBP` needs `docknative.prx` alongside it. No PSP flash modification or ARK plugin installation is required.
+- **PPSSPP:** Set up your own copy separately. PSP Dock does not redistribute PPSSPP executables or game content.
+- **Saves:** Always back up precious progress and review conflicts before copying; keep the cable connected throughout verification.
+- **Other platforms:** Linux and Android TV are still experimental and not validated release downloads.
 
-### Desarrollar o probar
+### Building and testing
 
-El host está escrito principalmente en Python y utiliza HTML/CSS/JavaScript para el menú. La app de PSP se compila con PSPDEV. El código también incorpora herramientas experimentales de investigación de texturas.
+The Windows host is written mainly in Python, with HTML/CSS/JavaScript for the interface. The PSP app is built with PSPDEV. The repository also includes experiments in deterministic PSP texture handling.
 
 ```shell
 python -m unittest tests.test_device_memory tests.test_dock_product_session tests.test_native_dock -q
 node --test "tests/*.test.js"
 ```
 
-La prueba de movimiento del XMB utiliza un navegador Chromium real, una biblioteca de demostración aislada y **no accede a la PSP**.
+The XMB animation test uses a real Chromium browser and a synthetic game library. It **never accesses a real PSP**.
 
-Puedes consultar el [protocolo y homebrew](homebrew/native-dock/README.md), el [historial del proyecto](CHANGELOG.md) y las [notas de investigación HD](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+Read about the [native homebrew](homebrew/native-dock/README.md), see the [changelog](CHANGELOG.md), or explore the [HD texture research](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
 
 </details>
 
 <div align="center">
 
-  <sub>PSP Dock no está afiliado a Sony, PlayStation, PPSSPP ni RetroArch. Las marcas pertenecen a sus respectivos propietarios.</sub>
+  <sub>PSP Dock is an independent project, not affiliated with or endorsed by Sony, PlayStation, PPSSPP, or RetroArch. All trademarks belong to their owners.</sub>
 
 </div>

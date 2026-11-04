@@ -26,6 +26,67 @@ static PdnSharedStatus initial(void) {
     s.phase=PDN_PHASE_STORAGE;s.hid_interface=UINT32_MAX;
     return s;
 }
+static void test_locales_and_safe_warnings(void) {
+    PdnSharedStatus s=initial();PdnUiView en,es;
+    s.stage=PDN_STAGE_READY;s.sony_storage_started=1;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    es=pdn_ui_present_lang(&s,0,PDN_LANG_ES);
+    assert(!strcmp(en.heading,"READY: connect the USB cable"));
+    assert(!strcmp(es.heading,"LISTO: conecta el cable USB"));
+    assert(strstr(en.footer,"cancel") && strstr(es.footer,"cancelar"));
+    fits(&en);fits(&es);
+
+    s.stage=PDN_STAGE_ERROR;s.error=-1;s.error_stage=PDN_STAGE_MODULE_START;
+    s.dependency=4;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    es=pdn_ui_present_lang(&s,0,PDN_LANG_ES);
+    assert(strstr(en.context,"Stage 3: start Sony module"));
+    assert(strstr(es.context,"Etapa 3: iniciar modulo Sony"));
+    assert(strstr(en.detail,"Module 4: usbstorms.prx"));
+    assert(strstr(es.detail,"Modulo 4: usbstorms.prx"));
+    assert(en.warning && es.warning);fits(&en);fits(&es);
+    assert(!strcmp(en.heading,"Startup stopped"));
+    s.error_stage=PDN_STAGE_CONNECTED;s.sony_storage_started=1;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    assert(!strcmp(en.heading,"Connection error"));
+
+    s.error_stage=PDN_STAGE_CONNECTED;s.usb_state=0x222;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    es=pdn_ui_present_lang(&s,0,PDN_LANG_ES);
+    assert(strstr(en.action,"Keep USB connected"));
+    assert(strstr(es.action,"No desconectes"));
+    assert(!en.exit_hint[0] && !es.exit_hint[0]);fits(&en);fits(&es);
+
+    s=initial();s.stage=PDN_STAGE_CONNECTED;s.sony_storage_started=1;
+    s.exit_requested=1;s.usb_state=PDN_UI_USB_CABLE_CONNECTED;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    es=pdn_ui_present_lang(&s,0,PDN_LANG_ES);
+    assert(!strcmp(en.heading,"Connection canceled"));
+    assert(!strcmp(es.heading,"Conexion cancelada"));
+    assert(strstr(en.context,"has not started syncing"));
+    s.host_session_seen=1;en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    assert(!strcmp(en.heading,"Connection interrupted"));
+    assert(strstr(en.context,"session status"));
+
+    s=initial();s.stage=PDN_STAGE_CONNECTED;s.sony_storage_started=1;
+    s.host_confirmed=1;s.phase=PDN_PHASE_COPYING;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    assert(!strcmp(en.heading,"Copying game"));
+    assert(strstr(en.context,"game will be ready"));
+    s.phase=PDN_PHASE_EXIT_SYNC;en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    assert(!strcmp(en.heading,"Syncing saves"));
+    assert(strstr(en.context,"compatible saves"));
+
+    s=initial();s.stage=PDN_STAGE_CONNECTED;s.sony_storage_started=1;
+    s.host_confirmed=1;s.activity=PDN_ACTIVITY_SYNC_IN;
+    s.progress_unit=PDN_UNIT_FILES;s.completed=3;s.total=4;
+    en=pdn_ui_present_lang(&s,0,PDN_LANG_EN);
+    es=pdn_ui_present_lang(&s,0,PDN_LANG_ES);
+    assert(!strcmp(en.progress,"75% complete"));
+    assert(!strcmp(es.progress,"75% completado"));
+    assert(!strcmp(en.progress_detail,"3 / 4 files"));
+    assert(!strcmp(es.progress_detail,"3 / 4 archivos"));fits(&en);fits(&es);
+}
 static void test_ep0_snapshot_keeps_complete_raw_evidence(void) {
     volatile PdnEp0Diagnostic shared={0};
     PdnEp0Diagnostic sample={0},previous;unsigned i;
@@ -80,6 +141,7 @@ static void test_host_release_closes_without_claim_or_premature_xmb(void){
 int main(void) {
     PdnSharedStatus s=initial();PdnUiView v;
     test_ep0_snapshot_keeps_complete_raw_evidence();
+    test_locales_and_safe_warnings();
     test_ep0_raw_rows_are_bounded_and_offset_labelled();
     test_host_release_closes_without_claim_or_premature_xmb();
     /* Exact failing 0300 photo: a stale STORAGE phase cannot claim a session.

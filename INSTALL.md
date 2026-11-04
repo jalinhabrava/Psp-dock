@@ -1,20 +1,22 @@
-# Tu primer Dock, paso a paso
+# Get your PSP Dock up and running
 
-PSP Dock funciona con **dos descargas complementarias**: una para Windows y otra para la PSP. Es normal que la PSP necesite dos archivos de programa: el `EBOOT.PBP` que aparece en Juegos y el módulo `docknative.prx` que se encarga de la conexión.
+**English** · [Español](INSTALL.es.md)
 
-## 1 · Prepara Windows
+PSP Dock comes in **two downloads**, one for your Windows PC and one for your PSP. The PSP needs two program files working together: `EBOOT.PBP`, which appears in the PSP Games menu, and `docknative.prx`, which handles the Dock connection.
 
-Descarga **[PSP-Dock-Windows-v0.1.1.exe](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.1.exe)** desde GitHub Releases. Guárdalo donde quieras y ejecútalo: es una aplicación portátil y **no requiere instalar Python** ni dejar un servicio ejecutándose continuamente.
+## 1 · Set up Windows
 
-Para jugar necesitarás [PPSSPP para Windows](https://www.ppsspp.org/download/) obtenido por separado. En la configuración de PSP Dock puedes indicar dónde lo tienes y elegir las carpetas de juegos y guardados. PSP Dock no incluye juegos ni software propietario de Sony.
+Download **[PSP-Dock-Windows-v0.1.2.exe](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-Windows-v0.1.2.exe)** from GitHub Releases. Save it wherever you like and run it. It's portable, **doesn't require Python**, and doesn't install an always-on background service.
 
-El ejecutable todavía no dispone de firma de editor para Windows. Antes de ejecutar descargas de terceros, comprueba que vienen del repositorio oficial y su SHA-256 en los detalles de la release. **No necesitas instalar un controlador de Windows nuevo ni modificar los ajustes USB globales de tu PC para este paquete.**
+You'll also need your own copy of [PPSSPP for Windows](https://www.ppsspp.org/download/). In PSP Dock's settings, choose your PPSSPP location and where you'd like to keep games and saves. No games or Sony software are included.
 
-## 2 · Prepara tu PSP
+The executable is not digitally signed yet, so Windows may warn about an unknown publisher. Only run it if you've downloaded it from this project's official GitHub release, and check its SHA-256 against the published hash list.
 
-Descarga **[PSP-Dock-PSP-v0.1.1.zip](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.1.zip)**. Conecta tu PSP en modo almacenamiento USB de su menú original o coloca la tarjeta en un lector.
+## 2 · Set up your PSP
 
-En una **instalación nueva**, copia la estructura completa del ZIP a la raíz de la Memory Stick. Debe quedar:
+Download **[PSP-Dock-PSP-v0.1.2.zip](https://github.com/jalinhabrava/Psp-dock/releases/latest/download/PSP-Dock-PSP-v0.1.2.zip)**. Connect your PSP in its original USB Storage mode (or use a Memory Stick reader).
+
+For a **fresh installation**, copy the complete folder structure from the ZIP to the root of your Memory Stick:
 
 ```text
 Memory Stick/
@@ -27,22 +29,26 @@ Memory Stick/
             └── LICENSE-DejaVu.txt
 ```
 
-El ZIP incluye además un manifiesto de integridad y un archivo de instrucciones. El EBOOT, por sí solo, **no es suficiente**: necesita `docknative.prx` y los avisos de licencia en la misma carpeta.
+The ZIP also contains a verification manifest and installation instructions. **The EBOOT by itself is not enough**: it must have the matching `docknative.prx` next to it.
 
-**Si PSPDockNative ya existe**, no copies encima sin más. Haz una copia de seguridad de la aplicación anterior y tus partidas y utiliza el procedimiento de actualización verificada documentado en [psp_native_upgrade.py](psp_native_upgrade.py). Estas herramientas de actualización también requieren verificar la PSP y el backup. No instales dos versiones distintas en la misma carpeta.
+**Upgrading an existing PSP Dock?** If the `PSPDockNative` folder already exists, do **not** overwrite it without a backup. Save a copy of the previous app and your saves, then follow the verified upgrade process described in [psp_native_upgrade.py](psp_native_upgrade.py). It checks your PSP's identity and the backup before replacing the application.
 
-La distribución no modifica la memoria flash de la PSP, ni instala plugins ARK. Está dirigida a consolas compatibles con homebrew; la referencia principal de pruebas es PSP-2003, firmware 6.61 y ARK-5. Otras PSP o firmwares pueden necesitar trabajo adicional.
+Nothing in this package writes to the PSP flash or installs ARK plugins. The primary test device is a PSP-2003 running 6.61 and ARK-5; other devices and firmwares may need additional work.
 
-## 3 · Disfruta
+## 3 · Play
 
-Abre primero PSP Dock en Windows y después PSP Dock en la consola. Conecta el cable USB, sigue las indicaciones para inventariar tu biblioteca y elige qué copiar.
+Launch PSP Dock on Windows, then on your PSP. Connect USB and follow the on-screen instructions to scan your library and choose what, if anything, to copy.
 
-Cuando el Dock confirme el modo mando, podrás navegar por el XMB del PC con la PSP, elegir un juego y jugar desde PPSSPP. Al acabar, **cierra el juego normalmente**. Antes de cerrar el Dock, revisa las partidas pendientes de devolver y espera la confirmación de que se han verificado.
+Once controller mode is ready, navigate the PC's XMB-style menu using the real PSP. Choose a game and play through PPSSPP. When you're finished, **close the game normally**. Check any pending saves before leaving PSP Dock, and wait for the verified sync message.
 
-No desconectes el cable mientras el programa esté copiando o comprobando archivos.
+Don't unplug the cable while files are being copied or verified.
 
-## ¿Algo no funciona?
+### Language selection
 
-Si no aparece la biblioteca, comprueba que el PC detecta la PSP y que la consola está ejecutando el homebrew compatible. Para partidas que hayan quedado pendientes de sincronización, **no borres los archivos**: vuelve a abrir PSP Dock y sigue el aviso de recuperación. Puedes describir el problema en [Issues](https://github.com/jalinhabrava/Psp-dock/issues), indicando versión de Windows, firmware PSP, fase de conexión y pasos para reproducirlo, sin adjuntar tus partidas ni datos privados.
+There's **one Windows executable and one PSP EBOOT for both English and Spanish**. Windows defaults to the browser/UI language; you can change it under **Settings → Language**. The PSP automatically uses its own **System Settings → System Language**. No extra download is needed when you change languages.
 
-**Créditos y licencias:** [LICENSE.md](LICENSE.md) · [NOTICE.md](NOTICE.md) · [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+## Need a hand?
+
+If your library doesn't appear, make sure Windows can detect the PSP and the handheld is running compatible PSP Dock homebrew. If a save is waiting to sync, **don't delete it**: reopen the Dock and follow the recovery message. You can report bugs in [Issues](https://github.com/jalinhabrava/Psp-dock/issues), including your Windows version, PSP firmware, and steps to reproduce — without sharing private saves or personal information.
+
+**Credits and licenses:** [LICENSE.md](LICENSE.md) · [NOTICE.md](NOTICE.md) · [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

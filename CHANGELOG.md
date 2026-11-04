@@ -1,19 +1,31 @@
-# Historial de versiones
+# Changelog
 
-## v0.1.1 — Descargas para Windows y PSP · 4 de noviembre de 2026
+**English** · [Español](CHANGELOG.es.md)
 
-Primera release con archivos listos para descargar: ejecutable portátil para Windows (sin exigir Python al usuario) y paquete PSP 0308 que incluye EBOOT.PBP, docknative.prx y licencias. Se acompaña de una [guía de instalación](INSTALL.md). Nuevo README con un mensaje más cercano y banner generado a partir del logotipo original aprobado de PSP Dock.
+## v0.1.2 — One Dock, two languages · November 4, 2026
 
-**Importante:** el ejecutable Windows todavía no está firmado digitalmente y no incluye PPSSPP; la versión de PSP requiere homebrew compatible y debe verificarse en cada consola. No se ha cambiado el protocolo, ni el código de sincronización o de guardados de la versión 0.1.0 por esta publicación de binarios.
+- **English and Spanish** are included in the *same* Windows executable and PSP EBOOT. No separate downloads or game/save migrations are needed to change language.
+- The Windows interface chooses the browser/UI language on first launch and allows a manual preference in the XMB Settings menu.
+- The PSP interface uses the system language selected in the console settings, with an English fallback.
+- README, install guide and branding are now available in English, with Spanish translations one click away.
+- The USB protocol, save-transfer behavior, native revision 0308 and safety checks remain unchanged.
 
-## v0.1.0 — Primera publicación del código · 3 de noviembre de 2026
+The language implementation is validated with software tests. Testing on the exact hardware combinations and consoles of other users remains important.
 
-**Windows (MVP):** XMB con animaciones medidas en navegador real; biblioteca cacheada por identidad de Memory Stick; Sony USBSTOR y mando PSP HID con flujo de sesión nativa 0308; decisión explícita de copias; guardados PSP/SRAM compatibles con comparación, consentimiento y verificación de retorno; imágenes, fondos y sonidos originales importables desde la consola cuando son compatibles; soporte de PPSSPP/RetroArch.
+## v0.1.1 — Windows and PSP downloads · November 4, 2026
 
-**Código incluido, experimental:** interfaz premium del homebrew; pipeline híbrido de texturas HD y pruebas deterministas DZIP (no se declara descifrado DZIP ni compatibilidad universal); prototipo Android TV con motor integrado en una sola aplicación, aún sin validación hardware.
+Our first downloadable release: a portable Windows executable that doesn't need a Python installation, and a PSP 0308 homebrew package with EBOOT.PBP, docknative.prx and the required licenses. It also introduced a [getting-started guide](INSTALL.md), a friendlier README and a hero banner using the approved PSP Dock logo.
 
-**No integrado:** el trabajo Linux se conserva en la rama separada `feat/linux-dock` porque aún supone protocolo nativo 0301 frente al 0308 del MVP. No debe instalarse como si fuera compatible con esta versión.
+**Important:** The Windows executable is unsigned and doesn't bundle PPSSPP. PSP Dock requires compatible homebrew and should be tested on each console. This release did not change the USB protocol or the save-sync logic of v0.1.0.
 
-**Validación conocida:** el usuario confirmó un ciclo completo de conexión y salida en hardware PSP para Windows. Las pruebas automáticas del host/cliente (incluidas las de fotogramas intermedios del XMB mediante Chromium) no sustituyen las pruebas físicas de cada función, ni constituyen una distribución instalable firmada.
+## v0.1.0 — First public source release · November 3, 2026
 
-**Licencia:** PolyForm Noncommercial 1.0.0 para el código original, con crédito obligatorio a `jalinhabrava`; software derivado de FuSa GAMEPAD bajo GPL-3.0 y otros materiales de terceros bajo sus propias licencias. Consulta [NOTICE.md](NOTICE.md) y [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+**Windows MVP:** XMB with smooth transitions checked in a real browser, a Memory Stick-aware persistent catalog, the native 0308 Sony USB Storage/PSP HID session flow, explicit transfer choices, compatible PSP/retro saves with conflict review and verified returns, PSP-sourced media where available, and PPSSPP/RetroArch integration.
+
+**Included but experimental:** Premium PSP homebrew UI, a hybrid HD texture pipeline, deterministic DZIP research (not a claimed universal DZIP decoder), and an Android TV app prototype.
+
+**Not merged:** The Linux work remains in its own `feat/linux-dock` branch because it still assumes native protocol 0301 while the main Windows MVP uses 0308.
+
+**Known validation:** A full Windows PSP Dock connection/exit cycle was completed with a real PSP. Automated host, UI and Chromium animation tests don't replace physical testing of every feature or certify an installer on every Windows PC.
+
+**Licenses:** PolyForm Noncommercial 1.0.0 for original code, requiring credit to `jalinhabrava`; FuSa GAMEPAD-derived code under GPL-3.0 and other third-party material under its existing terms. See [NOTICE](NOTICE.md) and [third-party licenses](THIRD_PARTY_NOTICES.md).
