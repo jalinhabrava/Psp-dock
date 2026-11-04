@@ -150,6 +150,7 @@ class AppCloseGuardTests(unittest.TestCase):
 class ManagedServerTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
         self.clock = Clock()
         self.ui = UiLifecycle(now=self.clock)
         self.app = dock.Dock(self.tmp.name)
@@ -162,8 +163,10 @@ class ManagedServerTests(unittest.TestCase):
         self.app.watch = watch
         self.lease_patch=patch.object(dock,'UiLifecycle',return_value=self.ui)
         self.lease_patch.start()
+        self.addCleanup(self.lease_patch.stop)
         self.window_patch=patch.object(dock,'launch_xmb_window')
         self.window=self.window_patch.start()
+        self.addCleanup(self.window_patch.stop)
         def run():
             try:
                 # Passing the old callback flag deliberately must not
@@ -173,15 +176,28 @@ class ManagedServerTests(unittest.TestCase):
                 self.failures.append(exc)
         self.thread=threading.Thread(target=run,daemon=True)
         self.thread.start()
+        # unittest does not call tearDown() when setUp() fails. Always end
+        # the synthetic service and restore monkeypatches on an exception.
+        self.addCleanup(self._stop_orphan_server)
         deadline=time.monotonic()+5
-        while not (self.app.data/'server.json').exists():
-            if time.monotonic() >= deadline or self.failures:
-                self.fail('Managed server did not start: '+repr(self.failures))
-            time.sleep(.01)
-        metadata=json.loads((self.app.data/'server.json').read_text())
+        while True:
+            try:
+                metadata=json.loads((self.app.data/'server.json').read_text())
+                break
+            except (FileNotFoundError, PermissionError, json.JSONDecodeError):
+                # Windows can momentarily lock server.json between creation
+                # and the first complete write. This is not an app failure.
+                if time.monotonic() >= deadline or self.failures:
+                    self.fail('Managed server did not start: '+repr(self.failures))
+                time.sleep(.02)
         self.url='http://127.0.0.1:'+str(metadata['port'])
         with urllib.request.urlopen(self.url+'/api/token',timeout=3) as response:
             self.token=json.load(response)['token']
+
+    def _stop_orphan_server(self):
+        self.app.stop.set()
+        if self.thread.is_alive():
+            self.thread.join(5)
 
     def tearDown(self):
         self.app.process=None
