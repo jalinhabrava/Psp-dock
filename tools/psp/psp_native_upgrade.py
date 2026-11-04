@@ -17,10 +17,9 @@ import re
 import shutil
 import uuid
 
-from tools.psp.psp_composite_install import matching_backup, no_links
-from tools.psp.psp_msc_package import _regular
+from tools.psp.native_backup import matching_backup, no_links
 from tools.psp.psp_native_install import _check_identity, _on_pc, _write_new_json
-from tools.psp.psp_native_package import FILES, REMOTE_FOLDER, digest, verify_package
+from tools.psp.psp_native_package import FILES, REMOTE_FOLDER, digest, verify_package, _regular
 from psp_dock.devices.psp_usb import identify, UsbTransitionError
 
 

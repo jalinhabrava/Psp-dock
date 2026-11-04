@@ -305,4 +305,5 @@ con dobles a prueba de comportamiento físico.
   USBBus, commit `28306bb5bd4fcdcc0c1d469bf1f3bdb885dde3e9`:
   <https://github.com/uofw/uofw/blob/28306bb5bd4fcdcc0c1d469bf1f3bdb885dde3e9/src/kd/usbacc/usbacc.c>
 - FuSa GAMEPAD `97a1fccb8cb561b14964de4d4dbab4fcd8618297`, descriptor y mapping
-  adaptados a partir de `homebrew/bridge-hid`, GPL-3.0.
+  derivados de FuSa GAMEPAD, GPL-3.0. El aviso correspondiente se conserva
+  junto al código final en `homebrew/native-dock/LICENSE-FuSa-GPL-3.0.txt`.

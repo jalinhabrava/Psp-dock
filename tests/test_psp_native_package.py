@@ -9,13 +9,31 @@ import unittest
 from unittest.mock import Mock, patch
 
 import tools.psp.psp_native_package as package
-from tests.test_psp_msc_package import pbp as legacy_pbp, sfo
+
+
+def sfo(title=package.TITLE, *, duplicate=False):
+    """Synthetic PARAM.SFO for the current native homebrew only."""
+    text = title.encode('utf-8') + b'\0'
+    capacity = (len(text) + 3) & ~3
+    count = 2 if duplicate else 1
+    keys = 20 + count * 16
+    data = keys + 8
+    header = struct.pack('<5I', 0x46535000, 0x101, keys, data, count)
+    entry = struct.pack('<HHIII', 0, 0x204, len(text), capacity, 0)
+    return header + entry * count + b'TITLE\0\0\0' + text.ljust(capacity, b'\0')
 
 
 def pbp(title=package.TITLE, *, sfo_data=None, replacements=None):
     art = {name: (package.ASSETS / name).read_bytes() for _, name, _ in package.ARTWORK}
     art.update(replacements or {})
-    return legacy_pbp(title=title, sfo_data=sfo_data, replacements=art)
+    sections = [sfo(title) if sfo_data is None else sfo_data,
+                art['ICON0.PNG'], b'', art['PIC0.PNG'], art['PIC1.PNG'],
+                b'', b'\x7fELF' + bytes(32000), b'']
+    offsets, cursor = [], 40
+    for section in sections:
+        offsets.append(cursor)
+        cursor += len(section)
+    return struct.pack('<4sI8I', b'\0PBP', 0x10000, *offsets) + b''.join(sections)
 
 
 def abi_for(raw=b'NATIVE-ELF-FIXTURE'):

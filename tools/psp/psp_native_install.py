@@ -1,4 +1,4 @@
-"""Install 0304 only into a new PSPDockNative folder, from Sony XMB USB.
+"""Install the final audited PSP Dock 0308 into a new folder from Sony XMB USB.
 
 No upgrade, firmware execution, USB transition, flash, plugins or drivers.
 Every installation has a persistent PC receipt/journal and a current backup.
@@ -16,7 +16,7 @@ import shutil
 import uuid
 
 from psp_dock.devices.psp_composite_client import _new_local_destination
-from tools.psp.psp_composite_install import no_links, matching_backup
+from tools.psp.native_backup import no_links, matching_backup
 from tools.psp.psp_native_package import FILES, REMOTE_FOLDER, digest, verify_package
 from psp_dock.devices.psp_usb import identify, UsbTransitionError
 

@@ -2,6 +2,13 @@
 
 **English** · [Español](CHANGELOG.es.md)
 
+## Unreleased — Clean final-version source tree
+
+- `main` now contains only the supported Windows host, the final PSP 0308 homebrew and the tools needed to build, install, upgrade and back up that version.
+- Removed retired USB/HID/K1/VSH experiments, old firmware variants, historical lab scripts and their obsolete tests. The unfinished Android TV prototype remains accessible on its own development branch, not in the released source tree.
+- Moved the small ELF/USB safety-gate dependencies and third-party notices into the final PSP 0308 directory so it builds independently. The audited EBOOT/PBP output is byte-identical to the published v0.1.2 PSP binary.
+- No change to the Windows-to-PSP protocol, game library, ROM copying or save-sync behavior. Old source remains recoverable from Git history without cluttering a fresh checkout.
+
 ## v0.1.3 — Retro games, without the setup detour · November 4, 2026
 
 - RetroArch and approved compatible cores now install on **Windows in the background** when PSP emulators are discovered; existing manual-policy users can start the installation just by selecting the emulator. Installing PC software never requires switching the PSP back to USB storage.

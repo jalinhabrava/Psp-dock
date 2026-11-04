@@ -24,7 +24,7 @@ import secrets
 import shutil
 
 from dock import ROOT, windows_devices
-from tools.labs.lab_eject import ppsspp_open, real_dock_open
+from psp_dock.emulation.ppsspp_process import ppsspp_open, real_dock_open
 from psp_dock.devices.psp_usb import identify, PspStorage, UsbTransitionError
 
 

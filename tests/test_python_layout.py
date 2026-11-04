@@ -16,9 +16,17 @@ class PythonLayoutTests(unittest.TestCase):
     def test_package_directories_exist(self):
         for relative in ('psp_dock/core', 'psp_dock/devices',
                          'psp_dock/emulation', 'psp_dock/media',
-                         'tools/labs', 'tools/psp', 'tools/system'):
+                         'tools/psp'):
             with self.subTest(package=relative):
                 self.assertTrue((ROOT / relative / '__init__.py').is_file())
+
+    def test_only_final_psp_homebrew_is_shipped(self):
+        self.assertEqual({directory.name for directory in (ROOT / 'homebrew').iterdir()
+                          if directory.is_dir() and not directory.name.startswith('__')},
+                         {'native-dock'})
+        self.assertTrue((ROOT / 'homebrew/native-dock/lab_gate.h').is_file())
+        self.assertTrue((ROOT / 'homebrew/native-dock/elf_reader.py').is_file())
+        self.assertTrue((ROOT / 'homebrew/native-dock/LICENSE-FuSa-GPL-3.0.txt').is_file())
 
     def test_source_files_parse_and_use_no_runtime_sys_path_hacks(self):
         # Legacy developer helpers directly under tools/ still support

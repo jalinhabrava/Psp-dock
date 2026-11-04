@@ -2,6 +2,13 @@
 
 **[English](CHANGELOG.md)** · **Español**
 
+## Pendiente de nueva versión — Solo el código final
+
+- `main` conserva únicamente el programa Windows, el homebrew PSP 0308 y las herramientas necesarias para compilar, instalar, actualizar y respaldar esa versión.
+- Se han retirado los experimentos USB/HID/K1/VSH, los firmwares antiguos, los scripts de laboratorio y sus pruebas obsoletas. Android TV continúa disponible en su rama de desarrollo, pero no mezclado con la versión final.
+- Las dependencias y licencias del homebrew final están ahora en su propia carpeta: la compilación auditada del EBOOT es idéntica a la publicada en la v0.1.2.
+- No cambia el protocolo entre PC y PSP, el catálogo de juegos, las transferencias ni la sincronización de partidas. El código anterior puede recuperarse desde el historial Git.
+
 ## v0.1.3 — Juega a tus ROMs sin pasos innecesarios · 4 de noviembre de 2026
 
 - RetroArch y sus núcleos compatibles permitidos se preparan **en segundo plano en Windows** al detectar emuladores PSP. Las instalaciones antiguas con política manual pueden iniciarlo al seleccionar el emulador, sin pedir que la PSP vuelva a almacenamiento USB.

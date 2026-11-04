@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -17,7 +18,25 @@ import struct
 import uuid
 
 from psp_dock.devices.psp_composite_client import _new_local_destination
-from tools.psp.psp_msc_package import ARTWORK, digest, _regular
+
+# Native 0308 owns its package format. Do not import the retired synthetic
+# USBSTOR diagnostic packager just for these generic byte-validation helpers.
+ARTWORK = ((1, 'ICON0.PNG', (144, 80)), (3, 'PIC0.PNG', (310, 180)),
+           (4, 'PIC1.PNG', (480, 272)))
+
+
+def digest(path: Path) -> str:
+    value = hashlib.sha256()
+    with Path(path).open('rb') as reader:
+        for block in iter(lambda: reader.read(1024 * 1024), b''):
+            value.update(block)
+    return value.hexdigest()
+
+
+def _regular(path: Path) -> bool:
+    path = Path(path)
+    return path.is_file() and not path.is_symlink() and not (
+        getattr(path.stat(), 'st_file_attributes', 0) & 0x400)
 
 BASE = Path(__file__).resolve().parents[2]
 FIRMWARE = BASE / 'homebrew/native-dock'

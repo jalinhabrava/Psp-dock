@@ -7,15 +7,14 @@ work=/home/david/projects/psp-dock-build/native-dock-0308
 assets="$src/assets"
 mkdir -p "$work"
 cp "$src"/*.c "$src"/*.h "$src/Makefile" "$src/exports.exp" "$work/"
-cp "$src/../hid-only-lab/lab_gate.h" "$work/"
+cp "$src/lab_gate.h" "$work/"
 
 # Compile the actual source snapshot with asynchronous host-only doubles.
 testroot="$work/test_snapshot/homebrew"
-mkdir -p "$testroot/native-dock/tests/psp_stub" "$testroot/hid-only-lab"
+mkdir -p "$testroot/native-dock/tests/psp_stub"
 cp "$work"/*.c "$work"/*.h "$testroot/native-dock/"
 cp "$src/tests/test_native_transport.c" "$src/tests/test_native_ui.c" "$src/tests/test_native_resource_export.c" "$testroot/native-dock/tests/"
 cp "$src/tests/psp_stub"/*.h "$testroot/native-dock/tests/psp_stub/"
-cp "$work/lab_gate.h" "$testroot/hid-only-lab/"
 cd "$work"
 gcc -std=c11 -Wall -Wextra -Werror -O2 -I"$testroot/native-dock/tests/psp_stub" \
     "$testroot/native-dock/tests/test_native_transport.c" -o native-test
@@ -55,7 +54,7 @@ mkdir -p "$src/dist"
 cp docknative.prx docknative.elf app/EBOOT.PBP app/pspdocknative.elf \
     kernel-symbols.txt kernel-sections.txt user-symbols.txt user-direct-imports.txt \
     compiled-audit.json "$src/dist/"
-cp "$src/../bridge-hid/LICENSE" "$src/dist/LICENSE-FuSa-GPL-3.0.txt"
+cp "$src/LICENSE-FuSa-GPL-3.0.txt" "$src/dist/LICENSE-FuSa-GPL-3.0.txt"
 shopt -s nullglob
 asset_licenses=("$assets"/LICENSE*)
 if ((${#asset_licenses[@]} == 0)); then

@@ -68,7 +68,7 @@ Conecta tu PSP al ordenador, abre **PSP Dock** y vuelve a encontrarte con tu bib
 
 Este es nuestro **primer lanzamiento para Windows**, pero las ideas no se acaban aquí: compatibilidad con más emuladores, texturas HD, una experiencia para Android TV y una versión para Linux están entre los caminos que estamos explorando.
 
-Los proyectos de Android TV, Linux y el motor experimental de texturas **todavía no forman parte de las descargas listas para jugar**. Preferimos enseñarte cómo avanzan a prometer que todo funciona ya en cualquier dispositivo.
+Solo publicamos aquí las versiones actuales de Windows y PSP. Los prototipos Android TV y Linux continúan en sus ramas de Git hasta estar listos, sin llenar de experimentos el árbol del producto.
 
 ## Creado para los que seguimos queriendo a la PSP
 
@@ -89,7 +89,7 @@ PSP Dock es un proyecto de comunidad y una pequeña declaración de amor a una c
 
 ### Desarrollar o probar
 
-El host está escrito principalmente en Python y utiliza HTML/CSS/JavaScript para el menú. La app de PSP se compila con PSPDEV. El código también incorpora herramientas experimentales de investigación de texturas.
+El host está escrito principalmente en Python y utiliza HTML/CSS/JavaScript para el menú. El homebrew PSP final 0308 se compila con PSPDEV. No incluimos en este árbol las versiones antiguas de firmware experimental.
 
 ```shell
 python -m unittest tests.test_device_memory tests.test_dock_product_session tests.test_native_dock -q
@@ -98,7 +98,7 @@ node --test "tests/*.test.js"
 
 La prueba de movimiento del XMB utiliza un navegador Chromium real, una biblioteca de demostración aislada y **no accede a la PSP**.
 
-Puedes consultar la [estructura del código Python](docs/PROJECT-STRUCTURE.md), el [protocolo y homebrew](homebrew/native-dock/README.md), el [historial del proyecto](CHANGELOG.es.md) y las [notas de investigación HD](docs/MOTOR-TEXTURAS-DETERMINISTA.md).
+Puedes consultar la [estructura actual del proyecto](docs/PROJECT-STRUCTURE.md), el [homebrew PSP 0308](homebrew/native-dock/README.md), la [instalación de RetroArch](docs/RETRO-AUTO-INSTALL.md) y los [gráficos de PPSSPP](docs/GRAFICOS-PPSSPP.md). Los experimentos anteriores permanecen en Git, no en el código principal.
 
 </details>
 
