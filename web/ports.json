@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "source": "https://ported2browser.org/",
+  "games": [
+    {
+      "id": "thps3",
+      "title": "Tony Hawk's Pro Skater 3",
+      "platform": "PS2",
+      "genre": "Skate",
+      "author": "Slayoner / PS2 Web Recomp",
+      "url": "https://tonyhawkpro3.gamingretro.online/",
+      "source_page": "https://ported2browser.org/games/tony-hawk-pro-skater-3/",
+      "embed": "native",
+      "controls": ["gamepad", "keyboard"],
+      "missing_on_psp": ["L2", "R2"],
+      "notes": "El autor documenta L2 y R2. Admite mando USB o Bluetooth y tarjeta virtual .ps2."
+    },
+    {
+      "id": "budokai-tenkaichi-3",
+      "title": "Dragon Ball Z: Budokai Tenkaichi 3",
+      "platform": "PS2",
+      "genre": "Lucha",
+      "author": "Slayoner",
+      "url": "https://dragonballbt3.online/",
+      "source_page": "https://ported2browser.org/games/dragon-ball-z-bt-3/",
+      "embed": "native",
+      "controls": ["gamepad", "keyboard"],
+      "missing_on_psp": [],
+      "notes": "Port no oficial. Revisa el mapeo del autor: no se han verificado L2/R2 como imprescindibles."
+    },
+    {
+      "id": "nfs-underground-2",
+      "title": "Need for Speed Underground 2",
+      "platform": "PS2",
+      "genre": "Carreras",
+      "author": "Slayoner / NFSU2",
+      "url": "https://nfsu2.org/",
+      "source_page": "https://ported2browser.org/games/nfs-underground-2/",
+      "embed": "native",
+      "controls": ["gamepad", "keyboard"],
+      "missing_on_psp": [],
+      "notes": "El proyecto del navegador usa un motor de PC. WebGPU y bastante espacio de caché; no se ha verificado el mando PSP."
+    },
+    {
+      "id": "2048",
+      "title": "2048",
+      "platform": "Web",
+      "genre": "Puzle",
+      "author": "Gabriele Cirulli",
+      "url": "https://play2048.co/",
+      "source_page": "https://ported2browser.org/games/2048/",
+      "embed": "native",
+      "controls": ["keyboard", "touch"],
+      "missing_on_psp": [],
+      "keyboard_map": {"up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight"},
+      "notes": "MIT. El sitio impide iframe de terceros, pero funciona como documento principal."
+    },
+    {
+      "id": "hexgl",
+      "title": "HexGL",
+      "platform": "Web",
+      "genre": "Carreras",
+      "author": "Thibaut Despoulain / BKCore",
+      "url": "https://hexgl.bkcore.com/play/",
+      "source_page": "https://ported2browser.sbs/games/",
+      "embed": "iframe",
+      "controls": ["keyboard"],
+      "missing_on_psp": [],
+      "notes": "Alojamiento original sin cabecera X-Frame-Options en la comprobación HTTP. Controles de teclado por verificar con PSP."
+    },
+    {
+      "id": "wipeout",
+      "title": "WipEout · Phoboslab",
+      "platform": "PS1",
+      "genre": "Carreras",
+      "author": "Dominic Szablewski",
+      "url": "https://phoboslab.org/wipeout/",
+      "source_page": "https://ported2browser.org/games/wipeout/",
+      "embed": "iframe",
+      "controls": ["keyboard", "touch"],
+      "missing_on_psp": [],
+      "notes": "Juego alojado por su autor. Versión completa y ligera; teclado o controles táctiles."
+    },
+    {
+      "id": "diabloweb",
+      "title": "Diablo · Diabloweb",
+      "platform": "PC",
+      "genre": "RPG",
+      "author": "d07RiV",
+      "url": "https://d07riv.github.io/diabloweb/",
+      "source_page": "https://ported2browser.org/games/diablo/",
+      "embed": "iframe",
+      "controls": ["keyboard", "mouse", "touch"],
+      "missing_on_psp": [],
+      "notes": "Shareware sin archivos; juego completo solo con DIABDAT.MPQ propio. Requiere puntero."
+    }
+  ]
+}

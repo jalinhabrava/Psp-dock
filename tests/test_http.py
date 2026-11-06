@@ -75,6 +75,27 @@ class HTTPContract(unittest.TestCase):
             urllib.request.urlopen(self.url + '/../../settings.json', timeout=10)
         self.assertNotEqual(missing.exception.code, 200)
 
+    def test_web_port_manifest_served_without_proxy_or_private_files(self):
+        status, catalog = self.request('/api/web-ports')
+        self.assertEqual(status, 200)
+        self.assertEqual(catalog['version'], 1)
+        self.assertGreaterEqual(len(catalog['games']), 5)
+        for port in catalog['games']:
+            self.assertTrue(port['url'].startswith('https://'))
+            self.assertNotIn('ported2browser', port['url'])
+            self.assertIn(port['embed'], ('iframe', 'native'))
+        thps3 = next(item for item in catalog['games'] if item['id']=='thps3')
+        self.assertEqual(thps3['missing_on_psp'], ['L2', 'R2'])
+        self.assertEqual(thps3['embed'], 'native')
+        with urllib.request.urlopen(self.url+'/', timeout=10) as response:
+            csp=response.headers.get('Content-Security-Policy','')
+        self.assertIn("frame-ancestors 'none'",csp)
+        self.assertIn('frame-src https://hexgl.bkcore.com',csp)
+        self.assertNotIn('tonyhawkpro3.gamingretro.online',csp,
+                         'PS2 games must use the top-level native WebView2, never iframe')
+        with self.assertRaises(urllib.error.HTTPError):
+            urllib.request.urlopen(self.url+'/ports.json', timeout=10)
+
     def test_ui_sound_is_bounded_and_missing_original_is_silent(self):
         status, result = self.request('/api/ui-sound', {'sound':'cursor','at_ms':time.time()*1000})
         self.assertEqual(status, 200)

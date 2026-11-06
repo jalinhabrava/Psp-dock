@@ -19,6 +19,8 @@ const ui = {
   appClientId: '', appHeartbeatTimer: null, appHeartbeatPending: false, appPageHidden: false,
   storageSetupRequested: false,
   productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
+  webPorts: [], webPortCatalogError: '', webPortActive: null, webPortHostActive: false,
+  webPortComboAt: 0,
 };
 const bytes = (value) => {
   const n = Number(value) || 0;
@@ -1343,6 +1345,11 @@ function controllerInput(pad) {
 }
 function gamepadLoop(time) {
   if (ui.appClosed) return;
+  // The embedded game owns its pad; the XMB must not react to the same input.
+  if (ui.webPortActive || ui.webPortHostActive) {
+    requestAnimationFrame(gamepadLoop);
+    return;
+  }
   // On PSP HID prefer the Windows-native WinMM source to the browser:
   // otherwise one physical CROSS can fire twice (WinMM + Gamepad API).
   if (ui.nativePadConnected && Date.now() - ui.nativePadLastAt < 600) {
@@ -1403,6 +1410,16 @@ function gamepadLoop(time) {
   requestAnimationFrame(gamepadLoop);
 }
 function processNativePspFrame(input, now) {
+  if (ui.webPortActive || ui.webPortHostActive) {
+    // The native shell handles this chord itself; in iframe fallback
+    // the parent still reads PSP WinMM input and keeps a safe escape route.
+    if (ui.webPortActive && input.pageLeft && input.pageRight && input.exit) {
+      if (!ui.webPortComboAt) ui.webPortComboAt = now;
+      if (now - ui.webPortComboAt >= 1200) xmbWebPortClose();
+    } else ui.webPortComboAt = 0;
+    ui.nativePadHeld = input;
+    return;
+  }
   // The physical PSP buttons are mapped explicitly by Windows WinMM,
   // independent of Chromium's nonstandard Gamepad API mapping.
   const edge = (name) => !!input[name] && !ui.nativePadHeld[name];
@@ -1800,6 +1817,7 @@ const XMB_ICONS = {
   dock: XMB_SVG('<path d="M12 2.8v15.5"/><path d="M9.2 5.8L12 2.8l2.8 3"/><path d="M12 12.5l-4.3-3V7.4"/><circle cx="7.7" cy="6.6" r=".9"/><path d="M12 14.5l4.3-2.8V9.6"/><path d="M15.4 8.4h1.8v1.8h-1.8z"/><circle cx="12" cy="19.6" r="1.7"/>'),
   juegos: XMB_SVG('<path d="M7.3 7.5h9.4c2.2 0 3.6 1.4 4.2 3.6l1 4.4c.4 1.9-1.6 3.2-3 1.9L16.5 15h-9L5.1 17.4c-1.4 1.3-3.4 0-3-1.9l1-4.4C3.7 8.9 5.1 7.5 7.3 7.5z"/><path d="M7.2 9.9v3.4M5.5 11.6h3.4"/><circle cx="16.2" cy="10.3" r=".55"/><circle cx="17.9" cy="12" r=".55"/><circle cx="14.5" cy="12" r=".55"/><circle cx="16.2" cy="13.7" r=".55"/>'),
   retro: XMB_SVG('<rect x="2.5" y="6" width="19" height="12" rx="3"/><path d="M6.5 9.5v5M4 12h5M15.5 10.5h.01M18 13.5h.01"/><path d="M9 6V4h6v2"/>'),
+  webports: XMB_SVG('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18M5 7h14M5 17h14"/>'),
   partidas: XMB_SVG('<path d="M7 3.5h10a1 1 0 0 1 1 1V20a.5.5 0 0 1-.5.5h-11A.5.5 0 0 1 6 20V4.5a1 1 0 0 1 1-1z"/><path d="M8.5 3.5v3.5M10.5 3.5v3.5M12.5 3.5v3.5M14.5 3.5v3.5"/><path d="M8.5 11.5h7v5.5h-7z"/>'),
   graficos: XMB_SVG('<path d="M3 5h18v11.5H3z"/><path d="M9 20h6M12 16.5V20"/><path d="M12 7.6l.9 2 2.2.2-1.7 1.5.5 2.2-1.9-1.1-1.9 1.1.5-2.2-1.7-1.5 2.2-.2z"/>'),
   play: XMB_SVG('<path d="M8 5l11 7-11 7z"/>'),
@@ -1815,7 +1833,7 @@ const XMB_ICONS = {
   theme: XMB_SVG('<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 0 0 16z"/>'),
   warn: XMB_SVG('<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17v.01"/>'),
 };
-const XMB_SECTIONS = [['ajustes', 'Ajustes'], ['dock', 'Dock'], ['juegos', 'Juegos'], ['retro', 'Retro'], ['partidas', 'Partidas'], ['graficos', 'Gráficos']];
+const XMB_SECTIONS = [['ajustes', 'Ajustes'], ['dock', 'Dock'], ['juegos', 'Juegos'], ['retro', 'Retro'], ['webports', 'Juegos Web'], ['partidas', 'Partidas'], ['graficos', 'Gráficos']];
 const XMB_GFX = {
   quality: [['auto', 'Automático · según el monitor'], ['balanced', 'Equilibrado · menos carga'], ['quality', 'Calidad · más resolución'],
     ['ultra', 'Ultra · sobremuestreo'], ['manual', 'Manual · escala de Ajustes']],
@@ -2444,6 +2462,24 @@ function xmbBuildSections() {
     s:'Se detectan gpSP, TempGBA, Snes9xTYL, NesterJ, PicoDrive, Daedalus y otros.',
     icon:'search', activate:()=>toast('Conecta la PSP en almacenamiento USB para detectar los emuladores instalados y sus ROMs.') }];
 
+  // A web port is one vertical row, separate from PSP ISOs and Retro ROMs.
+  out.webports = ui.webPorts.map((port) => ({
+    key:'web-port-'+port.id, t:port.title, icon:'webports', webPort:port,
+    s:port.platform + ' · ' + port.genre + ' · ' + port.author +
+      (port.controls.includes('gamepad') ? ' · Mando' : ' · Teclado/ratón') +
+      (port.embed === 'native' ? ' · WebView2' : ''),
+    chip:port.missing_on_psp.length ? ['conf','L2/R2'] :
+      port.platform === 'PS2' ? ['inh','MANDO ?'] : ['pc','WEB'],
+    activate:()=>xmbWebPortLaunch(port),
+    menu:()=>xmbWebPortMenu(port),
+  }));
+  if (!out.webports.length) out.webports = [{
+    key:'web-ports-loading',
+    t:ui.webPortCatalogError ? 'No se ha podido cargar el catálogo web' : 'Cargando juegos web…',
+    s:ui.webPortCatalogError || 'Enlaces directos a los proyectos de sus autores',
+    icon:'webports', activate:()=>void xmbLoadWebPorts(),
+  }];
+
   const partidas = [];
   partidas.push({ key: 'sync', t: xmbText('sync-button') || 'Sincronizar partidas',
     s: document.querySelector('#saves-content .save-summary')?.textContent || '', icon: 'sync', dim: !xmbUsable('sync-button'),
@@ -2970,6 +3006,110 @@ function xmbLaunchRetro(rom) {
   }
   mutate('/api/retro-launch',{id:rom.id},`Abriendo ${rom.system_name} en RetroArch…`);
 }
+function xmbValidatedWebPort(port) {
+  if (!port || typeof port !== 'object' ||
+      !/^[a-z0-9-]{2,64}$/.test(port.id) ||
+      typeof port.title !== 'string' || port.title.length > 120 ||
+      typeof port.url !== 'string' ||
+      !Array.isArray(port.controls) || !Array.isArray(port.missing_on_psp) ||
+      !['iframe','native'].includes(port.embed)) return false;
+  try {
+    const uri = new URL(port.url);
+    if (uri.protocol !== 'https:' || uri.username || uri.password ||
+        uri.port || uri.search || uri.hash) return false;
+    // Only audited author domains. No local URL, arbitrary redirect or proxy.
+    return ['tonyhawkpro3.gamingretro.online', 'dragonballbt3.online',
+      'nfsu2.org', 'play2048.co', 'hexgl.bkcore.com',
+      'phoboslab.org', 'd07riv.github.io'].includes(uri.hostname);
+  } catch { return false; }
+}
+async function xmbLoadWebPorts() {
+  try {
+    const catalog = await request('/api/web-ports');
+    if (!Array.isArray(catalog.games) || catalog.version !== 1)
+      throw new Error('Formato de catálogo desconocido');
+    ui.webPorts = catalog.games.filter(xmbValidatedWebPort);
+    ui.webPortCatalogError = ui.webPorts.length ? '' : 'Sin ports aprobados';
+  } catch {
+    ui.webPortCatalogError = 'No se ha podido leer la lista local de ports.';
+  }
+  if (!ui.appClosed) xmbRender();
+}
+function xmbWebPortMenu(port) {
+  xmbSide(port.title, [
+    {t:'Jugar dentro de PSP Dock',s:port.embed === 'native' ?
+      'Requiere el contenedor WebView2 para respetar la política del autor.' :
+      'Compatible con la vista integrada de navegador.'},
+    {t:'Controles y origen',s:(port.missing_on_psp.length ?
+      'La PSP no tiene ' + port.missing_on_psp.join(' / ') + '. ' : '') +
+      port.notes + ' · Autor: ' + port.author},
+  ], (index) => {
+    if (index === 0) xmbWebPortLaunch(port);
+    else toast(port.notes);
+  });
+}
+function xmbWebPortLaunch(port) {
+  if (!xmbValidatedWebPort(port)) {
+    toast('URL de juego web no autorizada en el catálogo de PSP Dock.');
+    return;
+  }
+  const connection = xmbConnectionView();
+  if (ui.busy || ui.serviceOffline || ui.state?.session?.running ||
+      connection.waiting || connection.product?.blocking) {
+    toast('Termina la preparación o el juego en ejecución antes de abrir un port web.');
+    return;
+  }
+  if (port.platform === 'PS2' && port.missing_on_psp.length) {
+    xmbConfirm('Este juego usa ' + xmbEscape(port.missing_on_psp.join(' y ')) +
+      ', botones que la PSP no tiene.<small>Podrás continuar, pero algunos movimientos ' +
+      'no funcionarán con la PSP sola. Conecta otro mando compatible (Xbox / PlayStation) ' +
+      'para disponer de todos los botones.</small>', false, () => xmbWebPortOpen(port));
+    return;
+  }
+  if (port.platform === 'PS2') {
+    xmbConfirm('Controles de PS2 todavía no verificados para PSP.<small>' +
+      'Es posible que este port necesite L2/R2 o el segundo joystick, ' +
+      'que la PSP no incorpora. Puedes continuar o conectar un mando completo ' +
+      'si descubres que faltan acciones.</small>', false, () => xmbWebPortOpen(port));
+    return;
+  }
+  xmbWebPortOpen(port);
+}
+function xmbWebPortOpen(port) {
+  xmbPreviewGame(null);
+  const host = window.chrome?.webview;
+  if (typeof host?.postMessage === 'function') {
+    // The native shell resolves this ID from its own approved local catalog.
+    host.postMessage({type:'launch-web-port',id:port.id});
+    return;
+  }
+  if (port.embed !== 'iframe') {
+    toast('Este juego prohíbe iframe. Se necesita la ventana WebView2 de PSP Dock.');
+    return;
+  }
+  ui.webPortActive = port.id;
+  ui.webPortComboAt = 0;
+  $('web-port-title').textContent = port.title;
+  $('web-port-view').hidden = false;
+  $('web-port-frame').src = port.url;
+}
+function xmbWebPortClose() {
+  if (!ui.webPortActive) return;
+  $('web-port-frame').src = 'about:blank';
+  $('web-port-view').hidden = true;
+  ui.webPortActive = null;
+  ui.webPortComboAt = 0;
+  $('xmb').focus();
+  xmbRender();
+}
+function xmbWebPortHostMessage(event) {
+  const data = event?.data;
+  if (data?.type === 'web-port-session')
+    ui.webPortHostActive = data.active === true;
+  else if (data?.type === 'web-port-error')
+    toast(data.message || 'No se ha podido iniciar el juego web.');
+  if (!ui.webPortHostActive && !ui.webPortActive) xmbRender();
+}
 function xmbGoto(id) {
   const connection = xmbConnectionView();
   if (connection.waiting || connection.product?.blocking) return;
@@ -2984,6 +3124,7 @@ function xmbCurrentItems() {
   return xmb.nav.level === 'sub' ? xmbGraphicsRows(xmb.sub?.id || null) : section?.items || [];
 }
 function xmbPress(button) {
+  if (typeof ui !== 'undefined' && (ui.webPortActive || ui.webPortHostActive)) return;
   const connection = xmbConnectionView();
   if (connection.product?.visible) { productFlowPress(button); return; }
   if (connection.waiting) return;
@@ -3070,7 +3211,7 @@ function xmbItemNode(key, item) {
     const text = document.createElement('div');
     text.className = 'xmb-tx';
     const title = document.createElement('b');
-    if (item.game || key.includes('retro-sram-') || key.includes('save-') || key.includes('conflict-')) {
+    if (item.game || item.webPort || key.includes('retro-sram-') || key.includes('save-') || key.includes('conflict-')) {
       const userTitle = document.createElement('span');
       userTitle.dataset.i18nSkip = 'true';
       userTitle.textContent = item.t;
@@ -3364,6 +3505,7 @@ matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => 
 });
 xmbSyncMotion();
 xmbLoadSettings();
+void xmbLoadWebPorts();
 
 function appNewClientId() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (value) => value.toString(16).padStart(2, '0')).join('');
@@ -3385,6 +3527,9 @@ $('dock-session-remember').addEventListener('click', () => {
 $('dock-session-refresh').addEventListener('click', refresh);
 $('dock-session-cancel').addEventListener('click', cancelProductSession);
 $('dock-session-close').addEventListener('click', closeDockApp);
+$('web-port-back').addEventListener('click', xmbWebPortClose);
+if (typeof window.chrome?.webview?.addEventListener === 'function')
+  window.chrome.webview.addEventListener('message', xmbWebPortHostMessage);
 window.addEventListener('pagehide', appPageLeaving);
 window.addEventListener('pagehide', () => xmbPreviewGame(null));
 document.addEventListener('visibilitychange', () => {

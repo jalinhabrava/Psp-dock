@@ -13,6 +13,15 @@ import time
 
 TITLE = 'PSP Dock'
 CHROME_CLASS = 'Chrome_WidgetWin_1'
+WEBVIEW_PROCESS = 'pspdockwebshell.exe'
+
+
+def is_dock_window(row: dict) -> bool:
+    """Only our named Chrome app or the exact WebView2 shell process."""
+    if row.get('window_class') == CHROME_CLASS:
+        return True
+    return (str(row.get('window_class', '')).startswith('WindowsForms10.Window.')
+            and str(row.get('process_name', '')).lower() == WEBVIEW_PROCESS)
 
 
 def unique_target(rows: list[dict], *, exclude_handles=(), include_handles=None) -> int | None:
@@ -20,7 +29,7 @@ def unique_target(rows: list[dict], *, exclude_handles=(), include_handles=None)
     matches = [row for row in rows
                if row.get('visible') is True and
                row.get('title') == TITLE and
-               row.get('window_class') == CHROME_CLASS and
+               is_dock_window(row) and
                type(row.get('handle')) is int and row['handle'] > 0 and
                row['handle'] not in exclude_handles and
                (include_handles is None or row['handle'] in include_handles)]
@@ -42,6 +51,15 @@ def enumerate_xmb_windows() -> list[dict]:
     user32.GetClassNameW.restype=C.c_int
     user32.IsWindowVisible.argtypes=[W.HWND]
     user32.IsWindowVisible.restype=W.BOOL
+    user32.GetWindowThreadProcessId.argtypes=[W.HWND,C.POINTER(W.DWORD)]
+    user32.GetWindowThreadProcessId.restype=W.DWORD
+    kernel32=C.WinDLL('kernel32',use_last_error=True)
+    kernel32.OpenProcess.argtypes=[W.DWORD,W.BOOL,W.DWORD]
+    kernel32.OpenProcess.restype=W.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes=[W.HANDLE,W.DWORD,W.LPWSTR,C.POINTER(W.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype=W.BOOL
+    kernel32.CloseHandle.argtypes=[W.HANDLE]
+    kernel32.CloseHandle.restype=W.BOOL
     rows=[]
     def visit(hwnd,unused):
         size=user32.GetWindowTextLengthW(hwnd)
@@ -53,9 +71,23 @@ def enumerate_xmb_windows() -> list[dict]:
             return True
         class_name=C.create_unicode_buffer(80)
         user32.GetClassNameW(hwnd,class_name,len(class_name))
+        process_name=''
+        if class_name.value.startswith('WindowsForms10.Window.'):
+            pid=W.DWORD(0)
+            user32.GetWindowThreadProcessId(hwnd,C.byref(pid))
+            handle=kernel32.OpenProcess(0x1000,False,pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+            if handle:
+                try:
+                    path=C.create_unicode_buffer(2048)
+                    length=W.DWORD(len(path))
+                    if kernel32.QueryFullProcessImageNameW(handle,0,path,C.byref(length)):
+                        process_name=os.path.basename(path.value).lower()
+                finally:
+                    kernel32.CloseHandle(handle)
         rows.append({
             'handle':int(hwnd), 'title':title.value,
             'window_class':class_name.value,
+            'process_name':process_name,
             'visible':bool(user32.IsWindowVisible(hwnd)),
         })
         return True

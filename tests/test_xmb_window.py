@@ -1,7 +1,9 @@
 import unittest
 from unittest.mock import patch
+from pathlib import Path
+import tempfile
 import psp_dock.core.xmb_window as xmb
-from dock import launch_xmb_window
+from dock import launch_xmb_window, webview_shell_executable
 
 TITLE=xmb.TITLE
 GOOD={'handle': 333, 'title':TITLE,
@@ -24,6 +26,28 @@ class XmbWindowTests(unittest.TestCase):
         with patch.object(xmb.os,'name','posix'):
             self.assertFalse(xmb.maximize_existing_xmb())
             self.assertFalse(xmb.maximize_when_ready(seconds=0.1))
+
+    def test_only_a_verified_webview_shell_process_can_be_reused(self):
+        native=dict(GOOD,handle=888,window_class='WindowsForms10.Window.8.app.0.1',
+                    process_name='PspDockWebShell.exe')
+        self.assertEqual(xmb.unique_target([native]),888)
+        self.assertIsNone(xmb.unique_target([dict(native,process_name='other.exe')]))
+        self.assertIsNone(xmb.unique_target([dict(native,process_name='')]))
+        self.assertIsNone(xmb.unique_target([GOOD,native]),
+                          'Two app windows are ambiguous: do not close either')
+
+    def test_launch_native_shell_uses_only_an_explicit_verified_executable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            shell = Path(tmp)/'PspDockWebShell.exe'
+            shell.write_bytes(b'test fixture, never executed')
+            with patch.dict('os.environ',{'PSP_DOCK_WEBVIEW2_SHELL':str(shell)}):
+                self.assertEqual(webview_shell_executable(),shell)
+            with patch('dock.webview_shell_executable',return_value=shell), \
+                 patch.object(xmb,'enumerate_xmb_windows',return_value=[]), \
+                 patch('dock.subprocess.Popen') as spawn, \
+                 patch('dock.threading.Thread'):
+                launch_xmb_window('http://127.0.0.1:59336',app_window=True,reuse_existing=False)
+            self.assertEqual(spawn.call_args.args[0],[str(shell),'http://127.0.0.1:59336'])
 
     def test_wait_does_not_spend_more_time_than_requested(self):
         with self.assertRaises(ValueError):

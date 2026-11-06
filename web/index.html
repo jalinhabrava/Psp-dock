@@ -91,6 +91,17 @@
       <p id="xmb-copy-description"></p></div>
     </div>
     </div>
+    <section class="web-port-view" id="web-port-view" aria-label="Juego web dentro de PSP Dock" hidden>
+      <header class="web-port-bar">
+        <button type="button" id="web-port-back">← Volver a Juegos Web</button>
+        <strong id="web-port-title"></strong>
+        <span>L + R + SELECT (1,2 s) · Volver</span>
+      </header>
+      <iframe id="web-port-frame" title="Juego del autor" loading="eager"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-pointer-lock"
+        allow="gamepad; fullscreen; autoplay; pointer-lock" referrerpolicy="strict-origin-when-cross-origin"
+        allowfullscreen></iframe>
+    </section>
   </div>
 
   <!-- Modelo interno del Dock: la lógica de estado y seguridad de app.js sigue
