@@ -7,6 +7,7 @@ const path = require('node:path');
 const source = fs.readFileSync(process.argv[2] || path.resolve(__dirname, '../web/app.js'), 'utf8');
 const slice = (start, end) => source.slice(source.indexOf(start), source.indexOf(end, source.indexOf(start)));
 const defer = () => { let resolve, reject; const promise = new Promise((a,b) => {resolve=a; reject=b;}); return {promise,resolve,reject}; };
+const flush = () => new Promise(resolve => setImmediate(resolve));
 
 function fixture() {
   const timers = new Map(); let timerId = 0;
@@ -42,7 +43,7 @@ function fixture() {
 
 async function main() {
   const s=fixture();
-  s.xmbPreviewGame('a'.repeat(24));s.runTimer();
+  s.xmbPreviewGame('a'.repeat(24));s.runTimer();await flush();
   assert.equal(s.audio.plays,1);assert.equal(s.audio.loop,true);
   const send=defer();
   s.request=async route => {s.calls.push(route); if(route==='/api/launch')return send.promise;
@@ -56,9 +57,9 @@ async function main() {
   s.document.hidden=true;send.resolve({ok:true});await launching;
   assert.equal(s.ui.state.session.running,true);
   assert.equal(s.audio.src,'','Hidden window stays silent after launch');
-  s.document.hidden=false;s.xmbPreviewGame('a'.repeat(24));s.runTimer();
+  s.document.hidden=false;s.xmbPreviewGame('a'.repeat(24));s.runTimer();await flush();
   assert.equal(s.audio.plays,1,'Still silent if game runs while Dock is visible');
-  s.request=async()=>({session:{running:false}});await s.refresh();s.runTimer();
+  s.request=async()=>({session:{running:false}});await s.refresh();s.runTimer();await flush();
   assert.equal(s.audio.plays,2,'Preview resumes after confirmed game exit, not before');
 
   const stale=fixture(), oldGet=defer(), post=defer();
@@ -73,15 +74,15 @@ async function main() {
 
   const late=fixture(), play=defer();
   late.audio.play=function(){this.plays++;return play.promise;};
-  late.xmbPreviewGame('a'.repeat(24));late.runTimer();
+  late.xmbPreviewGame('a'.repeat(24));late.runTimer();await flush();
   late.xmb.mediaLaunchPending=true;late.xmbPreviewGame(null);
   const pauses=late.audio.pauses;play.resolve();await Promise.resolve();
   assert(late.audio.pauses>pauses,'A delayed play resolution cannot leak over the emulator');
 
   const fail=fixture();
-  fail.xmbPreviewGame('a'.repeat(24));fail.runTimer();
+  fail.xmbPreviewGame('a'.repeat(24));fail.runTimer();await flush();
   fail.request=async route=>{if(route==='/api/launch')throw Error('rejected');return {session:{running:false}};};
-  assert.equal(await fail.mutate('/api/launch',{}),false);fail.runTimer();
+  assert.equal(await fail.mutate('/api/launch',{}),false);fail.runTimer();await flush();
   assert.equal(fail.xmb.mediaLaunchPending,false,'Known launch failure can restore selection');
   assert.equal(fail.audio.plays,2);
 
@@ -89,6 +90,47 @@ async function main() {
   await unknown.mutate('/api/launch',{});
   assert.equal(unknown.xmb.mediaLaunchPending,true,'Uncertain delivery stays silent');
   assert.equal(unknown.audio.plays,0);
+
+  const native=fixture();
+  native.ui.token='fixture';
+  native.fetch=async (route,options)=>{
+    native.calls.push({route,body:JSON.parse(options.body),keepalive:options.keepalive});
+    return {ok:true};
+  };
+  native.request=async (route,body) => {
+    native.calls.push({route,body});
+    if(route==='/api/preview-sound')return {native:true,played:true};
+    return {};
+  };
+  native.xmbPreviewGame('a'.repeat(24));native.runTimer();await flush();
+  assert.equal(native.audio.plays,0,'Native preview never doubles the browser soundtrack');
+  assert(native.calls.some(call=>call.route==='/api/preview-sound'&&call.body.id==='a'.repeat(24)));
+  native.xmbPreviewGame(null);
+  assert(native.calls.some(call=>call.route==='/api/preview-sound'&&call.body.id===null&&call.keepalive),
+    'Leaving selection always asks the host to stop native preview');
+
+  const retry=fixture();let attempts=0;
+  retry.request=async (route) => {
+    if(route==='/api/preview-sound'){
+      attempts++;
+      return {native:true,played:attempts>1,retryable:attempts===1};
+    }
+    return {};
+  };
+  retry.xmbPreviewGame('a'.repeat(24));retry.runTimer();await flush();
+  retry.runTimer();await flush();
+  assert.equal(attempts,2,'A temporary missing PC cache is retried on unchanged selection');
+  assert.equal(retry.audio.plays,0);
+
+  const superseded=fixture(), slow=defer();
+  superseded.request=async (route,body)=>{
+    if(route==='/api/preview-sound'&&body.id!==null)return slow.promise;
+    return {native:true,played:false};
+  };
+  superseded.xmbPreviewGame('a'.repeat(24));superseded.runTimer();
+  superseded.xmbPreviewGame(null);
+  slow.resolve({native:false,played:false});await flush();
+  assert.equal(superseded.audio.plays,0,'A stale browser fallback cannot restart a prior selection');
 
   const sfx=fixture();sfx.xmbMenuClick('cursor');sfx.xmbMenuClick('cursor');
   assert.equal(sfx.calls.length,1,'Menu sound is debounced');

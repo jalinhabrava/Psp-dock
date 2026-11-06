@@ -32,6 +32,7 @@ RESOURCE_NAMES = {
 }
 PBP_SECTION = {"icon":1, "overlay":3, "background":4, "sound":5}
 MAX_SOUND_BYTES = 3*1024*1024
+MAX_MP3_BYTES = 2*1024*1024
 MEDIA_LIMITS = {
     "icon": MAX_PNG_BYTES,
     "overlay": MAX_PNG_BYTES,
@@ -65,6 +66,14 @@ def valid_at3(data: bytes) -> bool:
             samples = True
         position = start+length+(length & 1)
     return fmt and samples
+
+
+def valid_mp3_header(data: bytes) -> bool:
+    """FFmpeg may produce an ID3 tag OR a bare MPEG frame stream."""
+    return (isinstance(data, bytes) and 4 <= len(data) <= MAX_MP3_BYTES and
+            (data[:3] == b'ID3' or
+             (data[0] == 0xff and data[1] & 0xe0 == 0xe0 and
+              data[1] & 0x06 != 0 and data[2] & 0xf0 != 0xf0)))
 
 
 def _clean(kind: str, data: bytes | None) -> bytes | None:
@@ -175,12 +184,10 @@ def convert_at3_to_mp3(source: bytes, *, ffmpeg: str | None = None,
                 stdin=subprocess.DEVNULL,capture_output=True,
                 timeout=timeout,check=False,
             )
-            if result.returncode or not out.is_file() or out.stat().st_size>2*1024*1024:
+            if result.returncode or not out.is_file() or out.stat().st_size>MAX_MP3_BYTES:
                 return None
             result_bytes=out.read_bytes()
-            return result_bytes if result_bytes.startswith(b"ID3") or (
-                len(result_bytes)>4 and result_bytes[:1]==b"\xff"
-            ) else None
+            return result_bytes if valid_mp3_header(result_bytes) else None
         except (OSError,subprocess.SubprocessError):
             return None
 
@@ -203,7 +210,7 @@ class XMBAssetCache:
             return None
         value=path.read_bytes()
         if kind=="sound":
-            if 0<len(value)<=2*1024*1024 and value[:3]==b"ID3":
+            if valid_mp3_header(value):
                 return value
         elif _clean(kind,value) is not None:
             return value

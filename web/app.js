@@ -1828,7 +1828,8 @@ const xmb = {
   sections: [], sub: null, side: null, confirm: null,
   gfx: {}, gfxLoading: new Set(), settings: null, els: new Map(), icons: new Map(),
   theme: 'month', mediaGame: null, mediaTimer: null, mediaSound: true,
-  mediaGeneration: 0, mediaHdTimer: null, mediaHdAbort: null,
+  mediaGeneration: 0, mediaHdTimer: null, mediaHdAbort: null, mediaAudioTimer: null,
+  nativeSoundAt: 0,
   mediaLaunchPending: false, mediaLaunchSettled: false,
   menuSound: true, menuSoundAt: 0,
   motion: 'on',
@@ -2084,6 +2085,69 @@ function xmbPreviewAllowed() {
     !ui.state?.session?.running && !ui.state?.session?.exit_requested &&
     !xmb.mediaLaunchPending && !['/api/launch', '/api/retro-launch'].includes(ui.operation);
 }
+function xmbPreviewStamp() {
+  // Newer STOP/focus events must outrank delayed requests even when two
+  // gamepad events happen within the same Date.now() millisecond.
+  xmb.nativeSoundAt = Math.max(Date.now(), (xmb.nativeSoundAt || 0) + 1);
+  return xmb.nativeSoundAt;
+}
+function xmbStopNativePreview() {
+  const body = { id: null, at_ms: xmbPreviewStamp() };
+  if (!ui.token) {
+    // A PLAY may be waiting on its first /api/token response. Its replacement
+    // STOP must not disappear merely because that response is still pending.
+    void request('/api/preview-sound', body).catch(() => {});
+    return;
+  }
+  // keepalive also covers the document becoming hidden/pagehide. The host
+  // checks request recency, so delayed play requests cannot undo this stop.
+  void fetch('/api/preview-sound', {
+    method: 'POST', cache: 'no-store', keepalive: true,
+    headers: { 'Content-Type': 'application/json', 'X-Dock-Token': ui.token },
+    body: JSON.stringify(body),
+  }).catch(() => {});
+}
+function xmbBrowserPreview(gameId, generation, uri) {
+  if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId ||
+      !xmbPreviewAllowed() || !xmb.mediaSound) return;
+  const sound = $('xmb-game-audio');
+  sound.volume = .22;
+  sound.loop = true;
+  sound.src = uri;
+  sound.onplaying = () => {
+    if (generation !== xmb.mediaGeneration || !xmbPreviewAllowed() ||
+        !xmb.mediaSound || xmb.mediaGame !== gameId) sound.pause();
+  };
+  void sound.play().then(() => {
+    if (generation !== xmb.mediaGeneration || !xmbPreviewAllowed() ||
+        !xmb.mediaSound || xmb.mediaGame !== gameId) sound.pause();
+  }).catch(() => {
+    // Non-Windows browser fallback may require a real user gesture. Never
+    // emulate a click or weaken the browser's autoplay security policy.
+  });
+}
+async function xmbStartPreviewSound(gameId, generation, attempt = 0) {
+  if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId ||
+      !xmbPreviewAllowed() || !xmb.mediaSound) return;
+  try {
+    const result = await request('/api/preview-sound', { id: gameId, at_ms: xmbPreviewStamp() });
+    if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId ||
+        !xmbPreviewAllowed() || !xmb.mediaSound) return;
+    if (result.native === false || result.native === undefined) {
+      // Browser fallback is for non-Windows/demo hosts only, and is never
+      // started in addition to an acknowledged native soundtrack.
+      xmbBrowserPreview(gameId, generation, '/api/media/' + encodeURIComponent(gameId) + '/sound');
+    } else if (!result.played && result.retryable === true && attempt < 10) {
+      // Media can appear in the PC cache while STORAGE is being inspected.
+      // A transient miss is not permanent for the selected game.
+      xmb.mediaAudioTimer = setTimeout(
+        () => void xmbStartPreviewSound(gameId, generation, attempt + 1), 650);
+    }
+  } catch {
+    // A response with uncertain delivery may already have started audio.
+    // Never start duplicate browser playback in that situation.
+  }
+}
 
 async function xmbLoadHdBackground(gameId, generation, attempt = 0) {
   if (generation !== xmb.mediaGeneration || xmb.mediaGame !== gameId || !xmbPreviewAllowed()) return;
@@ -2121,9 +2185,11 @@ async function xmbLoadHdBackground(gameId, generation, attempt = 0) {
 function xmbPreviewGame(gameId) {
   if (!xmbPreviewAllowed()) gameId = null;
   if (xmb.mediaGame === gameId) return;
+  const previousGame = xmb.mediaGame;
   xmb.mediaGame = gameId;
   const generation = ++xmb.mediaGeneration;
   clearTimeout(xmb.mediaTimer);
+  clearTimeout(xmb.mediaAudioTimer);
   clearTimeout(xmb.mediaHdTimer);
   xmb.mediaHdAbort?.abort();
   xmb.mediaHdAbort = null;
@@ -2133,6 +2199,7 @@ function xmbPreviewGame(gameId) {
   sound.loop = false;
   sound.removeAttribute('src');
   sound.load();
+  if (previousGame !== null) xmbStopNativePreview();
   if (xmb.mediaHdUrl) URL.revokeObjectURL(xmb.mediaHdUrl);
   xmb.mediaHdUrl = null;
   bg.hidden = true; bg.removeAttribute('src');
@@ -2152,17 +2219,10 @@ function xmbPreviewGame(gameId) {
       element.src = uri + kind;
     }
     if (xmb.mediaSound) {
-      sound.volume = .22;
-      sound.loop = true;
-      sound.src = uri + 'sound';
-      sound.onplaying = () => { if (!xmbPreviewAllowed() || !xmb.mediaSound || !xmb.mediaGame) sound.pause(); };
-      void sound.play().then(() => {
-        // A delayed play promise must never resurrect audio over a game.
-        if (!xmbPreviewAllowed() || !xmb.mediaSound || !xmb.mediaGame) sound.pause();
-      }).catch(() => {
-        // Chrome may require a click before browser audio is unlocked.
-        // Never simulate keyboard input or weaken global browser policy.
-      });
+      // Gamepad navigation is not a trusted browser autoplay gesture.
+      // Prefer the host's original MP3 channel on Windows; it is independent
+      // of the four XMB click WAVs and stops on pagehide or game launch.
+      void xmbStartPreviewSound(gameId, generation);
     }
   }, 350);
 }
