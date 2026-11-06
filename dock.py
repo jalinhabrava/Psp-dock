@@ -450,6 +450,10 @@ class Dock:
         self.process = None
         from xmb_sounds import UiSoundPlayer
         self.ui_sound_player = UiSoundPlayer(self.data / 'xmb-ui-sounds')
+        from xmb_preview_audio import PreviewAudioPlayer
+        self.preview_player = PreviewAudioPlayer()
+        self._preview_request_lock = threading.Lock()
+        self._preview_request_at = float('-inf')
         self._background_cache = None
         self._background_cache_lock = threading.Lock()
         self.session = read_json(self.data / 'session.json', {'running': False, 'pending_return': False})
@@ -2462,6 +2466,52 @@ class Dock:
         finally:
             self.lock.release()
 
+    def play_game_preview(self, game_id, at_ms):
+        """Play ONLY a verified PC-cached original, never read PSP/USB here."""
+        import math
+        from psp_xmb_media import XMBAssetCache, media_key
+        if (game_id is not None and
+                (not isinstance(game_id, str) or not re.fullmatch('[0-9a-f]{24}', game_id))):
+            raise ValueError('Juego de previsualización inválido.')
+        if type(at_ms) not in (int, float) or not math.isfinite(at_ms):
+            raise ValueError('Marca temporal de previsualización inválida.')
+        if not -250 <= time.time() * 1000 - at_ms <= 1750:
+            return {'native': self.preview_player.supported, 'played': False, 'reason': 'stale'}
+        with self._preview_request_lock:
+            # Late network responses from a previous focus must never resume
+            # audio after the newer STOP or a PPSSPP launch.
+            if at_ms < self._preview_request_at:
+                return {'native': self.preview_player.supported, 'played': False, 'reason': 'superseded'}
+            self._preview_request_at = at_ms
+            if game_id is None:
+                self.preview_player.stop()
+                return {'native': self.preview_player.supported, 'played': False, 'reason': 'stopped'}
+            if not self.preview_player.supported:
+                return {'native': False, 'played': False, 'reason': 'browser_fallback'}
+            if self.demo or not self.lock.acquire(blocking=False):
+                return {'native': True, 'played': False, 'retryable': not self.demo}
+            try:
+                flow = self.product_flow.snapshot()
+                if (self.stop.is_set() or self.running() or
+                        self.session.get('exit_requested') or self.recovery_required or
+                        self.transfer_status.get('active') or
+                        flow['enabled'] and flow['phase'] != 'ready'):
+                    self.preview_player.stop()
+                    return {'native': True, 'played': False, 'retryable': False}
+                game = next((row for row in self.last_games if row.get('id') == game_id), None)
+                if game is None or not self.catalog_volume:
+                    return {'native': True, 'played': False, 'retryable': False}
+                cache = XMBAssetCache(Path(self.config.get('storage_root') or self.data)/'xmb-assets')
+                key = media_key(volume=self.catalog_volume, game=game)
+                if cache.cached(key, 'sound') is None:
+                    # Prefetch may still be populating the PC cache. Never
+                    # read the mounted PSP just because the UI selected a game.
+                    return {'native': True, 'played': False, 'retryable': True}
+                return {'native': True, 'played': self.preview_player.play(cache.path(key, 'sound')),
+                        'retryable': False}
+            finally:
+                self.lock.release()
+
     def xmb_background_hd(self, game_id):
         """Enhance ONLY the original already cached on PC. Never reads PSP."""
         from psp_xmb_media import XMBAssetCache, media_key
@@ -2543,20 +2593,37 @@ class Dock:
         self.xmb_media_progress={'active':True,'done':0,
                                  'total':len(self.last_games),'errors':0}
         def job():
-            for game in list(self.last_games):
-                try:
-                    with self.lock:
-                        if (self.stop.is_set() or self.storage_polling_paused or
-                                self.transfer_status.get('active') or
-                                self.snapshot.get('selected_device')!=root or
-                                self.catalog_volume!=identity or self.running()):
-                            break
-                        for kind in ('icon','background','overlay','sound'):
-                            self.xmb_media(game['id'],kind)
-                except (OSError,ValueError):
-                    self.xmb_media_progress['errors']+=1
-                self.xmb_media_progress['done']+=1
-            self.xmb_media_progress['active']=False
+            # SND0 must be imported before Sony storage disconnects. Reading
+            # every game's icons, backgrounds and overlays first can leave the
+            # music unavailable when the user enters HID mode immediately.
+            completed = False
+            try:
+                for kind in ('sound', 'icon', 'background', 'overlay'):
+                    for game in list(self.last_games):
+                        try:
+                            with self.lock:
+                                if (self.stop.is_set() or self.storage_polling_paused or
+                                        self.transfer_status.get('active') or
+                                        self.snapshot.get('selected_device')!=root or
+                                        self.catalog_volume!=identity or self.running()):
+                                    return
+                                if self.product_flow.enabled:
+                                    native = self.native_transport.current
+                                    if not native or not native.get('storage_ready') or not native.get('host_confirmed'):
+                                        return
+                                    self.native_transport.assert_storage(root)
+                                self.xmb_media(game['id'],kind)
+                        except (OSError,ValueError):
+                            self.xmb_media_progress['errors']+=1
+                        if kind == 'sound':
+                            self.xmb_media_progress['done']+=1
+                completed = True
+            finally:
+                self.xmb_media_progress['active']=False
+                if not completed and self.xmb_media_catalog_key == token:
+                    # An interrupted cache warmup must be eligible for a
+                    # future Sony STORAGE connection, never assumed complete.
+                    self.xmb_media_catalog_key = None
         self.xmb_media_worker=threading.Thread(
             target=job,daemon=True,name='PSPDockXMBMediaCache')
         self.xmb_media_worker.start()
@@ -2598,6 +2665,13 @@ class Dock:
                             controller=self.native_transport.controller_status()
                             self.snapshot={**self.snapshot,'controller_status':controller,
                                            'connection_state':'dock_connected' if controller.get('connected') else 'waiting_psp'}
+                        # Native sessions also need SND0 prefetch while Sony
+                        # STORAGE is still available. Previously this only
+                        # ran in the legacy branch below, so PSP-first users
+                        # could reach HID with no soundtrack cache.
+                        if (product['phase'] == 'choosing' and current and
+                                current.get('storage_ready') and current.get('host_confirmed')):
+                            self.start_xmb_media_prefetch()
                         if (product['phase']=='safe_to_disconnect' and
                                 self.session.get('close_after_verified_return')):
                             close_on_verified=True
@@ -3117,6 +3191,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                 if self.path == '/api/ui-sound':
                     return self.reply(dock.play_ui_sound(body.get('sound'), body.get('at_ms')))
+                if self.path == '/api/preview-sound':
+                    return self.reply(dock.play_game_preview(body.get('id'), body.get('at_ms')))
                 if self.path == '/api/cancel-transfer':
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.
@@ -3179,9 +3255,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     elif self.path == '/api/resolve':
                         save_result = dock.sync(body)
                     elif self.path == '/api/launch':
+                        dock.preview_player.stop()
                         dock.ui_sound_player.stop()
                         dock.launch(body['id'])
                     elif self.path == '/api/retro-launch':
+                        dock.preview_player.stop()
                         dock.ui_sound_player.stop()
                         dock.launch_retro(body['id'])
                     elif self.path == '/api/retro-save-sync':
@@ -3379,6 +3457,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
     finally:
         lifecycle_done.set()
         dock.stop.set()
+        dock.preview_player.stop()
         dock.ui_sound_player.stop()
         with dock._background_cache_lock:
             if dock._background_cache is not None:

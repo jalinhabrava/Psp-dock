@@ -62,6 +62,17 @@ class HTTPContract(unittest.TestCase):
     def test_post_without_token_rejected(self):
         self.assertEqual(self.request('/api/sync',{},token=False)[0],403)
         self.assertEqual(self.request('/api/ui-sound',{'sound':'cursor','at_ms':time.time()*1000},token=False)[0],403)
+        self.assertEqual(self.request('/api/preview-sound',{'id':None,'at_ms':time.time()*1000},token=False)[0],403)
+
+    def test_native_sound_preview_cannot_read_demo_or_open_untrusted_media(self):
+        now=time.time()*1000
+        status, result=self.request('/api/preview-sound', {'id':'a'*24,'at_ms':now})
+        self.assertEqual(status,200)
+        self.assertFalse(result['played'])
+        self.assertEqual(self.request('/api/preview-sound',{'id':None,'at_ms':now+1})[0],200)
+        for item in ('../../windows/system', 123, 'a'*25):
+            self.assertEqual(self.request('/api/preview-sound',{'id':item,'at_ms':now+2})[0],409)
+        self.assertEqual(self.request('/api/preview-sound',{'id':None,'at_ms':0})[1]['reason'],'stale')
 
     def test_ui_sound_is_bounded_and_missing_original_is_silent(self):
         status, result = self.request('/api/ui-sound', {'sound':'cursor','at_ms':time.time()*1000})
