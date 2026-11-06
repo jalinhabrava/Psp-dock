@@ -53,6 +53,7 @@
     'Abrir ajustes':'Open settings',
     'Ajustes':'Settings',
     'Juegos':'Games',
+    'Juegos Web':'Web Games',
     'Partidas':'Saves',
     'COMPROBANDO ALMACENAMIENTO':'CHECKING STORAGE',
     'VISTA DE DEMOSTRACIÓN':'DEMO VIEW',

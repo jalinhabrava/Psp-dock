@@ -102,6 +102,9 @@ htmlcov/
 .venv/
 venv/
 node_modules/
+**/obj/
+**/bin/
+*.csproj.user
 .playwright/
 coverage/
 *.egg-info/

@@ -11,6 +11,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -3132,6 +3133,28 @@ def recover_session(data):
     finally:
         lock.close()
 
+def webview_shell_executable():
+    """Use a separately installed or bundled WebView2 shell, never a PATH search.
+
+    The old Chrome/Edge --app launcher remains available if the native shell
+    has not been installed. The shell owns only the window; Python still owns
+    the session and the original safe PSP storage synchronization.
+    """
+    choices = []
+    override = os.environ.get('PSP_DOCK_WEBVIEW2_SHELL', '').strip()
+    if override:
+        choices.append(Path(override))
+    if os.name == 'nt':
+        local = Path(os.environ.get('LOCALAPPDATA', str(ROOT)))
+        choices.append(local / 'PSP-Dock/runtime/web-shell/PspDockWebShell.exe')
+        # A future packaged Windows build can ship this alongside the exe.
+        if getattr(sys, 'frozen', False):
+            choices.append(Path(sys.executable).parent/'web-shell/PspDockWebShell.exe')
+    return next((path for path in choices if path.is_absolute() and
+                 path.name.lower() == 'pspdockwebshell.exe' and
+                 path.exists() and path.is_file()), None)
+
+
 def launch_xmb_window(url, *, app_window=False, reuse_existing=True, include_handles=None):
     """Open the Windows XMB as a standalone fullscreen app, not another tab.
 
@@ -3155,6 +3178,13 @@ def launch_xmb_window(url, *, app_window=False, reuse_existing=True, include_han
         previous_handles = {row['handle'] for row in enumerate_xmb_windows()}
     except OSError:
         pass
+    shell = webview_shell_executable()
+    if shell:
+        proc = subprocess.Popen([str(shell), url], cwd=shell.parent)
+        threading.Thread(target=maximize_when_ready,daemon=True,
+                         kwargs={'exclude_handles':previous_handles},
+                         name='PSPDockWebView2Maximize').start()
+        return proc
     candidates = [
         Path(os.environ.get('PROGRAMFILES', 'C:/Program Files')) /
         'Google/Chrome/Application/chrome.exe',
@@ -3305,6 +3335,10 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     # Safe read-only WinMM frame; no USB commands and no
                     # expensive Dock.lock while rendering the XMB.
                     return self.reply(dock.psp_launcher_input())
+                if self.path == '/api/web-ports':
+                    # Curated metadata only: no proxying third-party websites,
+                    # fetching untrusted URLs or serving commercial game data.
+                    return self.reply(json.loads((ROOT/'web/ports.json').read_text(encoding='utf-8')))
                 if self.path == '/api/media-status':
                     return self.reply(dock.xmb_media_progress)
                 if self.path.startswith('/api/media-hd/'):
@@ -3398,7 +3432,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 self.send_response(200)
                 self.send_header('Content-Type',{'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8'}[name.split('.')[-1]])
                 self.send_header('Content-Length',str(len(content)))
-                self.send_header('Content-Security-Policy',"default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+                self.send_header('Content-Security-Policy',
+                                 "default-src 'self'; img-src 'self' blob:; style-src 'self'; "
+                                 "script-src 'self'; connect-src 'self'; "
+                                 "frame-src https://hexgl.bkcore.com https://phoboslab.org https://d07riv.github.io; "
+                                 "frame-ancestors 'none'; base-uri 'none'")
                 self.end_headers()
                 self.wfile.write(content)
             except (OSError, ValueError) as e:
@@ -3603,11 +3641,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
             native_visible = None
             if os.name == 'nt' and app_window:
                 try:
-                    from psp_dock.core.xmb_window import enumerate_xmb_windows, CHROME_CLASS, TITLE
+                    from psp_dock.core.xmb_window import enumerate_xmb_windows, is_dock_window, TITLE
                     native_handles = frozenset(
                         row['handle'] for row in enumerate_xmb_windows()
                         if row.get('visible') is True and row.get('title') == TITLE
-                        and row.get('window_class') == CHROME_CLASS
+                        and is_dock_window(row)
                         and type(row.get('handle')) is int and row['handle'] > 0
                         and row['handle'] not in previous_window_handles)
                     native_visible = bool(native_handles)
