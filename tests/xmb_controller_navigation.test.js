@@ -47,10 +47,12 @@ document.activeElement = { tagName:'BUTTON', disabled:false };
 scope.navigateDialogControl(dialog,'left');
 assert.deepEqual(movements.at(-1), { dialog, delta:-1 });
 
-// The first HID and browser Gamepad frames are primed to prevent a held
-// CROSS from launching anything merely by plugging in the USB cable.
+// Native PSP frames remain primed on connect. In the explicit PSP-free
+// welcome screen, the first Xbox A press may choose "Jugar con otro
+// mando", but no PSP ISO/Retro launch can bypass its device gates.
 assert(code.includes('ui.nativePadHeld = frame;'));
-assert(code.includes('ui.gamepadHeld = pad ? controllerInput(pad) : {};'));
+assert(code.includes('ui.gamepadHeld = pad && !(entry.waiting && entry.canStartGuest) ?'));
+assert(code.includes('controllerInput(pad) : {};'));
 assert(code.includes('processNativePspFrame(frame, Date.now());'));
 assert(code.includes("await mutate('/api/copy-policy'"));
 

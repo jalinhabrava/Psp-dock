@@ -60,6 +60,7 @@ class XmbWindowTests(unittest.TestCase):
         self.assertEqual(xmb.unique_target([GOOD,fresh],exclude_handles={333}),444)
         self.assertIsNone(xmb.unique_target([GOOD],exclude_handles={333}))
         with patch('dock.Path.is_file',return_value=True), \
+             patch('dock.webview_shell_executable',return_value=None), \
              patch('dock.subprocess.Popen') as spawn, \
              patch('dock.threading.Thread') as thread, \
              patch.object(xmb,'enumerate_xmb_windows',return_value=[GOOD]), \

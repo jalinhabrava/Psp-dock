@@ -31,10 +31,7 @@ assert.equal(view(absent,{guestRequested:true}).screen,'menu');
 assert.equal(view(absent,{guestRequested:true}).canPlay,false,'guest is never a PSP launch capability');
 for (const [label, state, options] of [
   ['real PSP',psp,{}],['USB storage',connect,{}],
-  ['backend disconnected',absent,{serviceOffline:true}],
-  ['scan in progress',{...absent,scanning:true},{}],
   ['pending return',{...absent,session:{pending_return:true}},{}],
-  ['error',{...absent,error:'recovery needed'},{}],
   ['recovery',{...absent,recovery_required:true},{}],
   ['copy in progress',{...absent,copy_queue:{status:'copying'}},{}],
   ['closed window',absent,{closed:true}],
@@ -45,6 +42,20 @@ for (const [label, state, options] of [
   assert.equal(result.guestMode,false,label+' must not allow guest');
   assert.equal(result.canStartGuest,false,label+' must not show guest button');
 }
+for (const [label, state, options] of [
+  ['temporary backend outage',absent,{serviceOffline:true}],
+  ['USB poll in progress',{...absent,scanning:true},{}],
+  ['transient search',{...absent,product_flow:{...absent.product_flow,
+    connection:{phase:'searching'}}},{}],
+  ['transient identifying',{...absent,product_flow:{...absent.product_flow,
+    connection:{phase:'identifying'}}},{}],
+  ['temporary backend error',{...absent,error:'USB probe could not complete'},{}],
+]) {
+  const result=view(state,{...options,guestRequested:true});
+  assert.equal(result.guestMode,true,label+' must not eject the player from XMB');
+  assert.equal(result.waiting,false,label+' must keep XMB visible');
+  assert.equal(result.canStartGuest,false,label+' is not a reason to offer fresh entry');
+}
 
 const events=[];
 const nodes={
@@ -54,6 +65,7 @@ const nodes={
 Object.assign(scope,{
   ui:{
     state:absent, guestRequested:false,storageSetupRequested:false,
+    guestTransitioning:false,appClientId:'a'.repeat(32),
     webPortActive:null,webPortHostActive:false,webPortCatalogError:'',
     webPorts:[{id:'hexgl',title:'HexGL',platform:'Web',genre:'Carreras',author:'BKCore',
       controls:['keyboard'],embed:'iframe',missing_on_psp:[]}],
@@ -64,11 +76,19 @@ Object.assign(scope,{
   $:id=>nodes[id]||={},
   xmbRender:()=>events.push('render'),
   xmbLoadWebPorts:()=>events.push('catalog'),
+  request:async (route,data)=>{
+    assert.equal(route,'/api/guest-mode');
+    assert.equal(data.client_id,'a'.repeat(32));
+    events.push('guest:'+data.enabled);
+    return {ok:true,guest_mode:data.enabled};
+  },
 });
 const runtimeStart = source.indexOf('function xmbConnectionView(');
 const runtimeEnd = source.indexOf('function xmbRenderConnection(',runtimeStart);
 vm.runInContext(source.slice(runtimeStart,runtimeEnd),scope);
-scope.xmbStartGuest();
+async function main() {
+await scope.xmbStartGuest();
+assert(events.includes('guest:true'), 'guest input must pause PSP USB polling in the backend');
 assert.equal(scope.ui.guestRequested,true);
 assert.equal(scope.xmb.nav.cat,2);
 assert.equal(scope.xmbConnectionView().guestMode,true);
@@ -112,9 +132,16 @@ scope.ui.state=absent;
 assert.equal(scope.xmbConnectionView().waiting,true,
   'disconnecting must not reactivate guest without pressing the button');
 
-scope.xmbStartGuest();
+await scope.xmbStartGuest();
 assert.equal(scope.xmbConnectionView().guestMode,true);
-scope.xmbExitGuest();
+await scope.xmbExitGuest();
+assert(events.includes('guest:false'), 'Conectar PSP must explicitly resume USB polling');
 assert.equal(scope.ui.guestRequested,false);
 assert.equal(scope.xmbConnectionView().waiting,true);
+scope.ui.state={...absent,guest_mode:true};
+assert.equal(scope.xmbConnectionView().guestMode,true,
+  'a reloaded client must adopt its current backend guest session');
+await scope.xmbExitGuest();
 console.log('PSP-free guest mode: explicit entry, web-only XMB, reconnect and exit guards OK');
+}
+main().catch(error=>{console.error(error);process.exitCode=1});

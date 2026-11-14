@@ -24,6 +24,7 @@ class AppWindowTests(unittest.TestCase):
             exe.write_bytes(b'SYNTHETIC fixture never executed')
             with patch.dict('dock.os.environ',{'PROGRAMFILES':str(root),
                                                'PROGRAMFILES(X86)':str(root)}), \
+             patch('dock.webview_shell_executable',return_value=None), \
              patch('dock.subprocess.Popen') as popen, \
              patch('psp_dock.core.xmb_window.maximize_existing_xmb',return_value=False), \
              patch('dock.threading.Thread') as thread:

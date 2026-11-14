@@ -582,6 +582,10 @@ class Dock:
         # discovery while a host volume lock is being acquired/held. This
         # flag itself does NOT acquire a Windows lock or prove exclusivity.
         self.storage_polling_paused = False
+        # Volatile, explicitly selected browser-only session. USB detection
+        # is suspended until the same UI chooses "Conectar mi PSP". This
+        # never persists a volume or grants game/save launch permission.
+        self.guest_mode = False
         self.stop = threading.Event()
         # An existing PSP manifest can be painted immediately at startup
         # WITHOUT treating those titles as ready or mounting the Memory
@@ -598,7 +602,7 @@ class Dock:
             }
             for g in self.last_games
         ]
-        self.snapshot = {'demo':demo,'devices':[],'selected_device':None,'games':[],
+        self.snapshot = {'demo':demo,'guest_mode':False,'devices':[],'selected_device':None,'games':[],
                          'connection_state':'waiting_psp',
                          'retro': {'emulators': list(self.last_emulators),
                                    'roms': [{**{k:v for k,v in rom.items() if k!='signature'},
@@ -2865,8 +2869,58 @@ class Dock:
             target=job,daemon=True,name='PSPDockXMBMediaCache')
         self.xmb_media_worker.start()
 
+    def set_guest_mode(self, enabled):
+        """Pause/resume PSP probes for a deliberate, PC-only browser session.
+
+        This is volatile per running app process, never a remembered PSP
+        pairing. Only a truly idle Dock can enter guest mode; in particular
+        an interrupted copy or pending SAVEDATA return may not be hidden.
+        No volume, USB device or game file is accessed by this method.
+        """
+        if type(enabled) is not bool:
+            raise ValueError('Modo sin PSP inválido.')
+        with self.lock:
+            if enabled:
+                phase = self.product_flow.snapshot()
+                controller = self.snapshot.get('controller_status', {})
+                if (self.demo or self.stop.is_set() or self.recovery_required or
+                    self.running() or self.session.get('pending_return') or
+                    self.session.get('exit_requested') or
+                    self.transfer_status.get('active') or
+                    self.texture_download_status.get('active') or
+                    self.storage_polling_paused or self.native_transport.current or
+                    self.snapshot.get('selected_device') or
+                    controller.get('connected') is True or
+                    phase['enabled'] and phase['phase'] != 'waiting_psp' or
+                    self.copy_queue.get('status') in
+                    ('waiting_for_storage','copying','interrupted_review')):
+                    raise ValueError('Termina o revisa la sesión PSP antes de jugar sin consola.')
+            self.guest_mode = enabled
+            self.snapshot = {**self.snapshot,'guest_mode':enabled,
+                             'scanning':False}
+            return {'ok':True, 'guest_mode':enabled}
+
     def watch(self):
         while not self.stop.is_set():
+            # Do not enumerate USB devices, interrogate HID or rescan the
+            # Memory Stick when the user explicitly chose web-only play.
+            # Resuming is an explicit /api/guest-mode request, not a
+            # transient controller disconnect or a browser focus change.
+            with self.lock:
+                guest_paused = self.guest_mode
+                if guest_paused:
+                    self.snapshot = {**self.snapshot,
+                        'guest_mode':True,'devices':[],
+                        'selected_device':None,'scanning':False,
+                        'connection_state':'guest_web',
+                        'controller_status':{'connected':False,
+                            'can_play':False,'synthetic_storage':False,
+                            'mode':'guest_web',
+                            'reason':'La detección PSP está pausada hasta elegir Conectar mi PSP.'},
+                        'can_launch_game':False,'can_launch_retro':False}
+            if guest_paused:
+                self.stop.wait(self.watch_interval())
+                continue
             open_on_attach = False
             close_on_verified = False
             with self.lock:
@@ -3328,7 +3382,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         'closing': ui_state.get('closing', False),
                     })
                 if self.path == '/api/state':
-                    return self.reply({**dock.snapshot, 'product_flow':dock.product_session.snapshot()})
+                    return self.reply({**dock.snapshot, 'guest_mode':dock.guest_mode,
+                                       'product_flow':dock.product_session.snapshot()})
                 if self.path == '/api/connection-diagnostics':
                     return self.reply(dock.product_session.diagnostics.snapshot())
                 if self.path == '/api/controller-input':
@@ -3452,7 +3507,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 body = json.loads(self.rfile.read(length))
                 if not isinstance(body, dict):
                     raise ValueError('Petición inválida.')
-                if self.path in ('/api/app/heartbeat', '/api/app/close'):
+                if self.path in ('/api/app/heartbeat', '/api/app/close', '/api/guest-mode'):
                     if ui is None:
                         raise ValueError('Este servidor no tiene una ventana de app gestionada.')
                     if self.path == '/api/app/heartbeat':
@@ -3460,6 +3515,12 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                         if not result.get('ignored'):
                             start_watcher()
                         return self.reply(result)
+                    if self.path == '/api/guest-mode':
+                        client_id = ui.client_id(body.get('client_id'))
+                        with ui.lock:
+                            if ui.stopping or client_id not in ui.clients:
+                                raise ValueError('La ventana que solicita el modo sin PSP no está activa.')
+                        return self.reply(dock.set_guest_mode(body.get('enabled')))
                     return self.reply(request_app_close(
                         dock, ui, body.get('client_id'), body.get('reason')))
                 if ui is not None and ui.stopping:

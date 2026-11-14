@@ -2,7 +2,7 @@
 
 La pantalla inicial ofrece **Jugar con otro mando** una vez que el servicio
 local ha confirmado que no está preparando ni sincronizando una PSP.
-También se puede pulsar el botón principal de un mando externo para entrar.
+También se puede pulsar A o Start en el mando Xbox para entrar.
 El acceso es voluntario y solo afecta a esta ventana: no se escribe un
 registro falso de dispositivo ni se alteran las sesiones USB.
 
@@ -29,15 +29,20 @@ La nueva entrada se muestra solo cuando la API informa de espera de PSP
 recuperación, copia, escaneo, emulador abierto ni error de conexión.
 La demostración sintética tampoco puede entrar.
 
-Si Windows detecta una PSP o inicia una operación mientras el modo sin PSP
-está abierto, se revoca el modo automáticamente. Un juego iframe se descarga
-de su vista y, si la partida usa WebView2, el XMB envía al host el mensaje
-interno close-web-port para que la vista del juego se cierre. El flujo
-normal de conexión de PSP conserva todos sus controles anteriores.
-Desconectar de nuevo la PSP **no** reabre el modo invitado automáticamente.
+El botón hace una petición autenticada a la API local para suspender
+temporalmente la detección de PSP. Mientras se juega en modo invitado, el
+worker no enumera dispositivos USB, no lee HID de PSP y no ejecuta los
+pasos de sincronización de la consola. Ni un escaneo, ni un cambio de foco
+del mando Xbox, ni un error transitorio devuelven al usuario a la portada.
+No se guarda esta elección en disco.
 
-El botón Conectar mi PSP regresa a la pantalla inicial sin escribir archivos
-ni cambiar el estado del hardware. Cerrar en modo sin PSP usa el cierre
+Se puede conectar físicamente una PSP durante el juego web, pero habrá
+que seleccionar **Conectar mi PSP** para reanudar el sondeo y volver al
+proceso normal de verificación y sincronización. La elección se confirma
+con el servicio local antes de abandonar el menú invitado.
+
+El botón Conectar mi PSP regresa a la pantalla inicial y reanuda la detección
+sin escribir archivos ni cambiar el estado del hardware. Cerrar en modo sin PSP usa el cierre
 ordinario de la app: el backend sigue siendo la autoridad que puede vetar
 un cierre si tiene trabajo pendiente.
 
@@ -57,6 +62,8 @@ es útil como pista, **no como autorización para sobrescribir**.
 
     node tests/xmb_guest_mode.test.js
     node tests/xmb_web_ports.test.js
+    node tests/web_port_xbox_navigation.test.js
+    python -m unittest tests.test_guest_web_mode -q
     python -m unittest tests.test_http tests.test_xmb_window -q
 
 Pendiente de prueba manual: arrancar sin PSP, entrar con un mando Bluetooth,

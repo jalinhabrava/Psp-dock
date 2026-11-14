@@ -38,10 +38,16 @@ async function main() {
   await scope.xmbLoadWebPorts();
   assert.equal(ui.webPorts.length,catalog.games.length);
   assert(!ui.webPorts.some(g=>g.url.includes('ported2browser')));
-  const ps2 = ui.webPorts.find(g=>g.id==='thps3');
+  const pendingPs2 = ui.webPorts.find(g=>g.id==='thps3');
   const iframe = ui.webPorts.find(g=>g.id==='hexgl');
-  assert(ps2 && iframe && ps2.embed==='native');
-  assert.deepEqual(Array.from(ps2.missing_on_psp),['L2','R2']);
+  assert(pendingPs2 && iframe && pendingPs2.embed==='native');
+  assert.deepEqual(Array.from(pendingPs2.missing_on_psp),['L2','R2']);
+  scope.xmbWebPortLaunch(pendingPs2);
+  assert(events.some(e=>e[0]==='toast' && /no está verificado/.test(e[1])));
+  assert.equal(events.filter(e=>e[0]==='host').length,0,
+    'A landing page that cannot reach gameplay must not be launched as a game');
+  events.length=0;
+  const ps2={...pendingPs2,launch_state:undefined};
 
   scope.xmbWebPortLaunch(ps2);
   assert.equal(events.filter(e=>e[0]==='host').length,0,
@@ -55,7 +61,12 @@ async function main() {
   assert(!('url' in sent[1]),'Only port IDs pass the privilege boundary');
 
   events.length=0;
-  const uncertain = ui.webPorts.find(g=>g.id==='budokai-tenkaichi-3');
+  const needsIso = ui.webPorts.find(g=>g.id==='budokai-tenkaichi-3');
+  scope.xmbWebPortLaunch(needsIso);
+  assert(events.some(e=>e[0]==='toast' && /ISO original/.test(e[1])));
+  assert.equal(events.filter(e=>e[0]==='host').length,0);
+  events.length=0;
+  const uncertain={...needsIso,launch_state:undefined};
   scope.xmbWebPortLaunch(uncertain);
   assert(events.some(e=>e[0]==='confirm' && /no verificados/.test(e[1])),
     'Unknown PS2 controller requirements must be clearly marked as uncertain');
@@ -71,6 +82,10 @@ async function main() {
   assert.equal(scope.xmbValidatedWebPort({...ps2,url:'http://127.0.0.1:1234/'}),false);
   assert.equal(scope.xmbValidatedWebPort({...ps2,url:'https://evil.example/'}),false);
   assert.equal(scope.xmbValidatedWebPort({...ps2,url:'https://user:pass@play2048.co/'}),false);
+  const nfs = ui.webPorts.find(g=>g.id==='nfs-underground-2');
+  const wipeout = ui.webPorts.find(g=>g.id==='wipeout');
+  assert.equal(nfs.url,'https://nfsu2.xyz/');
+  assert.equal(wipeout.url,'https://phoboslab.org/wipegame/');
 
   // Ordinary Chromium may run permitted upstream iframes; never iframe
   // the native-only PS2 titles that explicitly set SAMEORIGIN.
