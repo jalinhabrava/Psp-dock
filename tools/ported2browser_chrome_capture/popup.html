@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PSP Dock — Directorio original</title>
+  <style>
+    body { width:340px; margin:0; padding:16px; box-sizing:border-box;
+      background:#0f1724; color:#eef3ff; font:13px/1.5 system-ui,sans-serif; }
+    h1 { font-size:17px; margin:0 0 8px; }
+    p { color:#b5c3d3; }
+    strong { color:#fff; }
+    .stats { display:flex; gap:12px; padding:12px 0; border-block:1px solid #34465c; }
+    .stat { flex:1; }
+    .value { display:block; font-size:24px; font-weight:700; }
+    button { cursor:pointer; border:1px solid #86baf5; background:#234f83;
+      border-radius:9px; color:#fff; padding:9px 12px; margin-top:10px; }
+    button:focus-visible { outline:2px solid #fff; }
+    #export { width:100%; background:#3479ca; }
+    #reset { background:transparent; border-color:#597189; }
+    #status { font-size:12px; }
+  </style>
+</head>
+<body>
+  <h1>PSP Dock · Captura de ports</h1>
+  <p>Captura únicamente las páginas de <strong>ported2browser.com</strong>
+     que abras en tu Chrome habitual. No recorre enlaces ni descarga juegos.</p>
+  <div class="stats">
+    <div class="stat"><span class="value" id="cards">0</span>fichas</div>
+    <div class="stat"><span class="value" id="details">0</span>fichas abiertas</div>
+    <div class="stat"><span class="value" id="pages">0</span>páginas vistas</div>
+  </div>
+  <button type="button" id="export">Exportar JSON a tu PC</button>
+  <button type="button" id="reset">Vaciar la captura</button>
+  <p id="status" role="status">Abre el directorio y navega normalmente.</p>
+  <p>No se guardan contraseñas, cookies, tokens ni contenidos privados.
+     Los enlaces extraídos todavía no están validados como jugables con mando.</p>
+  <script src="popup.js"></script>
+</body>
+</html>

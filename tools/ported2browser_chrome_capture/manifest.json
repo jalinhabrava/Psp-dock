@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "PSP Dock - Ported2Browser capture",
+  "version": "0.1.0",
+  "description": "Guarda datos publicos de paginas del directorio original que visites manualmente; sin rastreo automatico.",
+  "permissions": ["storage"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PSP Dock: exportar ports visitados"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://ported2browser.com/*"],
+      "js": ["capture.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
