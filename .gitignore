@@ -10,6 +10,8 @@ tools/
 tools/*
 !tools/__init__.py
 !tools/psp/
+!tools/ported2browser_chrome_capture/
+!tools/ported2browser_chrome_capture/**
 backups/
 *.log
 *.jsonl
