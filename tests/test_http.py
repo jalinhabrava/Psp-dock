@@ -79,7 +79,10 @@ class HTTPContract(unittest.TestCase):
         status, catalog = self.request('/api/web-ports')
         self.assertEqual(status, 200)
         self.assertEqual(catalog['version'], 1)
-        self.assertGreaterEqual(len(catalog['games']), 5)
+        self.assertEqual(len(catalog['games']), 5)
+        self.assertEqual(catalog['directory'],'https://ported2browser.com/')
+        self.assertNotIn('ported2browser.sbs',str(catalog))
+        self.assertNotIn('ported2browser.org',str(catalog))
         for port in catalog['games']:
             self.assertTrue(port['url'].startswith('https://'))
             self.assertNotIn('ported2browser', port['url'])
@@ -90,7 +93,8 @@ class HTTPContract(unittest.TestCase):
         with urllib.request.urlopen(self.url+'/', timeout=10) as response:
             csp=response.headers.get('Content-Security-Policy','')
         self.assertIn("frame-ancestors 'none'",csp)
-        self.assertIn('frame-src https://hexgl.bkcore.com',csp)
+        self.assertIn('frame-src https://phoboslab.org',csp)
+        self.assertNotIn('hexgl.bkcore.com',csp)
         self.assertNotIn('tonyhawkpro3.gamingretro.online',csp,
                          'PS2 games must use the top-level native WebView2, never iframe')
         with self.assertRaises(urllib.error.HTTPError):

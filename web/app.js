@@ -2400,6 +2400,78 @@ async function xmbStartRetroInstall() {
     xmbRetroInstallPending = false;
   }
 }
+async function xmbWebIsoOpen() {
+  const dialog = $('web-iso-dialog');
+  if (dialog?.open) return;
+  dialog.showModal();
+  $('web-iso-error').hidden = true;
+  $('web-iso-found').textContent = 'Comprobando la carpeta seleccionada…';
+  try {
+    const result = await request('/api/web-iso-library');
+    $('web-iso-path').value = result.folder || '';
+    $('web-iso-current').textContent = result.configured ?
+      'Carpeta: ' + result.folder : 'Sin configurar.';
+    $('web-iso-found').textContent = result.configured ?
+      String(result.count) + ' imágenes encontradas (solo metadatos)' +
+        (result.truncated ? ' · escaneo parcial' : '') :
+      'Elige una carpeta local para iniciar el índice.';
+  } catch (error) {
+    $('web-iso-found').textContent = '';
+    $('web-iso-error').textContent = error.message;
+    $('web-iso-error').hidden = false;
+  }
+}
+async function xmbWebIsoSave(folder) {
+  $('web-iso-error').hidden = true;
+  const button = $('web-iso-save');
+  button.disabled = true;
+  try {
+    await request('/api/web-iso-folder',{folder:String(folder||'').trim()});
+    const result = await request('/api/web-iso-library');
+    $('web-iso-found').textContent =
+      String(result.count) + ' imágenes locales · nombres y tamaños solamente.';
+    await xmbLoadSettings();
+    $('web-iso-dialog').close();
+    toast(result.configured ?
+      'Biblioteca de ISOs configurada. No se ha copiado ni enviado ningún juego.' :
+      'Carpeta desvinculada. No se han borrado archivos.');
+  } catch (error) {
+    $('web-iso-error').textContent = error.message;
+    $('web-iso-error').hidden = false;
+  } finally {button.disabled = false;}
+}
+async function xmbWebIsoMatches(port) {
+  try {
+    const report = await request('/api/web-iso-match/'+encodeURIComponent(port.id));
+    if (!report.configured) {
+      xmbConfirm('Para este port necesitas una imagen original propia.' +
+        '<small>Puedes configurar tu carpeta de ISOs en PSP Dock.' +
+        ' La aplicación no subirá archivos ni los cargará en ningún sitio automáticamente.</small>',
+        false,()=>void xmbWebIsoOpen());
+      return;
+    }
+    const matched = report.matches || {};
+    const candidates = Array.isArray(matched.candidates) ?
+      matched.candidates.slice(0,10) : [];
+    const choices = candidates.map(item=>({
+      t:item.name,s:'Coincidencia de nombre · '+bytes(item.size)+' · no validada',
+    }));
+    choices.push({t:'Cambiar carpeta',s:report.folder});
+    xmbSide('Archivos propios · '+port.title, choices, i=>{
+      if (i === candidates.length) {
+        void xmbWebIsoOpen();
+        return;
+      }
+      const found = candidates[i];
+      xmbConfirm('Posible imagen: '+xmbEscape(found.name)+
+        '<small>La similitud del nombre no garantiza la edición correcta. La imagen sigue en tu PC; la carga en este juego aún necesita una integración específica y autorización.</small>',
+        false,()=>toast('Imagen identificada por nombre. No se ha leído ni enviado el archivo.'));
+    });
+    if (!candidates.length) toast('No hay archivos de nombre compatible en la carpeta configurada.');
+  } catch (error) {
+    toast('No se pudo revisar la carpeta de ISOs: '+error.message);
+  }
+}
 function xmbWebPortItems() {
   const ports = ui.webPorts.map((port) => ({
     key:'web-port-'+port.id, t:port.title, icon:'webports', webPort:port,
@@ -2417,7 +2489,15 @@ function xmbWebPortItems() {
     activate:()=>xmbWebPortLaunch(port),
     menu:()=>xmbWebPortMenu(port),
   }));
-  if (ports.length) return ports;
+  const tools = [
+    {key:'owned-iso-folder',t:'Carpeta de ISOs propias',icon:'folder',
+      s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · imágenes originales en tu PC',
+      activate:()=>void xmbWebIsoOpen()},
+    {key:'original-directory-status',t:'Directorio original · pendiente de importar',icon:'info',
+      s:'ported2browser.com exige comprobación humana · no se importan directorios imitadores',
+      activate:()=>toast('El directorio original exige verificación humana. Solo mostramos enlaces de autores revisados. No usamos ported2browser.sbs ni .org.')},
+  ];
+  if (ports.length) return [...tools,...ports];
   return [{
     key:'web-ports-loading',
     t:ui.webPortCatalogError ? 'No se ha podido cargar el catálogo web' : 'Cargando juegos web…',
@@ -2454,6 +2534,9 @@ function xmbGuestSections() {
     {key:'guest-pad',t:'Mando conectado',icon:'pad',
       s:()=>xmbText('gamepad-status') || 'Usa otro mando o el teclado',
       activate:()=>toast('Juegos Web usa un mando compatible conectado al PC. También puedes navegar con el teclado.')},
+    {key:'guest-iso',t:'Carpeta de ISOs propias',icon:'folder',
+      s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · imágenes originales',
+      activate:()=>void xmbWebIsoOpen()},
   ];
   const dock = [
     {key:'guest-info',t:'Jugando sin PSP',icon:'info',
@@ -2485,6 +2568,9 @@ function xmbBuildSections() {
 
   const settingsValue = (key, fallback) => xmb.settings?.[key] ?? fallback;
   out.ajustes = [
+    {key:'ports-iso-folder',t:'ISOs para ports de consola',icon:'folder',
+      s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · biblioteca del PC',
+      activate:()=>void xmbWebIsoOpen()},
     { key: 'language', t: 'Idioma / Language', icon: 'info',
       s: () => DockI18n.mode() === 'auto' ? 'Automático · ' + (DockI18n.locale() === 'es' ? 'Español' : 'English') :
         DockI18n.locale() === 'es' ? 'Español' : 'English',
@@ -3187,7 +3273,7 @@ function xmbValidatedWebPort(port) {
         uri.port || uri.search || uri.hash) return false;
     // Only audited author domains. No local URL, arbitrary redirect or proxy.
     return ['tonyhawkpro3.gamingretro.online', 'dragonballbt3.online',
-      'nfsu2.xyz', 'play2048.co', 'hexgl.bkcore.com',
+      'nfsu2.xyz',
       'phoboslab.org', 'd07riv.github.io'].includes(uri.hostname);
   } catch { return false; }
 }
@@ -3232,7 +3318,7 @@ function xmbWebPortLaunch(port) {
     return;
   }
   if (port.launch_state === 'requires_original_iso') {
-    toast('Este runtime necesita seleccionar una ISO original propia. La selección de archivos con mando aún no está preparada.');
+    void xmbWebIsoMatches(port);
     return;
   }
   if (port.launch_state === 'needs_pointer') {
@@ -3702,6 +3788,23 @@ $('dock-connect-close').addEventListener('click', closeDockApp);
 $('dock-connect-refresh').addEventListener('click', refresh);
 $('dock-connect-prepare').addEventListener('click', requestStorageSetup);
 $('dock-connect-guest').addEventListener('click', xmbStartGuest);
+$('web-iso-save').addEventListener('click',()=>void xmbWebIsoSave($('web-iso-path').value));
+$('web-iso-clear').addEventListener('click',()=>void xmbWebIsoSave(''));
+$('web-iso-browse').addEventListener('click',async()=>{
+  const button = $('web-iso-browse');
+  button.disabled = true;
+  $('web-iso-error').hidden = true;
+  try {
+    const result = await request('/api/choose-web-iso-folder',{});
+    if (!result.cancelled && result.folder) {
+      $('web-iso-path').value = result.folder;
+      $('web-iso-current').textContent = 'Seleccionada: ' + result.folder;
+    }
+  } catch (error) {
+    $('web-iso-error').textContent = error.message;
+    $('web-iso-error').hidden = false;
+  } finally {button.disabled = false;}
+});
 document.querySelectorAll('[data-session-choice]').forEach((button) => {
   button.addEventListener('click', () => chooseProductSession(button.dataset.sessionChoice));
 });

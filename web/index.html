@@ -271,5 +271,24 @@
       <div class="dialog-actions"><button type="button" class="button secondary" data-close="storage-location-dialog">Cancelar</button><button type="button" class="button primary" id="storage-location-confirm">Copiar y cambiar carpeta</button></div>
     </div>
   </dialog>
+  <dialog class="settings-dialog" id="web-iso-dialog" aria-labelledby="web-iso-title">
+    <div class="dialog-content">
+      <div class="dialog-header"><p class="eyebrow">PORTS · ARCHIVOS DEL USUARIO</p><button type="button" class="icon-button close" data-close="web-iso-dialog" aria-label="Cerrar">×</button></div>
+      <h2 id="web-iso-title">Carpeta de imágenes originales</h2>
+      <p class="quiet">Selecciona una carpeta existente de un disco fijo de tu PC. PSP Dock solo leerá nombres, tamaños y fechas para sugerir coincidencias, sin abrir archivos de juego ni enviarlos a ninguna web.</p>
+      <p class="quiet" id="web-iso-current">Sin configurar.</p>
+      <label>Carpeta de ISOs
+        <input id="web-iso-path" type="text" autocomplete="off" placeholder="E:\Mis juegos\ISOs">
+      </label>
+      <button type="button" class="button secondary" id="web-iso-browse">Seleccionar carpeta en Windows…</button>
+      <p class="quiet" id="web-iso-found">Sin escanear.</p>
+      <p class="quiet">Reconoce ISO, CSO, BIN, CUE y CHD. La coincidencia de nombre no demuestra compatibilidad. Para proporcionar un archivo a un port concreto será necesaria una integración y autorización específicas; nunca se carga automáticamente.</p>
+      <p id="web-iso-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" id="web-iso-clear">Desvincular carpeta</button>
+        <button type="button" class="button primary" id="web-iso-save">Guardar y analizar</button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

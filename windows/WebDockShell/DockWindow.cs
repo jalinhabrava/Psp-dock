@@ -22,7 +22,7 @@ public sealed class DockWindow : Form
     private static readonly HashSet<string> AuthorHosts = new(StringComparer.OrdinalIgnoreCase)
     {
         "tonyhawkpro3.gamingretro.online", "dragonballbt3.online",
-        "nfsu2.xyz", "play2048.co", "hexgl.bkcore.com",
+        "nfsu2.xyz",
         "phoboslab.org", "d07riv.github.io"
     };
 
@@ -199,14 +199,12 @@ public sealed class DockWindow : Form
             return null;
         var profile = id switch
         {
-            "2048" => "arrows",
             "wipeout" => "wipeout",
             _ => "gamepad"
         };
         var start = id switch
         {
             "nfs-underground-2" => "#play",
-            "hexgl" => "#start",
             "wipeout" => "#load-full-version",
             _ => null
         };
