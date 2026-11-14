@@ -202,7 +202,13 @@ public sealed class DockWindow : Form
         {
             using var doc = JsonDocument.Parse(args.WebMessageAsJson);
             var msg = doc.RootElement;
-            if (msg.GetProperty("type").GetString() != "launch-web-port") return;
+            var messageType = msg.GetProperty("type").GetString();
+            if (messageType == "close-web-port")
+            {
+                ClosePort();
+                return;
+            }
+            if (messageType != "launch-web-port") return;
             var id = msg.GetProperty("id").GetString() ?? "";
             if (_ports.TryGetValue(id, out var port))
                 OpenPort(port);
