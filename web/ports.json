@@ -1,6 +1,7 @@
 {
   "version": 1,
-  "source": "https://ported2browser.org/",
+  "source": "manual author links only; ported2browser.com official feed unavailable",
+  "directory": "https://ported2browser.com/",
   "games": [
     {
       "id": "thps3",
@@ -10,11 +11,17 @@
       "author": "Slayoner / PS2 Web Recomp",
       "url": "https://tonyhawkpro3.gamingretro.online/",
       "launch_state": "unverified",
-      "source_page": "https://ported2browser.org/games/tony-hawk-pro-skater-3/",
       "embed": "native",
-      "controls": ["gamepad", "keyboard"],
-      "missing_on_psp": ["L2", "R2"],
-      "notes": "El host actual no permite verificar el enlace directo a la partida. Esta entrada no se ejecuta hasta comprobar su runtime; la PSP no tiene L2/R2."
+      "controls": [
+        "gamepad",
+        "keyboard"
+      ],
+      "missing_on_psp": [
+        "L2",
+        "R2"
+      ],
+      "notes": "El host actual no permite verificar el enlace directo a la partida. Esta entrada no se ejecuta hasta comprobar su runtime; la PSP no tiene L2/R2.",
+      "origin_provenance": "author-link-reviewed-not-official-directory-export"
     },
     {
       "id": "budokai-tenkaichi-3",
@@ -24,11 +31,14 @@
       "author": "Slayoner",
       "url": "https://dragonballbt3.online/runtime.html",
       "launch_state": "requires_original_iso",
-      "source_page": "https://ported2browser.org/games/dragon-ball-z-bt-3/",
       "embed": "native",
-      "controls": ["gamepad", "keyboard"],
+      "controls": [
+        "gamepad",
+        "keyboard"
+      ],
       "missing_on_psp": [],
-      "notes": "Página original del runtime, pero requiere seleccionar una ISO propia del juego; no es una partida de un clic. L2/R2 todavía no verificados."
+      "notes": "Página original del runtime, pero requiere seleccionar una ISO propia del juego; no es una partida de un clic. L2/R2 todavía no verificados.",
+      "origin_provenance": "author-link-reviewed-not-official-directory-export"
     },
     {
       "id": "nfs-underground-2",
@@ -38,40 +48,14 @@
       "author": "th0mk / Underground 2 Revived",
       "url": "https://nfsu2.xyz/",
       "control_profile": "gamepad",
-      "source_page": "https://ported2browser.org/games/nfs-underground-2/",
       "embed": "native",
-      "controls": ["gamepad", "keyboard"],
+      "controls": [
+        "gamepad",
+        "keyboard"
+      ],
       "missing_on_psp": [],
-      "notes": "Runtime original, no la guía nfsu2.org. Descarga y almacena los recursos del juego en este origen. Usa WebGPU y se inicia con Play cuando está listo."
-    },
-    {
-      "id": "2048",
-      "title": "2048",
-      "platform": "Web",
-      "genre": "Puzle",
-      "author": "Gabriele Cirulli",
-      "url": "https://play2048.co/",
-      "source_page": "https://ported2browser.org/games/2048/",
-      "embed": "native",
-      "controls": ["keyboard", "touch"],
-      "missing_on_psp": [],
-      "keyboard_map": {"up": "ArrowUp", "down": "ArrowDown", "left": "ArrowLeft", "right": "ArrowRight"},
-      "control_profile": "arrows",
-      "notes": "MIT. El sitio impide iframe de terceros, pero funciona como documento principal."
-    },
-    {
-      "id": "hexgl",
-      "title": "HexGL",
-      "platform": "Web",
-      "genre": "Carreras",
-      "author": "Thibaut Despoulain / BKCore",
-      "url": "https://hexgl.bkcore.com/play/",
-      "source_page": "https://ported2browser.sbs/games/",
-      "embed": "iframe",
-      "controls": ["keyboard"],
-      "control_profile": "gamepad",
-      "missing_on_psp": [],
-      "notes": "Alojamiento original sin cabecera X-Frame-Options en la comprobación HTTP. Controles de teclado por verificar con PSP."
+      "notes": "Runtime original, no la guía nfsu2.org. Descarga y almacena los recursos del juego en este origen. Usa WebGPU y se inicia con Play cuando está listo.",
+      "origin_provenance": "author-link-reviewed-not-official-directory-export"
     },
     {
       "id": "wipeout",
@@ -80,12 +64,15 @@
       "genre": "Carreras",
       "author": "Dominic Szablewski",
       "url": "https://phoboslab.org/wipegame/",
-      "source_page": "https://ported2browser.org/games/wipeout/",
       "embed": "iframe",
-      "controls": ["keyboard", "touch"],
+      "controls": [
+        "keyboard",
+        "touch"
+      ],
       "control_profile": "wipeout",
       "missing_on_psp": [],
-      "notes": "Runtime original del juego, no el visor de modelos /wipeout/. A para cargar la versión completa; Start, cruceta y botones se traducen al teclado del port."
+      "notes": "Runtime original del juego, no el visor de modelos /wipeout/. A para cargar la versión completa; Start, cruceta y botones se traducen al teclado del port.",
+      "origin_provenance": "author-link-reviewed-not-official-directory-export"
     },
     {
       "id": "diabloweb",
@@ -94,13 +81,17 @@
       "genre": "RPG",
       "author": "d07RiV",
       "url": "https://d07riv.github.io/diabloweb/",
-      "source_page": "https://ported2browser.org/games/diablo/",
       "embed": "iframe",
-      "controls": ["keyboard", "mouse", "touch"],
+      "controls": [
+        "keyboard",
+        "mouse",
+        "touch"
+      ],
       "control_profile": "mouse_required",
       "launch_state": "needs_pointer",
       "missing_on_psp": [],
-      "notes": "Shareware sin archivos; juego completo solo con DIABDAT.MPQ propio. Requiere puntero."
+      "notes": "Shareware sin archivos; juego completo solo con DIABDAT.MPQ propio. Requiere puntero.",
+      "origin_provenance": "author-link-reviewed-not-official-directory-export"
     }
   ]
 }

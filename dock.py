@@ -448,6 +448,10 @@ class Dock:
         self.config.setdefault('retroarch', '')
         self.config.setdefault('retro_install_policy', 'auto')
         self.config.setdefault('retro_button_layout','nintendo')
+        self.config.setdefault('web_iso_folder','')
+        self.web_iso_cache = None
+        self.web_iso_cache_at = 0.0
+        self.web_iso_lock = threading.Lock()
         # Opt-in, per-DISC_ID PC texture capture/generation. The worker never
         # accesses PSP USB, game saves or an existing community texture pack.
         from psp_dock.emulation.psp_hd_textures import TextureWorker
@@ -2070,6 +2074,59 @@ class Dock:
                                result='verified', actions=len(plan['actions']))
         return final
 
+    def web_iso_library(self, *, rescan=False):
+        """Index only local image metadata; never publish file contents."""
+        from psp_dock.media.web_iso_library import scan_web_iso_folder
+        with self.web_iso_lock:
+            folder = self.config.get('web_iso_folder','')
+            if not folder:
+                return {'configured':False,'folder':'','entries':[],
+                        'count':0,'complete':True,'truncated':False}
+            if (not rescan and self.web_iso_cache is not None and
+                time.monotonic()-self.web_iso_cache_at < 45):
+                return dict(self.web_iso_cache)
+            forbidden = [value for value in
+                         (self.snapshot.get('selected_device'),self.config.get('psp_root'))
+                         if isinstance(value,str) and value]
+            index = scan_web_iso_folder(folder,excluded_roots=forbidden)
+            index.update(configured=True,folder=str(folder))
+            self.web_iso_cache,self.web_iso_cache_at=index,time.monotonic()
+            return dict(index)
+
+    def web_iso_matches(self, game_id):
+        from psp_dock.media.web_iso_library import match_web_iso_candidates
+        if not isinstance(game_id,str):
+            raise ValueError('Juego web inválido.')
+        catalog=json.loads((ROOT/'web/ports.json').read_text(encoding='utf-8'))
+        entry=next((game for game in catalog['games'] if game['id']==game_id),None)
+        if entry is None:
+            raise ValueError('Juego no reconocido en los ports de PSP Dock.')
+        listing=self.web_iso_library()
+        return {'id':game_id,'title':entry['title'],
+                'configured':listing['configured'],'folder':listing['folder'],
+                'matches':match_web_iso_candidates(entry,listing),
+                'count':listing['count']}
+
+    def set_web_iso_folder(self, folder):
+        """Persist only the selected fixed-drive path, without touching saves."""
+        from psp_dock.media.web_iso_library import validate_web_iso_folder
+        if (self.demo or self.running() or self.session.get('pending_return') or
+            self.recovery_required or self.session.get('exit_requested')):
+            raise ValueError('Termina y revisa la sesión de PSP antes de cambiar ISOs.')
+        if not isinstance(folder,str) or len(folder)>1024:
+            raise ValueError('Carpeta de ISOs inválida.')
+        forbidden=[value for value in
+                   (self.snapshot.get('selected_device'),self.config.get('psp_root'))
+                   if isinstance(value,str) and value]
+        checked=str(validate_web_iso_folder(folder,excluded_roots=forbidden)) if folder else ''
+        updated={**self.config,'web_iso_folder':checked}
+        atomic_json(self.config_path,updated)
+        self.config=updated
+        with self.web_iso_lock:
+            self.web_iso_cache=None
+            self.web_iso_cache_at=0.0
+        return {'ok':True,'configured':bool(checked),'folder':checked}
+
     def settings(self, new):
         if self.running() or self.session.get('pending_return'):
             raise ValueError('Cierra y devuelve la sesión a la PSP antes de cambiar las carpetas.')
@@ -3394,6 +3451,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     # Curated metadata only: no proxying third-party websites,
                     # fetching untrusted URLs or serving commercial game data.
                     return self.reply(json.loads((ROOT/'web/ports.json').read_text(encoding='utf-8')))
+                if self.path == '/api/web-iso-library':
+                    return self.reply(dock.web_iso_library())
+                if self.path.startswith('/api/web-iso-match/'):
+                    return self.reply(dock.web_iso_matches(
+                        self.path[len('/api/web-iso-match/'):]))
                 if self.path == '/api/media-status':
                     return self.reply(dock.xmb_media_progress)
                 if self.path.startswith('/api/media-hd/'):
@@ -3490,7 +3552,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 self.send_header('Content-Security-Policy',
                                  "default-src 'self'; img-src 'self' blob:; style-src 'self'; "
                                  "script-src 'self'; connect-src 'self'; "
-                                 "frame-src https://hexgl.bkcore.com https://phoboslab.org https://d07riv.github.io; "
+                                 "frame-src https://phoboslab.org https://d07riv.github.io; "
                                  "frame-ancestors 'none'; base-uri 'none'")
                 self.end_headers()
                 self.wfile.write(content)
@@ -3527,6 +3589,15 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                 if self.path == '/api/ui-sound':
                     return self.reply(dock.play_ui_sound(body.get('sound'), body.get('at_ms')))
+                if self.path == '/api/web-iso-folder':
+                    return self.reply(dock.set_web_iso_folder(body.get('folder')))
+                if self.path == '/api/choose-web-iso-folder':
+                    from psp_dock.media.web_iso_library import choose_web_iso_folder
+                    forbidden=[value for value in
+                               (dock.snapshot.get('selected_device'),dock.config.get('psp_root'))
+                               if isinstance(value,str) and value]
+                    chosen=choose_web_iso_folder(excluded_roots=forbidden)
+                    return self.reply({'folder':chosen or '','cancelled':chosen is None})
                 if self.path == '/api/cancel-transfer':
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.

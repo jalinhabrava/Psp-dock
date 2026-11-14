@@ -67,7 +67,7 @@ Object.assign(scope,{
     state:absent, guestRequested:false,storageSetupRequested:false,
     guestTransitioning:false,appClientId:'a'.repeat(32),
     webPortActive:null,webPortHostActive:false,webPortCatalogError:'',
-    webPorts:[{id:'hexgl',title:'HexGL',platform:'Web',genre:'Carreras',author:'BKCore',
+    webPorts:[{id:'wipeout',title:'WipEout',platform:'PS1',genre:'Carreras',author:'Phoboslab',
       controls:['keyboard'],embed:'iframe',missing_on_psp:[]}],
     appClosing:false,appClosed:false,serviceOffline:false,busy:false
   },
@@ -98,7 +98,8 @@ const itemsEnd=source.indexOf('function xmbBuildSections()',itemsStart);
 vm.runInContext(source.slice(itemsStart,itemsEnd),scope);
 const sections=scope.xmbGuestSections();
 assert.deepEqual(Array.from(sections,s=>s.id),['ajustes','dock','webports']);
-assert.equal(sections[2].items[0].t,'HexGL');
+assert.equal(sections[2].items[0].t,'Carpeta de ISOs propias');
+assert.equal(sections[2].items[2].t,'WipEout');
 assert(sections[1].items.some(row=>row.key==='guest-connect'));
 assert(sections[1].items.some(row=>row.key==='guest-close'));
 assert(!JSON.stringify(sections.map(s=>s.id)).includes('retro'));
@@ -114,12 +115,12 @@ Object.assign(scope,{
 });
 vm.runInContext(source.slice(webStart,webEnd),scope);
 scope.xmbWebPortLaunch(scope.ui.webPorts[0]);
-assert(events.some(e=>e?.type==='launch-web-port'&&e.id==='hexgl'),
+assert(events.some(e=>e?.type==='launch-web-port'&&e.id==='wipeout'),
   'browser game must launch despite the ordinary PSP product waiting gate');
 
 // A real PSP appears while the guest web game is active. End guest, unload
 // iframe, request native WebView2 to close, and return to normal connection.
-scope.ui.webPortActive='hexgl';
+scope.ui.webPortActive='wipeout';
 scope.ui.webPortHostActive=true;
 scope.ui.state=connect;
 assert.equal(scope.xmbConnectionView().guestMode,false);

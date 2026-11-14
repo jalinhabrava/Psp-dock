@@ -1,109 +1,58 @@
-# PSP Dock · Juegos Web / WebView2
+# PSP Dock: origen correcto de los ports
 
-## Arquitectura
+## Fuente y alcance
 
-PSP Dock ofrece una categoría horizontal «Juegos Web», con cada port en una
-fila vertical. El catálogo fijo web/ports.json enlaza a las URL originales
-de los autores, no descarga juegos ni redistribuye ROMs.
+El directorio que indicó el usuario es **https://ported2browser.com/**.
+No es equivalente a ported2browser.org, ported2browser.sbs, ported2browser.co
+ni otras webs con nombre parecido. La PR #19, que importaba 1.439 fichas desde
+.sbs, fue cerrada y descartada: sus datos no acreditaban que los juegos fueran
+ports del directorio original. PSP Dock no es un portal de minijuegos web.
 
-Varios juegos de PS2 impiden incrustarse en un iframe externo mediante
-X-Frame-Options: SAMEORIGIN. El contenedor WebView2 usa una sola ventana
-con dos vistas: XMB local y documento principal del autor. Respeta esas
-políticas y no abre una segunda ventana de navegador.
+El dominio original devuelve actualmente **HTTP 403 / Cloudflare Turnstile**
+a las solicitudes automatizadas y su robots.txt impide acceso de agentes.
+No se ha sorteado la comprobación humana ni se ha supuesto disponer de un
+feed oficial. La próxima importación masiva debe tener como fuente primaria
+los datos del .com obtenidos por un medio autorizado, con autor, plataforma,
+URL de juego real y requisitos documentados.
 
-El lector WinMM de PSP Dock transmite el mando PSP PDK1 a un Gamepad API
-virtual en la vista del juego y sus subframes. Los mandos externos completos
-se presentan antes que la PSP virtual, para que L2, R2 y segundo stick
-funcionen cuando un juego los necesita. El puente no envía teclas globales
-al sistema y el juego remoto no recibe permisos de acceso a USB, al servidor
-de sincronización ni al sistema de archivos local. L + R + SELECT mantenidos
-1,2 segundos devuelve el XMB. Los guardados web quedan en el perfil aislado
-de WebView2; no se mezclan con SAVEDATA de la PSP.
+## Lista conservada mientras no haya fuente oficial
 
-## Instalación en Windows
+| Juego clásico | Origen directo conocido | Estado en PSP Dock |
+| --- | --- | --- |
+| Need for Speed Underground 2 (PC) | https://nfsu2.xyz/ | Jugable; confirmado por el usuario con Xbox |
+| WipEout (PS1) | https://phoboslab.org/wipegame/ | Runtime original directo; mando y salida por validar físicamente |
+| Tony Hawk's Pro Skater 3 (PS2) | https://tonyhawkpro3.gamingretro.online/ | URL NO verificable; bloqueado, advierte L2/R2 |
+| Dragon Ball Z Budokai Tenkaichi 3 (PS2) | https://dragonballbt3.online/runtime.html | Requiere una ISO original y un selector soportado por el port; no jugable directamente con el mando |
+| Diablo/Diabloweb (PC) | https://d07riv.github.io/diabloweb/ | Runtime del proyecto; necesita puntero |
 
-Requisitos: Windows x64, SDK .NET 8+ para compilar, Microsoft Edge WebView2
-Runtime para ejecutar. Desde PowerShell, en la raíz del repositorio:
+**No se presenta que estas cinco URLs hayan sido exportadas del .com**: se
+conservan las que se revisaron anteriormente de forma independiente. Se
+excluyen 2048 y HexGL por ser juegos web nativos, no ports de consola/PC.
 
-    powershell -ExecutionPolicy Bypass -File windows/build-web-shell.ps1
+## Arquitectura esperada para ampliar correctamente
 
-Publica un ejecutable self-contained en dist/web-shell/win-x64. Para
-instalarlo en el perfil de Windows:
+El futuro importador debería leer exclusivamente el listado original,
+extraer de cada ficha el enlace de juego de quien realizó el port (no el
+botón que abre una guía o presentación), clasificar plataforma de origen,
+controles y archivos originales necesarios, y verificar su funcionamiento
+antes de marcarlo 'jugable'. El índice se debe refrescar de forma explícita,
+con deduplicación y sin inventar destinos ni descargar contenido comercial.
+Un bloqueo de acceso no autoriza sustituir el origen por clones.
 
-    powershell -ExecutionPolicy Bypass -File windows/build-web-shell.ps1 -Install
+## ISOs del usuario
 
-La próxima ejecución de PSP Dock detecta automáticamente el host en
-LOCALAPPDATA/PSP-Dock/runtime/web-shell/PspDockWebShell.exe. Si no existe,
-mantiene el navegador anterior (Chrome/Edge en modo app). En esa variante,
-solo pueden probarse los ports que permiten iframe; los otros muestran
-un aviso de que requieren WebView2.
+La carpeta local configurable solo permite escanear metadatos de ISO, CSO,
+BIN, CUE y CHD; no sirve archivos por HTTP, no escribe en la PSP y no
+sube una imagen al sitio del autor. Se muestran sugerencias por nombre,
+siempre pendientes de confirmación. Integrar la selección real dentro de
+cada port requiere saber exactamente cómo pide archivos su runtime y obtener
+consentimiento para esa operación concreta.
 
-Se puede fijar la ruta absoluta del ejecutable mediante la variable de
-entorno PSP_DOCK_WEBVIEW2_SHELL. No instalar encima de una sesión activa.
-El empaquetador estable PyInstaller todavía no incluye este host nuevo;
-se debe validar en hardware antes de añadirlo a una release.
-
-## Orígenes verificados por HEAD (6 noviembre 2026)
-
-| Host | HTTP | Política | Carga |
-| --- | --- | --- | --- |
-| tonyhawkpro3.gamingretro.online | 200 | SAMEORIGIN | WebView2 principal |
-| dragonballbt3.online | 200 | SAMEORIGIN | WebView2 principal |
-| nfsu2.org | 200 | SAMEORIGIN | WebView2 principal |
-| play2048.co | 200 | frame-ancestors sin localhost | WebView2 principal |
-| hexgl.bkcore.com/play | 200 | sin bloqueo iframe en HEAD | iframe candidato |
-| phoboslab.org/wipeout | 200 | sin bloqueo iframe en HEAD | iframe candidato |
-| d07riv.github.io/diabloweb | 200 | sin bloqueo iframe en HEAD | iframe candidato |
-
-Una respuesta HEAD sin bloqueo no demuestra que el juego funcione dentro
-de iframe: faltan pruebas de WebGL, WebGPU, audio, SharedArrayBuffer,
-controles físicos y persistencia de guardados. La página ported2browser.com
-respondió 403 a las peticiones automatizadas, por lo que también se
-contrastaron las páginas públicas alternativas y los hosts originales.
-
-THPS3 documenta L2/R2: el aviso queda implementado para cuando se valide
-el runtime directo. Para otros PS2 con controles no verificados, no se
-debe prometer compatibilidad total de PSP.
-
-## Corrección de URLs y mandos: 14 noviembre de 2026
-
-- NFS Underground 2: nfsu2.org es una guía, no el juego. PSP Dock carga
-  directamente https://nfsu2.xyz/, el runtime de Underground 2 Revived.
-  A activa Play cuando termina de prepararse.
-- WipEout: phoboslab.org/wipeout/ era un visor de modelos. La versión
-  jugable del autor está en https://phoboslab.org/wipegame/. El contenedor
-  selecciona la descarga completa y traduce los botones Xbox a las teclas
-  documentadas por el autor.
-- HexGL: su URL /play/ sí es del juego. A activa Start sin usar ratón.
-- 2048: la cruceta Xbox se convierte en las cuatro flechas del navegador.
-- Tony Hawk's Pro Skater 3: el anterior host no es verificable ahora.
-  Otra dirección encontrada se encuentra aparcada como dominio; por tanto,
-  este título aparece como PENDIENTE y no abre una página publicitaria.
-- Budokai Tenkaichi 3: el runtime identificado exige una ISO original
-  del usuario. Figura como ISO necesaria, sin fingir partida inmediata.
-- DiabloWeb: requiere ratón durante el juego; figura como RATÓN hasta que
-  se implemente un puntero controlable y comprobado con Xbox.
-
-El XMB se mantiene dentro de PSP Dock: al pulsar un juego compatible
-se carga su origen de ejecución y se intenta iniciar el control real
-del autor. Si el navegador exige interacción explícita, A vuelve a
-intentarlo. LB + RB + View mantenidos regresa al XMB sin ratón. La
-compatibilidad física de cada juego debe probarse antes de marcarla
-como completamente verificada.
-
-El XMB y los juegos se ejecutan en instancias independientes de WebView2.
-El navegador del juego puede no exponer Gamepad API hasta que se active
-mediante un gesto del usuario. Por eso el host lee también el mando Xbox
-de manera nativa mediante XInput (solo lectura, sin teclas globales).
-El puente web recibe botones, gatillos y los dos joysticks y presenta
-el mando XInput solo cuando el navegador no ofrece el controlador físico.
-La PSP conserva su propio lector HID independiente.
-
-## Validación
+## Pruebas
 
     node tests/xmb_web_ports.test.js
-    python -m unittest tests.test_http tests.test_xmb_window -q
+    node tests/xmb_guest_mode.test.js
+    python -m unittest tests.test_original_port_directory tests.test_web_iso_library tests.test_http -q
     dotnet build windows/WebDockShell/PspDockWebShell.csproj -c Release
 
-Esta validación es de código y contratos. Una prueba física con la PSP y
-otro mando es imprescindible antes de fusionar o desplegar la funcionalidad.
+No fusionar en main sin pruebas físicas del flujo PSP, saves y Xbox.
