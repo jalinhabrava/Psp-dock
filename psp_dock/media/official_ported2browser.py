@@ -7,12 +7,13 @@ detail page, NOT to the playable author's runtime.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import re
 from collections import OrderedDict
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlsplit
 
 SOURCE = "https://ported2browser.com/"
 MAX_HTML_BYTES = 4 * 1024 * 1024
@@ -149,6 +150,161 @@ def parse_official_homepage(raw: bytes | str) -> dict:
         "extracted": len(parser.cards),
         "complete": False,
         "games": list(parser.cards.values()),
+    }
+
+
+def _public_game_url(value: str) -> str | None:
+    """Accept a public author-host HTTPS URL; never a local or directory link."""
+    if not isinstance(value, str) or not (8 < len(value) <= 2048):
+        return None
+    if any(ord(char) < 32 or char == "\\" for char in value):
+        return None
+    try:
+        url = urlsplit(value)
+        host = (url.hostname or "").lower().rstrip(".")
+        if (url.scheme != "https" or not host or url.username or url.password
+                or (url.port is not None and url.port != 443)
+                or re.fullmatch(
+                    r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\.[a-z]{2,}", host
+                ) is None or ".." in host):
+            return None
+        if (host in ("localhost", "ported2browser.com",
+                     "ported2browser.org", "ported2browser.sbs")
+                or host.endswith((".localhost", ".local", ".internal",
+                                  ".test", ".invalid", ".example",
+                                  ".ported2browser.com"))
+                or any(char.isspace() for char in host)):
+            return None
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            return None
+        return value
+    except ValueError:
+        return None
+
+
+class _Detail(HTMLParser):
+    """Read only the original site's game page and its explicit Play anchors."""
+
+    def __init__(self, game_id: str):
+        super().__init__(convert_charrefs=True)
+        self.game_id = game_id
+        self.found_page_identity = False
+        self.title = ""
+        self.play_links = []
+        self.controls = {}
+        self.alerts = []
+        self.tags = []
+        self._title = False
+        self._control = None
+        self._control_label = False
+        self._alert_div_depth = 0
+        self._alert_text = ""
+        self._alert_disc = False
+
+    def handle_starttag(self, tag, attrs):
+        fields = dict(attrs)
+        classes = set(fields.get("class", "").split())
+        if (tag == "input" and fields.get("name") == "return" and
+                fields.get("value") == "/ports/" + self.game_id):
+            self.found_page_identity = True
+        if (tag == "a" and "play" in classes and "button" in classes and
+                fields.get("data-id") == self.game_id and
+                fields.get("data-page") == "/ports/" + self.game_id):
+            link = _public_game_url(fields.get("href", ""))
+            if link and link not in self.play_links:
+                self.play_links.append(link)
+        if tag == "h1":
+            self._title = True
+        if tag == "li" and "ctl" in classes:
+            self._control = {
+                "supported": "is-supported" in classes and "is-unsupported" not in classes,
+                "label": ""
+            }
+        if tag == "span" and "ctl-label" in classes and self._control is not None:
+            self._control_label = True
+        if tag == "div" and "port-alert" in classes:
+            self._alert_div_depth = 1
+            self._alert_text = ""
+            self._alert_disc = "is-disc" in classes
+        elif tag == "div" and self._alert_div_depth:
+            self._alert_div_depth += 1
+        if tag == "a" and fields.get("href", "").startswith(
+                "https://ported2browser.com?tag="):
+            self.tags.append(fields["href"].split("?tag=", 1)[1][:48])
+
+    def handle_data(self, data):
+        if self._title:
+            self.title = (self.title + data)[:120]
+        if self._control is not None and self._control_label:
+            self._control["label"] = (self._control["label"] + data)[:40]
+        if self._alert_div_depth:
+            self._alert_text = (self._alert_text + data)[:400]
+
+    def handle_endtag(self, tag):
+        if tag == "h1":
+            self._title = False
+        if tag == "span":
+            self._control_label = False
+        if tag == "li" and self._control is not None:
+            label = self._control["label"].strip().lower()
+            if label in ("gamepad", "keyboard", "touch"):
+                self.controls[label] = self._control["supported"]
+            self._control = None
+        if tag == "div" and self._alert_div_depth:
+            self._alert_div_depth -= 1
+            if not self._alert_div_depth:
+                text = " ".join(self._alert_text.split())
+                if text:
+                    self.alerts.append({
+                        "type": "requires_disc_image" if self._alert_disc else "notice",
+                        "text": text,
+                    })
+
+
+def parse_official_detail(raw: bytes | str, game_id: str) -> dict:
+    """Extract the author's explicit destination from an original .com detail.
+
+    The URL is a *candidate*, not permission to launch it from PSP Dock or a
+    claim of gamepad compatibility. A separate, nonprivileged browser probe
+    and per-title review are still necessary.
+    """
+    if not isinstance(game_id, str) or not PORT_ID.fullmatch(game_id):
+        raise ValueError("Invalid original port identifier.")
+    if isinstance(raw, bytes):
+        if len(raw) > MAX_HTML_BYTES:
+            raise ValueError("Oversized port detail response.")
+        raw = raw.decode("utf-8-sig")
+    if not isinstance(raw, str) or len(raw) > MAX_HTML_BYTES:
+        raise ValueError("Invalid port detail response.")
+    if ("data-page" not in raw or
+            "class=" not in raw):
+        raise ValueError("Not a recognized original port detail page.")
+    parser = _Detail(game_id)
+    parser.feed(raw)
+    parser.close()
+    if not parser.found_page_identity or not parser.title.strip():
+        raise ValueError("Port detail did not match its ID or title.")
+    disc = any(row["type"] == "requires_disc_image" for row in parser.alerts)
+    status = ("direct_candidate" if len(parser.play_links) == 1 else
+              "multiple_candidates" if parser.play_links else "no_direct_link")
+    return {
+        "id": game_id,
+        "title": parser.title.strip(),
+        "detail_url": f"{SOURCE}ports/{game_id}",
+        "direct_url": parser.play_links[0] if len(parser.play_links) == 1 else None,
+        "direct_candidates": parser.play_links,
+        "controls": parser.controls,
+        "requires_disc_image": disc,
+        "alerts": parser.alerts,
+        "tags": list(dict.fromkeys(parser.tags)),
+        "status": status,
+        "runtime_verified": False,
+        "gamepad_tested": False,
+        "original_platform": None,
     }
 
 
