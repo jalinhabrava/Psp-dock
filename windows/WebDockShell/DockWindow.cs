@@ -15,12 +15,14 @@ namespace PspDockWebShell;
 /// </summary>
 public sealed class DockWindow : Form
 {
-    private sealed record Port(string Id, string Title, Uri Url, bool KeyboardArrows);
+    private sealed record Port(
+        string Id, string Title, Uri Url, bool KeyboardArrows,
+        string ControlProfile, string? StartSelector, bool AutoStart);
 
     private static readonly HashSet<string> AuthorHosts = new(StringComparer.OrdinalIgnoreCase)
     {
         "tonyhawkpro3.gamingretro.online", "dragonballbt3.online",
-        "nfsu2.org", "play2048.co", "hexgl.bkcore.com",
+        "nfsu2.xyz", "play2048.co", "hexgl.bkcore.com",
         "phoboslab.org", "d07riv.github.io"
     };
 
@@ -73,7 +75,7 @@ public sealed class DockWindow : Form
         back.Click += (_, _) => ClosePort();
         var hint = new Label
         {
-            Text = "L + R + SELECT · Volver", Dock = DockStyle.Fill,
+            Text = "LB + RB + View · Volver", Dock = DockStyle.Fill,
             ForeColor = Color.LightGray, TextAlign = ContentAlignment.MiddleCenter
         };
         top.Controls.Add(back, 0, 0);
@@ -122,6 +124,23 @@ public sealed class DockWindow : Form
         _gameView.CoreWebView2.Settings.AreHostObjectsAllowed = false;
         _gameView.CoreWebView2.Settings.AreDevToolsEnabled = false;
         _gameView.CoreWebView2.NewWindowRequested += (_, args) => args.Handled = true;
+        // The untrusted game may only request to CLOSE itself, never to
+        // open an arbitrary URL or perform privileged USB/save operations.
+        _gameView.CoreWebView2.WebMessageReceived += (_, args) =>
+        {
+            if (_active == null ||
+                !Uri.TryCreate(args.Source, UriKind.Absolute, out var source) ||
+                !string.Equals(source.Host, _active.Url.Host, StringComparison.OrdinalIgnoreCase))
+                return;
+            try
+            {
+                using var payload = JsonDocument.Parse(args.WebMessageAsJson);
+                if (payload.RootElement.TryGetProperty("type", out var type) &&
+                    type.GetString() == "game-exit-request")
+                    ClosePort();
+            }
+            catch (JsonException) { /* Unknown data from the remote page. */ }
+        };
         // Some ports host the emulator in a cross-origin child frame. Virtual
         // PSP input must reach that frame as well as the top-level author page.
         _gameView.CoreWebView2.FrameCreated += (_, args) =>
@@ -171,7 +190,28 @@ public sealed class DockWindow : Form
             !AuthorHosts.Contains(uri.Host) || uri.UserInfo.Length > 0 ||
             !uri.IsDefaultPort || uri.Query.Length > 0 || uri.Fragment.Length > 0)
             return null;
-        return new Port(id, title, uri, id == "2048");
+        var state = item.TryGetProperty("launch_state", out var launchNode) &&
+                    launchNode.ValueKind == JsonValueKind.String
+                    ? launchNode.GetString() : null;
+        // Even a stale or manipulated local XMB cannot launch metadata that
+        // has not passed direct-runtime and controller-only checks.
+        if (state is "unverified" or "requires_original_iso" or "needs_pointer")
+            return null;
+        var profile = id switch
+        {
+            "2048" => "arrows",
+            "wipeout" => "wipeout",
+            _ => "gamepad"
+        };
+        var start = id switch
+        {
+            "nfs-underground-2" => "#play",
+            "hexgl" => "#start",
+            "wipeout" => "#load-full-version",
+            _ => null
+        };
+        return new Port(id, title, uri, profile == "arrows", profile, start,
+            start is not null);
     }
 
     private async Task LoadCatalogAsync()
@@ -202,7 +242,13 @@ public sealed class DockWindow : Form
         {
             using var doc = JsonDocument.Parse(args.WebMessageAsJson);
             var msg = doc.RootElement;
-            if (msg.GetProperty("type").GetString() != "launch-web-port") return;
+            var messageType = msg.GetProperty("type").GetString();
+            if (messageType == "close-web-port")
+            {
+                ClosePort();
+                return;
+            }
+            if (messageType != "launch-web-port") return;
             var id = msg.GetProperty("id").GetString() ?? "";
             if (_ports.TryGetValue(id, out var port))
                 OpenPort(port);
@@ -278,7 +324,9 @@ public sealed class DockWindow : Form
             // The injected bridge exists ONLY inside this author's WebView2.
             var inputMessage = JsonSerializer.Serialize(new
             {
-                type = "psp-input", input = frame, keyboardArrows = _active.KeyboardArrows
+                type = "psp-input", input = frame, keyboardArrows = _active.KeyboardArrows,
+                controlProfile = _active.ControlProfile, startSelector = _active.StartSelector,
+                autoStart = _active.AutoStart, xbox = XboxInput.Read()
             });
             _gameView.CoreWebView2.PostWebMessageAsJson(inputMessage);
             foreach (var child in _gameFrames.ToArray())

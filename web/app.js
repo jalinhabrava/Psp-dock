@@ -21,6 +21,8 @@ const ui = {
   productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
   webPorts: [], webPortCatalogError: '', webPortActive: null, webPortHostActive: false,
   webPortComboAt: 0,
+  guestRequested: false,
+  guestTransitioning: false,
 };
 const bytes = (value) => {
   const n = Number(value) || 0;
@@ -75,7 +77,7 @@ async function appHeartbeat() {
 }
 async function closeDockApp() {
   const connection = xmbConnectionView();
-  if (!(connection.waiting || connection.product?.canClose || connection.product?.canDismiss) || ui.appClosing || ui.appClosed) return;
+  if (!(connection.waiting || connection.guestMode || connection.product?.canClose || connection.product?.canDismiss) || ui.appClosing || ui.appClosed) return;
   ui.appClosing = true;
   ui.connectionRequestError = '';
   $('dock-connect-error').hidden = true;
@@ -1278,7 +1280,14 @@ document.addEventListener('keydown', (event) => {
   // Native button behavior (including Enter on «Cerrar app») remains
   // available; no keyboard shortcut may operate the hidden XMB.
   const connection = xmbConnectionView();
-  if (connection.waiting) return;
+  if (connection.waiting) {
+    if (connection.canStartGuest && ['Enter', ' ', 'GamepadA'].includes(event.key) &&
+        !event.altKey && !event.ctrlKey && !event.metaKey && !ui.appClosing) {
+      event.preventDefault();
+      xmbStartGuest();
+    }
+    return;
+  }
   if (ui.busy || document.querySelector('dialog[open]') || event.altKey || event.ctrlKey || event.metaKey || ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName)) return;
   const button = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down', Enter: 'accept', ' ': 'accept',
     Escape: 'back', Backspace: 'back', t: 'menu', T: 'menu', ContextMenu: 'menu', PageUp: 'pageLeft', PageDown: 'pageRight', Home: 'start' }[event.key];
@@ -1368,13 +1377,24 @@ function gamepadLoop(time) {
     ui.gamepadDirection = '';
     // Prime buttons as held on a newly plugged-in controller, so a
     // physically held CROSS cannot auto-launch Dariusburst on connect.
-    ui.gamepadHeld = pad ? controllerInput(pad) : {};
+    // A newly discovered Xbox pad may be activated by the very first A
+    // press. On the waiting screen it is a deliberate "Jugar con otro
+    // mando" action, not an accidental PSP game launch.
+    const entry = xmbConnectionView();
+    ui.gamepadHeld = pad && !(entry.waiting && entry.canStartGuest) ?
+      controllerInput(pad) : {};
   }
   const status = pad ? 'Mando del navegador: conectado' :
     ui.state?.controller_status?.connected ?
       'Mando PSP · pulsa un botón para activar la navegación' :
       'Mando del navegador: sin detectar';
   if ($('gamepad-status').textContent !== status) $('gamepad-status').textContent = status;
+  const guestEntry = $('dock-connect-guest');
+  if (guestEntry) {
+    const ready = !!pad && xmbConnectionView().waiting && xmbConnectionView().canStartGuest;
+    guestEntry.classList.toggle('gamepad-selected', ready);
+    if (ready && document.activeElement !== guestEntry) guestEntry.focus({preventScroll:true});
+  }
   if (pad) {
     const input = controllerInput(pad);
     const edge = (name) => input[name] && !ui.gamepadHeld[name];
@@ -1394,11 +1414,17 @@ function gamepadLoop(time) {
           else focusDialogControl(dialog, 1);
         }
       } else if (!ui.serviceOffline) {
-        const button = edge('exit') ? 'select' : edge('settings') ? 'start' : edge('graphics') ? 'menu' :
-          edge('pageLeft') ? 'pageLeft' : edge('pageRight') ? 'pageRight' : edge('accept') ? 'accept' :
-            edge('back') ? 'back' : navigate ? direction : '';
-        if (navigate) ui.gamepadAt = time;
-        if (button) xmbPress(button);
+        const connection = xmbConnectionView();
+        if (connection.waiting && connection.canStartGuest &&
+            (edge('accept') || edge('settings'))) {
+          $('dock-connect-guest').click();
+        } else {
+          const button = edge('exit') ? 'select' : edge('settings') ? 'start' : edge('graphics') ? 'menu' :
+            edge('pageLeft') ? 'pageLeft' : edge('pageRight') ? 'pageRight' : edge('accept') ? 'accept' :
+              edge('back') ? 'back' : navigate ? direction : '';
+          if (navigate) ui.gamepadAt = time;
+          if (button) xmbPress(button);
+        }
       }
     }
     ui.gamepadHeld = input;
@@ -1704,10 +1730,29 @@ function dockConnectionView(state, options = {}) {
   const protectedWork = !!(session.running || session.pending_return || session.exit_requested ||
     current.recovery_required || transfer || options.busy || options.textureActive ||
     current.copy_queue?.status === 'interrupted_review');
+  // Rendering, UI focus changes and ordinary in-window actions can toggle
+  // options.busy. Only *device-backed* work can revoke a chosen guest mode.
+  const protectedDeviceWork = !!(session.running || session.pending_return ||
+    session.exit_requested || current.recovery_required || transfer ||
+    options.textureActive || current.copy_queue?.status === 'interrupted_review');
+  // A deliberate guest session is independent of USB polling. The native
+  // watcher temporarily emits "searching"/"identifying"/"scanning" while no
+  // PSP is present; those observations MUST NOT kick the player out of XMB.
+  // Only evidence of a real PSP or protected work revokes guest access.
+  const pspPresent = controller.connected === true ||
+    !!current.selected_device ||
+    product.enabled && product.phase !== 'waiting_psp' ||
+    link.present && ['waiting_storage', 'verified', 'closing'].includes(link.phase);
+  const guestSafe = !!state && !demo && !options.closed &&
+    !pspPresent && !protectedDeviceWork;
+  const canStartGuest = guestSafe && !options.serviceOffline &&
+    !options.busy && !current.scanning && !current.error && !link.pending &&
+    [undefined, 'await_hid', 'await_native', 'disconnected', 'none'].includes(controller.mode);
+  const guestMode = guestSafe && options.guestRequested === true;
   const connected = !options.serviceOffline && (stable || diagnostic);
-  const waiting = options.closed === true ||
+  const waiting = !guestMode && (options.closed === true ||
     !product.visible && (product.enabled && product.phase === 'waiting_psp' ||
-      link.pending && link.phase !== 'waiting' && !protectedWork && !demo || !(demo || connected || protectedWork || storageSetup));
+      link.pending && link.phase !== 'waiting' && !protectedWork && !demo || !(demo || connected || protectedWork || storageSetup)));
   const kind = options.closed ? 'closed' : options.serviceOffline ? 'offline' : !state ? 'loading' :
     link.present && ['searching', 'identifying', 'waiting_storage', 'closing', 'blocked'].includes(link.phase) ? link.phase :
     controller.mode === 'usb_storage' || current.selected_device ? 'storage' : 'connect';
@@ -1727,7 +1772,8 @@ function dockConnectionView(state, options = {}) {
   }[kind];
   const partial = ['searching', 'identifying', 'waiting_storage', 'closing', 'blocked'].includes(kind);
   return {
-    waiting, screen: waiting ? 'waiting' : product.visible ? 'product' : 'menu', kind, diagnostic: diagnostic && !demo,
+    waiting, screen: waiting ? 'waiting' : !guestMode && product.visible ? 'product' : 'menu', kind, diagnostic: diagnostic && !demo,
+    guestMode, canStartGuest,
     product, nativeController,
     canPrepareStorage: storage && !link.pending && !options.closed, storageSetup,
     canPlay: !demo && !options.serviceOffline && !options.closed && stable && controller.can_play === true && !product.blocking &&
@@ -1767,9 +1813,11 @@ function xmbStep(nav, view, button) {
   }
   const sections = view.sections || [];
   const games = sections.findIndex((section) => section.id === 'juegos');
+  const guestWeb = sections.findIndex((section) => section.id === 'webports');
   if (button === 'start') {
     next.level = 'list'; next.subIdx = 0;
     if (games >= 0) next.cat = games;
+    else if (guestWeb >= 0) next.cat = guestWeb;
     return done();
   }
   if (next.level === 'sub') {
@@ -1874,16 +1922,75 @@ function xmbSyncMotion() {
 }
 
 function xmbConnectionView() {
+  // Reopening the same managed window after a refresh must adopt the
+  // backend's *volatile* guest session rather than silently resuming USB.
+  if (ui.state?.guest_mode === true && !ui.guestRequested && !ui.guestTransitioning)
+    ui.guestRequested = true;
   const connection = dockConnectionView(ui.state, {
     serviceOffline: ui.serviceOffline, transferInFlight: ui.transferInFlight,
     busy: ui.busy, textureActive: ui.textureProgress?.active, closed: ui.appClosed,
     storageSetupRequested: ui.storageSetupRequested,
     transferStatus: ui.transferStatus,
+    guestRequested: ui.guestRequested,
   });
+  if (ui.guestRequested && !connection.guestMode) {
+    // A PSP was connected or a recovery/USB operation appeared. Revert to
+    // the real Dock gates immediately; never resume guest after unplugging.
+    ui.guestRequested = false;
+    if (ui.webPortActive) {
+      $('web-port-frame').src = 'about:blank';
+      $('web-port-view').hidden = true;
+      ui.webPortActive = null;
+    }
+    // Also close a game whose initial "active" event has not yet returned.
+    if (typeof window.chrome?.webview?.postMessage === 'function')
+      window.chrome.webview.postMessage({type:'close-web-port'});
+    xmb.nav = {cat:2, idx:{}, level:'list', subIdx:0, side:null, confirm:null};
+    xmb.sub = null; xmb.side = null; xmb.confirm = null;
+  }
   // Opt-in belongs to the current storage connection. A disconnect or
   // switch into HID must not reopen preparation on the next USB arrival.
   if (!connection.canPrepareStorage) ui.storageSetupRequested = false;
   return connection;
+}
+async function xmbStartGuest() {
+  const connection = xmbConnectionView();
+  if (!connection.waiting || !connection.canStartGuest || ui.appClosing || ui.appClosed ||
+      ui.guestTransitioning) return;
+  ui.guestTransitioning = true;
+  try {
+    const result = await request('/api/guest-mode',
+      {client_id:ui.appClientId,enabled:true});
+    if (result.guest_mode !== true) throw new Error('El servicio no confirmó el modo sin PSP.');
+    ui.state = {...ui.state,guest_mode:true,scanning:false};
+    ui.guestRequested = true;
+    ui.storageSetupRequested = false;
+    xmb.nav = {cat:2, idx:{}, level:'list', subIdx:0, side:null, confirm:null};
+    xmb.sub = null; xmb.side = null; xmb.confirm = null;
+  } catch (error) {
+    toast('No se pudo iniciar Juegos Web sin PSP: '+error.message);
+  } finally {
+    ui.guestTransitioning = false;
+    xmbRender();
+  }
+}
+async function xmbExitGuest() {
+  if (!xmbConnectionView().guestMode || ui.guestTransitioning) return;
+  ui.guestTransitioning = true;
+  try {
+    const result = await request('/api/guest-mode',
+      {client_id:ui.appClientId,enabled:false});
+    if (result.guest_mode !== false) throw new Error('El servicio no reanudó la conexión PSP.');
+    ui.state = {...ui.state,guest_mode:false};
+    ui.guestRequested = false;
+    xmb.nav = {cat:2, idx:{}, level:'list', subIdx:0, side:null, confirm:null};
+    xmb.sub = null; xmb.side = null; xmb.confirm = null;
+  } catch (error) {
+    toast('No se pudo reanudar la detección PSP: '+error.message);
+  } finally {
+    ui.guestTransitioning = false;
+    xmbRender();
+  }
 }
 function requestStorageSetup() {
   const connection = xmbConnectionView();
@@ -1896,7 +2003,7 @@ function xmbRenderConnection(connection) {
   const waiting = $('dock-connect');
   const changed = waiting.hidden === connection.waiting;
   waiting.hidden = !connection.waiting;
-  const productVisible = connection.product?.visible === true;
+  const productVisible = !connection.guestMode && connection.product?.visible === true;
   renderProductFlow(connection.product);
   const menu = $('xmb-menu');
   menu.hidden = connection.waiting || productVisible;
@@ -1910,6 +2017,8 @@ function xmbRenderConnection(connection) {
   $('dock-connect-status-detail').textContent = connection.detail;
   $('dock-connect-prepare').hidden = !connection.canPrepareStorage || !connection.waiting;
   $('dock-connect-prepare').disabled = ui.appClosing || ui.appClosed;
+  $('dock-connect-guest-option').hidden = !connection.waiting || !connection.canStartGuest;
+  $('dock-connect-guest').disabled = ui.appClosing || ui.appClosed || !connection.canStartGuest;
   $('dock-connect-title').textContent = connection.title;
   $('dock-connect-intro').textContent = connection.intro;
   $('dock-connect-steps').hidden = !connection.showSteps;
@@ -1921,7 +2030,8 @@ function xmbRenderConnection(connection) {
   $('dock-connect-refresh').disabled = ui.appClosing || ui.appClosed;
   $('dock-connect-footer').textContent = ui.appClosing ? 'Cerrando PSP Dock…' : ui.appClosed ? 'La app ya no está esperando conexiones.' :
     connection.working ? 'Comprobando la conexión. Todavía no se están copiando archivos.' :
-    connection.kind === 'blocked' ? 'La sesión todavía no ha comenzado.' : 'La app está esperando tu PSP.';
+    connection.kind === 'blocked' ? 'La sesión todavía no ha comenzado.' :
+    connection.guestMode ? 'Juegos Web · sin acceso a guardados de la PSP.' : 'La app está esperando tu PSP.';
   $('dock-connect-error').hidden = !ui.connectionRequestError;
   $('dock-connect-error').textContent = ui.connectionRequestError ? 'No se pudo cerrar la aplicación. Puedes intentarlo de nuevo.' : '';
   renderDockDiagnostics('dock-connect', [connection.diagnostics, ui.connectionRequestError].filter(Boolean).join('\n'));
@@ -2290,7 +2400,80 @@ async function xmbStartRetroInstall() {
     xmbRetroInstallPending = false;
   }
 }
+function xmbWebPortItems() {
+  const ports = ui.webPorts.map((port) => ({
+    key:'web-port-'+port.id, t:port.title, icon:'webports', webPort:port,
+    s:port.platform + ' · ' + port.genre + ' · ' + port.author +
+      (port.controls.includes('gamepad') ? ' · Mando' : ' · Teclado/ratón') +
+      (port.embed === 'native' ? ' · WebView2' : '') +
+      (port.launch_state === 'unverified' ? ' · runtime sin verificar' :
+       port.launch_state === 'requires_original_iso' ? ' · necesita ISO propia' :
+       port.launch_state === 'needs_pointer' ? ' · necesita ratón' : ''),
+    chip:port.launch_state === 'unverified' ? ['conf','PENDIENTE'] :
+      port.launch_state === 'requires_original_iso' ? ['inh','ISO'] :
+      port.launch_state === 'needs_pointer' ? ['inh','RATÓN'] :
+      port.missing_on_psp.length ? ['conf','L2/R2'] :
+      port.platform === 'PS2' ? ['inh','MANDO ?'] : ['pc','WEB'],
+    activate:()=>xmbWebPortLaunch(port),
+    menu:()=>xmbWebPortMenu(port),
+  }));
+  if (ports.length) return ports;
+  return [{
+    key:'web-ports-loading',
+    t:ui.webPortCatalogError ? 'No se ha podido cargar el catálogo web' : 'Cargando juegos web…',
+    s:ui.webPortCatalogError || 'Enlaces directos a los proyectos de sus autores',
+    icon:'webports', activate:()=>void xmbLoadWebPorts(),
+  }];
+}
+function xmbGuestSections() {
+  // Explicitly omit ISO/CSO, RetroArch, SAVEDATA and the graphics profiles.
+  // This allowlist is intentionally independent of the PSP/Retro item lists.
+  const settings = [
+    {key:'guest-language',t:'Idioma / Language',icon:'info',
+      s:()=>DockI18n.locale() === 'es' ? 'Español' : 'English',
+      activate:()=>xmbValues('Idioma / Language',
+        [['auto','Automático'],['es','Español'],['en','English']],DockI18n.mode(),value=>{
+          DockI18n.setLanguage(value);
+          xmb.els.clear(); $('xmb-list').replaceChildren(); xmbRender();
+        })},
+    {key:'guest-theme',t:'Color del fondo',icon:'theme',
+      s:()=>xmb.theme === 'month' ? 'Según el mes, como la PSP' : 'Azul PSP Dock',
+      activate:()=>xmbValues('Color del fondo',
+        [['month','Según el mes, como la PSP'],['dock','Azul PSP Dock']],xmb.theme,value=>{
+          xmb.theme=value; try {localStorage.setItem('psp-dock-theme',value);} catch {}
+          xmbApplyTheme();
+        })},
+    {key:'guest-motion',t:'Animación de menús',icon:'theme',
+      s:()=>xmb.motion === 'on' ? 'Activada · desplazamiento fluido' :
+        xmb.motion === 'system' ? 'Según preferencias de Windows' : 'Desactivada',
+      activate:()=>xmbValues('Animación de menús',
+        [['on','Activada'],['off','Desactivada'],['system','Según Windows']],xmb.motion,value=>{
+          xmb.motion=value; try {localStorage.setItem('psp-dock-xmb-motion',value);} catch {}
+          xmbSyncMotion();
+        })},
+    {key:'guest-pad',t:'Mando conectado',icon:'pad',
+      s:()=>xmbText('gamepad-status') || 'Usa otro mando o el teclado',
+      activate:()=>toast('Juegos Web usa un mando compatible conectado al PC. También puedes navegar con el teclado.')},
+  ];
+  const dock = [
+    {key:'guest-info',t:'Jugando sin PSP',icon:'info',
+      s:'Solo Juegos Web · Retro y guardados PSP desactivados',
+      activate:()=>toast('Sin PSP, los juegos web conservan sus datos en el navegador. No se escribe ni sincroniza ninguna partida de la PSP.')},
+    {key:'guest-connect',t:'Conectar mi PSP',icon:'search',
+      s:'Volver a la pantalla de conexión para jugar y sincronizar',
+      activate:()=>xmbExitGuest()},
+    {key:'guest-close',t:'Salir de PSP Dock',icon:'exit',s:'Cerrar la aplicación sin sincronizar archivos PSP',
+      activate:()=>xmbConfirm('¿Cerrar PSP Dock?<small>Estás jugando sin PSP. No hay archivos PSP que devolver.</small>',
+        false,()=>void closeDockApp())},
+  ];
+  return [
+    {id:'ajustes',label:'Ajustes',items:settings,badge:null},
+    {id:'dock',label:'Dock',items:dock,badge:null},
+    {id:'webports',label:'Juegos Web',items:xmbWebPortItems(),badge:null},
+  ];
+}
 function xmbBuildSections() {
+  if (xmbConnectionView().guestMode) return xmbGuestSections();
   const state = ui.state || {};
   const diagnostic = state.controller_status?.mode === 'msc_diagnostic';
   const games = state.games || [];
@@ -2463,22 +2646,7 @@ function xmbBuildSections() {
     icon:'search', activate:()=>toast('Conecta la PSP en almacenamiento USB para detectar los emuladores instalados y sus ROMs.') }];
 
   // A web port is one vertical row, separate from PSP ISOs and Retro ROMs.
-  out.webports = ui.webPorts.map((port) => ({
-    key:'web-port-'+port.id, t:port.title, icon:'webports', webPort:port,
-    s:port.platform + ' · ' + port.genre + ' · ' + port.author +
-      (port.controls.includes('gamepad') ? ' · Mando' : ' · Teclado/ratón') +
-      (port.embed === 'native' ? ' · WebView2' : ''),
-    chip:port.missing_on_psp.length ? ['conf','L2/R2'] :
-      port.platform === 'PS2' ? ['inh','MANDO ?'] : ['pc','WEB'],
-    activate:()=>xmbWebPortLaunch(port),
-    menu:()=>xmbWebPortMenu(port),
-  }));
-  if (!out.webports.length) out.webports = [{
-    key:'web-ports-loading',
-    t:ui.webPortCatalogError ? 'No se ha podido cargar el catálogo web' : 'Cargando juegos web…',
-    s:ui.webPortCatalogError || 'Enlaces directos a los proyectos de sus autores',
-    icon:'webports', activate:()=>void xmbLoadWebPorts(),
-  }];
+  out.webports = xmbWebPortItems();
 
   const partidas = [];
   partidas.push({ key: 'sync', t: xmbText('sync-button') || 'Sincronizar partidas',
@@ -3019,7 +3187,7 @@ function xmbValidatedWebPort(port) {
         uri.port || uri.search || uri.hash) return false;
     // Only audited author domains. No local URL, arbitrary redirect or proxy.
     return ['tonyhawkpro3.gamingretro.online', 'dragonballbt3.online',
-      'nfsu2.org', 'play2048.co', 'hexgl.bkcore.com',
+      'nfsu2.xyz', 'play2048.co', 'hexgl.bkcore.com',
       'phoboslab.org', 'd07riv.github.io'].includes(uri.hostname);
   } catch { return false; }
 }
@@ -3037,7 +3205,10 @@ async function xmbLoadWebPorts() {
 }
 function xmbWebPortMenu(port) {
   xmbSide(port.title, [
-    {t:'Jugar dentro de PSP Dock',s:port.embed === 'native' ?
+    {t:port.launch_state === 'unverified' ? 'Pendiente de verificar runtime' :
+      port.launch_state === 'requires_original_iso' ? 'Abrir runtime (requiere ISO propia)' :
+      port.launch_state === 'needs_pointer' ? 'Requiere ratón o puntero virtual' :
+      'Jugar dentro de PSP Dock',s:port.embed === 'native' ?
       'Requiere el contenedor WebView2 para respetar la política del autor.' :
       'Compatible con la vista integrada de navegador.'},
     {t:'Controles y origen',s:(port.missing_on_psp.length ?
@@ -3053,9 +3224,24 @@ function xmbWebPortLaunch(port) {
     toast('URL de juego web no autorizada en el catálogo de PSP Dock.');
     return;
   }
+  // Never pretend a landing page, file picker or mouse-only program is
+  // immediately gamepad-playable. Retain its catalog information, but only
+  // launch once an actual play runtime/controller path has been verified.
+  if (port.launch_state === 'unverified') {
+    toast('El acceso directo al runtime de este juego no está verificado. No se abrirá una página de publicidad o presentación.');
+    return;
+  }
+  if (port.launch_state === 'requires_original_iso') {
+    toast('Este runtime necesita seleccionar una ISO original propia. La selección de archivos con mando aún no está preparada.');
+    return;
+  }
+  if (port.launch_state === 'needs_pointer') {
+    toast('Este juego requiere ratón para jugar. Lo activaremos cuando esté disponible el puntero controlado con el mando.');
+    return;
+  }
   const connection = xmbConnectionView();
   if (ui.busy || ui.serviceOffline || ui.state?.session?.running ||
-      connection.waiting || connection.product?.blocking) {
+      connection.waiting || connection.product?.blocking && !connection.guestMode) {
     toast('Termina la preparación o el juego en ejecución antes de abrir un port web.');
     return;
   }
@@ -3112,8 +3298,8 @@ function xmbWebPortHostMessage(event) {
 }
 function xmbGoto(id) {
   const connection = xmbConnectionView();
-  if (connection.waiting || connection.product?.blocking) return;
-  const cat = XMB_SECTIONS.findIndex(([key]) => key === id);
+  if (connection.waiting || connection.product?.blocking && !connection.guestMode) return;
+  const cat = (xmb.sections.length ? xmb.sections : xmbBuildSections()).findIndex(section => section.id === id);
   if (cat < 0) return;
   if (cat !== xmb.nav.cat) xmbMenuClick('cursor');
   xmb.nav = { ...xmb.nav, cat, level: 'list', subIdx: 0, side: null, confirm: null };
@@ -3126,7 +3312,7 @@ function xmbCurrentItems() {
 function xmbPress(button) {
   if (typeof ui !== 'undefined' && (ui.webPortActive || ui.webPortHostActive)) return;
   const connection = xmbConnectionView();
-  if (connection.product?.visible) { productFlowPress(button); return; }
+  if (connection.product?.visible && !connection.guestMode) { productFlowPress(button); return; }
   if (connection.waiting) return;
   if (!xmb.sections.length) xmb.sections = xmbBuildSections();
   if (ui.textureProgress?.active) return;
@@ -3269,7 +3455,7 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
 function xmbRender() {
   const connection = xmbConnectionView();
   xmbRenderConnection(connection);
-  if (connection.waiting || connection.product?.visible) return;
+  if (connection.waiting || connection.product?.visible && !connection.guestMode) return;
   const state = ui.state || {};
   xmb.sections = xmbBuildSections();
   const nav = xmb.nav;
@@ -3385,9 +3571,10 @@ function xmbRender() {
 
   $('xmb-crumb').textContent = [state.demo ? 'DEMOSTRACIÓN · biblioteca sintética' : connection.storageSetup ? 'PREPARACIÓN · almacenamiento USB' : '', inSub ? `Gráficos › ${xmb.sub?.title || ''}` : ''].filter(Boolean).join('   ');
   const hid = state.controller_status?.connected === true;
+  if (connection.guestMode) $('xmb-crumb').textContent = 'MODO SIN PSP · JUEGOS WEB';
   $('xmb-hid').classList.toggle('on', hid);
   $('xmb-hid').classList.toggle('storage', !hid && !!state.selected_device);
-  $('xmb-hid-label').textContent = ui.serviceOffline ? 'Sin conexión con la app' : connection.diagnostic ? 'PSP · diagnóstico' :
+  $('xmb-hid-label').textContent = ui.serviceOffline ? 'Sin conexión con la app' : connection.guestMode ? 'Otro mando · sin PSP' : connection.diagnostic ? 'PSP · diagnóstico' :
     hid ? 'PSP conectada' : state.selected_device ? 'Biblioteca PSP' : 'Sin PSP';
   $('xmb-busy').hidden = !ui.busy;
   $('xmb-busy').textContent = ui.busy ? 'Procesando…' : '';
@@ -3514,6 +3701,7 @@ ui.appClientId = appNewClientId();
 $('dock-connect-close').addEventListener('click', closeDockApp);
 $('dock-connect-refresh').addEventListener('click', refresh);
 $('dock-connect-prepare').addEventListener('click', requestStorageSetup);
+$('dock-connect-guest').addEventListener('click', xmbStartGuest);
 document.querySelectorAll('[data-session-choice]').forEach((button) => {
   button.addEventListener('click', () => chooseProductSession(button.dataset.sessionChoice));
 });

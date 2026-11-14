@@ -105,6 +105,7 @@ class ExistingDockWindowTests(unittest.TestCase):
                 'window_class':'Chrome_WidgetWin_1','visible':True}
         with patch('start_dock.urllib.request.urlopen',return_value=self.response(record)), \
              patch('dock.Path.is_file',return_value=True), \
+             patch('dock.webview_shell_executable',return_value=None), \
              patch('dock.subprocess.Popen') as spawn, \
              patch('dock.threading.Thread') as thread, \
              patch('psp_dock.core.xmb_window.enumerate_xmb_windows',return_value=[orphan]), \
