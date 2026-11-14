@@ -1,7 +1,9 @@
 using System.Net.Http.Json;
+using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -248,8 +250,16 @@ public sealed class DockWindow : Form
                 ClosePort();
                 return;
             }
-            if (messageType != "launch-web-port") return;
             var id = msg.GetProperty("id").GetString() ?? "";
+            if (messageType == "launch-catalog-port")
+            {
+                // Only an ID: fetch the link from the locally running
+                // backend, which previously inspected a known catalogue
+                // card after explicit consent. The XMB cannot choose a URL.
+                _ = OpenCatalogPortAsync(id);
+                return;
+            }
+            if (messageType != "launch-web-port") return;
             if (_ports.TryGetValue(id, out var port))
                 OpenPort(port);
             else
@@ -258,6 +268,63 @@ public sealed class DockWindow : Form
         catch (JsonException) { /* Ignore messages from invalid documents. */ }
         catch (KeyNotFoundException) { /* Invalid message schema. */ }
         catch (InvalidOperationException) { /* Invalid message type. */ }
+    }
+
+    private static bool PublicHttps(Uri uri)
+    {
+        if (uri.Scheme != Uri.UriSchemeHttps || uri.UserInfo.Length != 0 ||
+            uri.Port != 443 || uri.Host.Length > 253 ||
+            uri.AbsoluteUri.Length > 2048 || uri.IsLoopback ||
+            !uri.Host.Contains('.')) return false;
+        if (IPAddress.TryParse(uri.Host, out _)) return false;
+        var host = uri.Host.ToLowerInvariant();
+        if (host is "localhost" or "ported2browser.com" or
+            "ported2browser.sbs" or "ported2browser.org" or "github.com" ||
+            host.EndsWith(".localhost") || host.EndsWith(".local") ||
+            host.EndsWith(".internal") || host.EndsWith(".test") ||
+            host.EndsWith(".invalid")) return false;
+        return true;
+    }
+
+    private async Task OpenCatalogPortAsync(string id)
+    {
+        if (!Regex.IsMatch(id, "^[a-z0-9-]{2,64}$",
+            RegexOptions.CultureInvariant))
+        {
+            NotifyDock(new { type = "web-port-error", message = "Identificador de port inválido." });
+            return;
+        }
+        try
+        {
+            using var response = await _client.GetAsync(
+                "api/web-port-candidate/" + id);
+            response.EnsureSuccessStatusCode();
+            using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
+            if (doc is null) throw new InvalidOperationException("El catálogo local no respondió.");
+            var root = doc.RootElement;
+            if (root.GetProperty("id").GetString() != id ||
+                root.GetProperty("launch_state").GetString() != "unverified" ||
+                root.GetProperty("source_page").GetString() !=
+                    "https://ported2browser.sbs/games/" + id + "/" ||
+                !Uri.TryCreate(root.GetProperty("url").GetString(), UriKind.Absolute,
+                    out var uri) || !PublicHttps(uri))
+                throw new InvalidOperationException("La URL del proyecto no cumple las validaciones.");
+            var title = root.GetProperty("title").GetString() ?? id;
+            if (title.Length > 120 || title.Length < 2)
+                throw new InvalidOperationException("Título de proyecto inválido.");
+            OpenPort(new Port(id, title, uri, false, "gamepad", null, false));
+        }
+        catch (HttpRequestException)
+        {
+            NotifyDock(new { type = "web-port-error",
+                message = "El enlace del proyecto no pudo confirmarse en el servidor local." });
+        }
+        catch (Exception exc) when (exc is JsonException or KeyNotFoundException or
+                                     InvalidOperationException or UriFormatException)
+        {
+            NotifyDock(new { type = "web-port-error",
+                message = "El enlace del autor no es compatible con la vista integrada." });
+        }
     }
 
     private void NotifyDock(object message)

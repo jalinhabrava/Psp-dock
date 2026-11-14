@@ -79,11 +79,25 @@ class HTTPContract(unittest.TestCase):
         status, catalog = self.request('/api/web-ports')
         self.assertEqual(status, 200)
         self.assertEqual(catalog['version'], 1)
-        self.assertGreaterEqual(len(catalog['games']), 5)
+        self.assertGreaterEqual(len(catalog['games']), 1300,
+                                'The shipped full discovery snapshot must be present')
+        self.assertEqual(catalog['catalog_total'],len(catalog['games']))
+        found_only = 0
         for port in catalog['games']:
-            self.assertTrue(port['url'].startswith('https://'))
-            self.assertNotIn('ported2browser', port['url'])
-            self.assertIn(port['embed'], ('iframe', 'native'))
+            if port.get('launch_state') == 'catalog_only':
+                found_only += 1
+                self.assertNotIn('url',port,'A directory page must not be a game runtime')
+                if port.get('source_page'):
+                    self.assertTrue(port['source_page'].startswith(
+                        'https://ported2browser.sbs/games/'))
+                else:
+                    self.assertIn(port['id'],('grand-theft-auto-iii',
+                                              'grand-theft-auto-vice-city'))
+            else:
+                self.assertTrue(port['url'].startswith('https://'))
+                self.assertNotIn('ported2browser', port['url'])
+                self.assertIn(port['embed'], ('iframe', 'native'))
+        self.assertGreaterEqual(found_only,1300)
         thps3 = next(item for item in catalog['games'] if item['id']=='thps3')
         self.assertEqual(thps3['missing_on_psp'], ['L2', 'R2'])
         self.assertEqual(thps3['embed'], 'native')

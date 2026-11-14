@@ -271,5 +271,33 @@
       <div class="dialog-actions"><button type="button" class="button secondary" data-close="storage-location-dialog">Cancelar</button><button type="button" class="button primary" id="storage-location-confirm">Copiar y cambiar carpeta</button></div>
     </div>
   </dialog>
+  <dialog class="settings-dialog" id="web-iso-dialog" aria-labelledby="web-iso-title">
+    <div class="dialog-content">
+      <div class="dialog-header"><p class="eyebrow">JUEGOS WEB · ARCHIVOS PROPIOS</p><button type="button" class="icon-button close" data-close="web-iso-dialog" aria-label="Cerrar">×</button></div>
+      <h2 id="web-iso-title">Carpeta de ISOs del PC</h2>
+      <p class="quiet">Elige dónde guardas tus copias originales. PSP Dock leerá solo nombres, tamaños y fechas para identificar candidatos. Nunca copiará, subirá ni entregará una ISO a una página web sin una acción específica tuya.</p>
+      <p id="web-iso-current" class="quiet">Sin configurar</p>
+      <label>Carpeta local
+        <input id="web-iso-path" type="text" autocomplete="off" placeholder="E:\Mis juegos\ISOs">
+      </label>
+      <button type="button" class="button secondary" id="web-iso-browse">Seleccionar carpeta del PC…</button>
+      <p id="web-iso-found" class="quiet">No se ha explorado ninguna carpeta.</p>
+      <p class="quiet">Se aceptan imágenes ISO, CSO, BIN/CUE y CHD; los nombres coincidentes son sugerencias, no prueba de identidad. Los archivos quedan en tu disco. Si un port necesita cargar una imagen, se solicitará tu confirmación en ese juego.</p>
+      <p id="web-iso-error" class="form-error" role="alert" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="button secondary" id="web-iso-clear">Quitar carpeta</button>
+        <button type="button" class="button primary" id="web-iso-save">Guardar y analizar</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog class="settings-dialog" id="web-search-dialog" aria-labelledby="web-search-title">
+    <div class="dialog-content">
+      <div class="dialog-header"><p class="eyebrow">JUEGOS WEB</p><button type="button" class="icon-button close" data-close="web-search-dialog" aria-label="Cerrar">×</button></div>
+      <h2 id="web-search-title">Buscar en el catálogo</h2>
+      <label>Nombre o consola<input type="search" id="web-search-input" maxlength="100" autocomplete="off" placeholder="Por ejemplo: Gran Turismo"></label>
+      <p class="quiet">Puedes escribir con el teclado o utilizar el filtro por letra y género desde el mando Xbox.</p>
+      <div class="dialog-actions"><button type="button" class="button secondary" id="web-search-clear">Mostrar todos</button><button type="button" class="button primary" id="web-search-apply">Buscar</button></div>
+    </div>
+  </dialog>
 </body>
 </html>

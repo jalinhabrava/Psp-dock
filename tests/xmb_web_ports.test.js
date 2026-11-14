@@ -29,10 +29,12 @@ const scope = {
   toast: s=>events.push(['toast',s]),
   xmbConfirm:(html,yes,done)=>{events.push(['confirm',html,yes]);scope.continueLaunch=done;},
   xmbSide:()=>events.push('side'),
+  xmbWebIsoMatches:port=>events.push(['iso-match',port.id]),
   request:async path => {assert.equal(path,'/api/web-ports');return catalog;},
 };
 vm.createContext(scope);
 vm.runInContext(source.slice(start,end),scope);
+scope.xmbWebIsoMatches = port=>events.push(['iso-match',port.id]);
 
 async function main() {
   await scope.xmbLoadWebPorts();
@@ -63,7 +65,8 @@ async function main() {
   events.length=0;
   const needsIso = ui.webPorts.find(g=>g.id==='budokai-tenkaichi-3');
   scope.xmbWebPortLaunch(needsIso);
-  assert(events.some(e=>e[0]==='toast' && /ISO original/.test(e[1])));
+  assert(events.some(e=>e[0]==='iso-match' && e[1]===needsIso.id),
+    'Own ISO discovery must be available without granting automatic upload');
   assert.equal(events.filter(e=>e[0]==='host').length,0);
   events.length=0;
   const uncertain={...needsIso,launch_state:undefined};

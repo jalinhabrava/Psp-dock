@@ -448,6 +448,17 @@ class Dock:
         self.config.setdefault('retroarch', '')
         self.config.setdefault('retro_install_policy', 'auto')
         self.config.setdefault('retro_button_layout','nintendo')
+        self.config.setdefault('web_iso_folder','')
+        # Read-only discovery data; never part of the PSP volume/session
+        # identity or save synchronization. The shipped snapshot also works
+        # with no Internet connection, and an optional user refresh lives
+        # under the existing private app data folder.
+        self.web_port_candidates = {}
+        self.web_catalog_status = {'active':False,'error':'','updated':False}
+        self.web_catalog_lock = threading.Lock()
+        self.web_iso_cache = None
+        self.web_iso_cache_at = 0.0
+        self.web_iso_lock = threading.Lock()
         # Opt-in, per-DISC_ID PC texture capture/generation. The worker never
         # accesses PSP USB, game saves or an existing community texture pack.
         from psp_dock.emulation.psp_hd_textures import TextureWorker
@@ -2070,6 +2081,148 @@ class Dock:
                                result='verified', actions=len(plan['actions']))
         return final
 
+    def web_catalog(self):
+        """Merge the entire offline discovery snapshot with playable overrides.
+
+        Catalog entries are metadata only. They grant no authorization to
+        access the PSP, PC files, or a third-party runtime.
+        """
+        from psp_dock.media.web_port_catalog import load_catalog_snapshot
+        private = self.data / 'web-catalog-snapshot.json'
+        bundled = ROOT / 'web/catalog-snapshot.json'
+        curated = ROOT / 'web/ports.json'
+        if private.is_file():
+            result = load_catalog_snapshot(private,curated)
+            if not result.get('catalog_error'):
+                return result
+        return load_catalog_snapshot(bundled,curated)
+
+    def refresh_web_catalog(self):
+        """Explicit refresh from the known directory, never during UI polling."""
+        with self.web_catalog_lock:
+            if self.web_catalog_status['active']:
+                return dict(self.web_catalog_status)
+            self.web_catalog_status = {'active':True,'error':'','updated':False}
+
+        def update():
+            try:
+                from psp_dock.media.web_port_catalog import refresh_catalog
+                refresh_catalog(self.data / 'web-catalog-snapshot.json')
+                with self.web_catalog_lock:
+                    self.web_port_candidates.clear()
+                    self.web_catalog_status = {
+                        'active':False,'updated':True,'error':''}
+            except (OSError, ValueError, RuntimeError) as exc:
+                with self.web_catalog_lock:
+                    self.web_catalog_status = {
+                        'active':False,'updated':False,'error':str(exc)[:240]}
+        threading.Thread(target=update,daemon=True,
+                         name='PSPDockWebCatalogRefresh').start()
+        return dict(self.web_catalog_status)
+
+    def resolve_web_catalog_port(self, game_id):
+        """Fetch only the requested directory's game card, not the game ISO.
+
+        The candidate is explicitly *unverified*. The frontend must ask the
+        user again before following the external site. The WebView host reads
+        back a server-selected ID, never an arbitrary URL from the JS page.
+        """
+        import urllib.request
+        from psp_dock.media.web_port_catalog import parse_game_detail
+        if (not isinstance(game_id,str) or
+                re.fullmatch('[a-z0-9-]{2,64}',game_id) is None):
+            raise ValueError('Identificador web inválido.')
+        with self.web_catalog_lock:
+            cached = self.web_port_candidates.get(game_id)
+            if cached:
+                return dict(cached)
+        entry = next((g for g in self.web_catalog()['games']
+                      if g['id'] == game_id),None)
+        if entry is None or entry.get('launch_state') != 'catalog_only':
+            raise ValueError('Este título no es una ficha pendiente del catálogo.')
+        # No user-controlled source URL, no arbitrary network fetch and no
+        # path/url query parameters. The imported ID is verified again here.
+        source = entry.get('source_page')
+        if source != f'https://ported2browser.sbs/games/{game_id}/':
+            raise ValueError('El origen del juego no pertenece al índice aprobado.')
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, request, fp, code, msg, headers, newurl):
+                return None
+        request = urllib.request.Request(source,
+            headers={'User-Agent':'PSP-Dock/1.0 (game-catalogue metadata)',
+                     'Accept-Encoding':'identity'})
+        with urllib.request.build_opener(NoRedirect()).open(request,timeout=12) as response:
+            if response.status != 200:
+                raise ValueError('No se pudo abrir la ficha del proyecto.')
+            data = response.read(512 * 1024 + 1)
+        if len(data) > 512 * 1024:
+            raise ValueError('Ficha de proyecto demasiado grande.')
+        found = parse_game_detail(data, game_id)
+        if not found or not isinstance(found.get('url'),str):
+            raise ValueError('No hay un enlace directo HTTPS del proyecto comprobable.')
+        result = {
+            'id':game_id, 'title':entry['title'],
+            'url':found['url'], 'source_page':source,
+            'launch_state':'unverified',
+            'requires_files':entry.get('requires_files'),
+            'genre':entry.get('genre',''),
+            'platform':entry.get('platform','Web'),
+            'controls':entry.get('controls',[]),
+            'note':'Enlace del autor. El arranque y los mandos aún no están verificados en PSP Dock.',
+        }
+        with self.web_catalog_lock:
+            self.web_port_candidates[game_id] = dict(result)
+        return result
+
+    def web_iso_library(self, *, rescan=False):
+        """Read local metadata, not contents; never traverse a mounted PSP."""
+        from psp_dock.media.web_iso_library import scan_web_iso_folder
+        with self.web_iso_lock:
+            folder = self.config.get('web_iso_folder','')
+            if not folder:
+                return {'configured':False, 'folder':'', 'entries':[],
+                        'count':0,'warnings':[]}
+            if (not rescan and self.web_iso_cache is not None and
+                time.monotonic()-self.web_iso_cache_at < 45):
+                return dict(self.web_iso_cache)
+            index = scan_web_iso_folder(folder)
+            index['configured'] = True
+            index['folder'] = str(folder)
+            self.web_iso_cache, self.web_iso_cache_at = index,time.monotonic()
+            return dict(index)
+
+    def web_iso_matches(self, game_id):
+        from psp_dock.media.web_iso_library import match_web_iso_candidates
+        if not isinstance(game_id,str):
+            raise ValueError('Juego web inválido.')
+        port = next((g for g in self.web_catalog()['games']
+                     if g['id'] == game_id),None)
+        if port is None:
+            raise ValueError('Juego web no encontrado en el catálogo.')
+        listing = self.web_iso_library()
+        suggestions = match_web_iso_candidates(port,listing)
+        return {'id':game_id,'title':port['title'],
+                'configured':listing['configured'],'folder':listing['folder'],
+                'matches':suggestions, 'count':listing.get('count',0)}
+
+    def set_web_iso_folder(self, folder):
+        from psp_dock.media.web_iso_library import validate_web_iso_folder
+        if self.demo or self.running() or self.session.get('pending_return'):
+            raise ValueError('Termina la sesión de la PSP antes de cambiar ISOs.')
+        if not isinstance(folder,str) or len(folder) > 1024:
+            raise ValueError('Carpeta de ISOs inválida.')
+        forbidden = [value for value in
+                     (self.snapshot.get('selected_device'),self.config.get('psp_root'))
+                     if isinstance(value,str) and value]
+        checked = str(validate_web_iso_folder(folder,excluded_roots=forbidden)) if folder else ''
+        updated = {**self.config,'web_iso_folder':checked}
+        atomic_json(self.config_path,updated)
+        self.config = updated
+        with self.web_iso_lock:
+            self.web_iso_cache = None
+            self.web_iso_cache_at = 0.0
+        return {'ok':True,'folder':checked,'configured':bool(checked)}
+
     def settings(self, new):
         if self.running() or self.session.get('pending_return'):
             raise ValueError('Cierra y devuelve la sesión a la PSP antes de cambiar las carpetas.')
@@ -3391,9 +3544,29 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     # expensive Dock.lock while rendering the XMB.
                     return self.reply(dock.psp_launcher_input())
                 if self.path == '/api/web-ports':
-                    # Curated metadata only: no proxying third-party websites,
-                    # fetching untrusted URLs or serving commercial game data.
-                    return self.reply(json.loads((ROOT/'web/ports.json').read_text(encoding='utf-8')))
+                    # Full, read-only offline directory snapshot. A directory
+                    # entry is *not* a playable URL or a file permission.
+                    return self.reply(dock.web_catalog())
+                if self.path == '/api/web-catalog-status':
+                    with dock.web_catalog_lock:
+                        return self.reply(dict(dock.web_catalog_status))
+                if self.path.startswith('/api/web-port-candidate/'):
+                    # The native shell can only load an explicitly inspected,
+                    # previously vetted directory ID. No user-supplied URL
+                    # ever crosses the privileged XMB -> WebView2 boundary.
+                    game_id = self.path[len('/api/web-port-candidate/'):]
+                    if re.fullmatch('[a-z0-9-]{2,64}',game_id) is None:
+                        return self.reply({'error':'Entrada inválida'},400)
+                    with dock.web_catalog_lock:
+                        candidate = dock.web_port_candidates.get(game_id)
+                    return self.reply(candidate if candidate is not None else
+                                      {'error':'Enlace todavía no revisado'},
+                                      200 if candidate is not None else 404)
+                if self.path == '/api/web-iso-library':
+                    return self.reply(dock.web_iso_library())
+                if self.path.startswith('/api/web-iso-match/'):
+                    return self.reply(dock.web_iso_matches(
+                        self.path[len('/api/web-iso-match/'):]))
                 if self.path == '/api/media-status':
                     return self.reply(dock.xmb_media_progress)
                 if self.path.startswith('/api/media-hd/'):
@@ -3527,6 +3700,17 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     raise ValueError('La app se está cerrando; no se iniciarán nuevas operaciones.')
                 if self.path == '/api/ui-sound':
                     return self.reply(dock.play_ui_sound(body.get('sound'), body.get('at_ms')))
+                if self.path == '/api/web-catalog-refresh':
+                    return self.reply(dock.refresh_web_catalog())
+                if self.path == '/api/web-port-resolve':
+                    return self.reply(dock.resolve_web_catalog_port(body.get('id')))
+                if self.path == '/api/web-iso-folder':
+                    return self.reply(dock.set_web_iso_folder(body.get('folder')))
+                if self.path == '/api/choose-web-iso-folder':
+                    from psp_dock.media.web_iso_library import choose_web_iso_folder
+                    chosen = choose_web_iso_folder()
+                    return self.reply({'folder':str(chosen) if chosen else '',
+                                       'cancelled':chosen is None})
                 if self.path == '/api/cancel-transfer':
                     # Do NOT take dock.lock: the transfer must be able to
                     # observe the cancel flag while it owns that lock.

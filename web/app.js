@@ -21,6 +21,10 @@ const ui = {
   productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
   webPorts: [], webPortCatalogError: '', webPortActive: null, webPortHostActive: false,
   webPortComboAt: 0,
+  webPortFilter: 'all', webPortLetter: '', webPortSearch: '',
+  webPortCatalogCount: 0, webPortRefreshBusy: false,
+  webPortListKey: '', webPortListRows: [],
+  webIsoCount: null,
   guestRequested: false,
   guestTransitioning: false,
 };
@@ -2425,6 +2429,75 @@ function xmbWebPortItems() {
     icon:'webports', activate:()=>void xmbLoadWebPorts(),
   }];
 }
+function xmbWebPortItemsExpanded() {
+  const all = ui.webPorts || [];
+  const mode = ui.webPortFilter || 'all';
+  const letter = ui.webPortLetter || '';
+  const search = (ui.webPortSearch || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const signature = [all.length,mode,letter,search,ui.webPortCatalogCount || 0].join('|');
+  if (ui.webPortListKey === signature && ui.webPortListRows?.length) return ui.webPortListRows;
+  const visible = all.filter(port => {
+    const title = (port.title + ' ' + (port.platform || '') + ' ' + (port.genre || ''))
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+    const ready = !port.launch_state;
+    const files = port.requires_files === true || port.launch_state === 'requires_original_iso';
+    if (search && !title.includes(search)) return false;
+    if (letter && !port.title.toUpperCase().startsWith(letter)) return false;
+    if (mode === 'playable' && !ready) return false;
+    if (mode === 'iso' && !files) return false;
+    if (mode === 'gamepad' && !port.controls?.includes('gamepad')) return false;
+    if (mode === 'review' && ready) return false;
+    if (mode.startsWith('genre:') && (port.genre || '').toLowerCase() !== mode.slice(6)) return false;
+    return true;
+  });
+  const controls = [
+    {key:'web-search',t:'Buscar juego por nombre',icon:'search',
+      s:search ? 'Texto: ' + ui.webPortSearch + ' · ' + visible.length + ' resultados' :
+        all.length.toLocaleString('es-ES') + ' juegos en el catálogo',
+      activate:()=>xmbWebSearchOpen()},
+    {key:'web-filter',t:'Filtrar juegos',icon:'webports',
+      s:visible.length.toLocaleString('es-ES') + ' resultados · ' + mode +
+        (letter ? ' · letra ' + letter : ''),
+      activate:()=>xmbWebFilterMenu()},
+    {key:'web-iso-folder',t:'Carpeta de ISOs propias',icon:'folder',
+      s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · solo lectura',
+      activate:()=>void xmbWebIsoOpen()},
+    {key:'web-update',t:'Actualizar catálogo',icon:'sync',
+      s:'Busca fichas nuevas · no descarga juegos',
+      activate:()=>void xmbRefreshWebCatalog()},
+  ];
+  const ports = visible.map(port => ({
+    key:'web-port-'+port.id,t:port.title,icon:'webports',webPort:port,
+    s:(port.platform || 'Web') + ' · ' + (port.genre || 'Otro') +
+      (port.launch_state === 'catalog_only' ? ' · enlace por verificar' :
+       port.requires_files === true || port.launch_state === 'requires_original_iso' ?
+       ' · requiere archivos originales' :
+       port.launch_state === 'needs_pointer' ? ' · ratón necesario' : ' · runtime'),
+    chip:port.launch_state === 'catalog_only' ?
+        (port.requires_files === true ? ['inh','DATOS'] : ['inh','FICHA']) :
+      port.launch_state === 'unverified' ? ['conf','PENDIENTE'] :
+      port.launch_state === 'requires_original_iso' ? ['inh','ISO'] :
+      port.launch_state === 'needs_pointer' ? ['inh','RATÓN'] :
+      port.missing_on_psp?.length ? ['conf','L2/R2'] :
+      port.platform === 'PS2' ? ['inh','MANDO ?'] : ['pc','WEB'],
+    activate:()=>xmbWebPortLaunch(port),menu:()=>xmbWebPortMenu(port),
+  }));
+  const rows = [...controls,...ports];
+  if (!all.length) rows.push({
+    key:'web-ports-loading',t:ui.webPortCatalogError || 'Cargando juegos web…',
+    s:'Catálogo local de ports; no se descarga ningún juego.',
+    icon:'webports',activate:()=>void xmbLoadWebPorts(),
+  });
+  if (all.length && !ports.length) rows.push({
+    key:'web-no-results',t:'No se han encontrado juegos',
+    s:'Cambia el filtro o borra el texto de búsqueda',icon:'info',
+    activate:()=>xmbWebFilterReset(),
+  });
+  ui.webPortListKey = signature;
+  ui.webPortListRows = rows;
+  return rows;
+}
 function xmbGuestSections() {
   // Explicitly omit ISO/CSO, RetroArch, SAVEDATA and the graphics profiles.
   // This allowlist is intentionally independent of the PSP/Retro item lists.
@@ -2454,6 +2527,9 @@ function xmbGuestSections() {
     {key:'guest-pad',t:'Mando conectado',icon:'pad',
       s:()=>xmbText('gamepad-status') || 'Usa otro mando o el teclado',
       activate:()=>toast('Juegos Web usa un mando compatible conectado al PC. También puedes navegar con el teclado.')},
+    {key:'guest-iso',t:'Carpeta de ISOs para ports web',icon:'folder',
+      s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · tus copias locales',
+      activate:()=>void xmbWebIsoOpen()},
   ];
   const dock = [
     {key:'guest-info',t:'Jugando sin PSP',icon:'info',
@@ -2469,7 +2545,7 @@ function xmbGuestSections() {
   return [
     {id:'ajustes',label:'Ajustes',items:settings,badge:null},
     {id:'dock',label:'Dock',items:dock,badge:null},
-    {id:'webports',label:'Juegos Web',items:xmbWebPortItems(),badge:null},
+    {id:'webports',label:'Juegos Web',items:xmbWebPortItemsExpanded(),badge:null},
   ];
 }
 function xmbBuildSections() {
@@ -2485,6 +2561,9 @@ function xmbBuildSections() {
 
   const settingsValue = (key, fallback) => xmb.settings?.[key] ?? fallback;
   out.ajustes = [
+    {key:'web-iso-folder',t:'ISOs para ports web',icon:'folder',
+      s:()=>settingsValue('web_iso_folder','') || 'Sin configurar · biblioteca del PC',
+      activate:()=>void xmbWebIsoOpen()},
     { key: 'language', t: 'Idioma / Language', icon: 'info',
       s: () => DockI18n.mode() === 'auto' ? 'Automático · ' + (DockI18n.locale() === 'es' ? 'Español' : 'English') :
         DockI18n.locale() === 'es' ? 'Español' : 'English',
@@ -2646,7 +2725,7 @@ function xmbBuildSections() {
     icon:'search', activate:()=>toast('Conecta la PSP en almacenamiento USB para detectar los emuladores instalados y sus ROMs.') }];
 
   // A web port is one vertical row, separate from PSP ISOs and Retro ROMs.
-  out.webports = xmbWebPortItems();
+  out.webports = xmbWebPortItemsExpanded();
 
   const partidas = [];
   partidas.push({ key: 'sync', t: xmbText('sync-button') || 'Sincronizar partidas',
@@ -3178,8 +3257,22 @@ function xmbValidatedWebPort(port) {
   if (!port || typeof port !== 'object' ||
       !/^[a-z0-9-]{2,64}$/.test(port.id) ||
       typeof port.title !== 'string' || port.title.length > 120 ||
-      typeof port.url !== 'string' ||
-      !Array.isArray(port.controls) || !Array.isArray(port.missing_on_psp) ||
+      !Array.isArray(port.controls) ||
+      (port.launch_state !== 'catalog_only' && !Array.isArray(port.missing_on_psp))) return false;
+  if (port.launch_state === 'catalog_only') {
+    if (port.url != null) return false;
+    // Some publisher-curated cards deliberately omit a source-page URL.
+    // Keep their discoverability, without enabling a runtime lookup.
+    if (port.source_page == null) return true;
+    if (typeof port.source_page !== 'string') return false;
+    try {
+      const page = new URL(port.source_page);
+      return page.protocol === 'https:' && page.hostname === 'ported2browser.sbs' &&
+        page.pathname === '/games/' + port.id + '/' &&
+        !page.search && !page.hash && !page.username && !page.password;
+    } catch { return false; }
+  }
+  if (typeof port.url !== 'string' ||
       !['iframe','native'].includes(port.embed)) return false;
   try {
     const uri = new URL(port.url);
@@ -3197,13 +3290,223 @@ async function xmbLoadWebPorts() {
     if (!Array.isArray(catalog.games) || catalog.version !== 1)
       throw new Error('Formato de catálogo desconocido');
     ui.webPorts = catalog.games.filter(xmbValidatedWebPort);
+    ui.webPortCatalogCount = Number(catalog.catalog_total) || ui.webPorts.length;
+    ui.webPortListKey = '';
+    ui.webPortListRows = [];
     ui.webPortCatalogError = ui.webPorts.length ? '' : 'Sin ports aprobados';
   } catch {
     ui.webPortCatalogError = 'No se ha podido leer la lista local de ports.';
   }
   if (!ui.appClosed) xmbRender();
 }
+function xmbWebFilterReset() {
+  ui.webPortFilter = 'all';ui.webPortLetter = '';ui.webPortSearch = '';
+  ui.webPortListKey = '';
+  xmb.nav.idx.webports = 0;
+  xmbRender();
+}
+function xmbWebFilterApply(mode,letter = '') {
+  ui.webPortFilter = mode;
+  ui.webPortLetter = letter;
+  ui.webPortListKey = '';
+  xmb.nav.idx.webports = 0;
+  xmbRender();
+}
+function xmbWebFilterMenu() {
+  const available = [
+    ['all','Todos los juegos'],
+    ['playable','Probados en PSP Dock'],
+    ['gamepad','Mando documentado (no necesariamente probado)'],
+    ['iso','Archivos propios necesarios (ISO / otros)'],
+    ['review','Enlaces sin verificar'],
+  ];
+  const genres = Array.from(new Set((ui.webPorts || [])
+    .map(p=>String(p.genre || '').toLowerCase())
+    .filter(s=>s && s.length <= 35))).sort();
+  for (const name of genres.slice(0,32))
+    available.push(['genre:'+name,'Género: '+name]);
+  available.push(['letter','Saltar a una letra (mando)']);
+  available.push(['reset','Quitar todos los filtros']);
+  xmbSide('Filtrar Juegos Web',available.map(([key,label]) => ({
+    t:label,s:key === ui.webPortFilter ? 'Filtro activo' : '',
+  })), index=>{
+    const key = available[index][0];
+    if (key === 'letter') xmbWebAlphabetMenu();
+    else if (key === 'reset') xmbWebFilterReset();
+    else xmbWebFilterApply(key,ui.webPortLetter);
+  });
+}
+function xmbWebAlphabetMenu() {
+  const letters = ['',...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+  xmbSide('Saltar a la letra',letters.map(c=>({
+    t:c || 'Cualquier letra',s:c ? 'Juegos que empiezan por '+c : 'Sin filtro de letra',
+  })),index=>xmbWebFilterApply(ui.webPortFilter,letters[index]));
+}
+function xmbWebSearchOpen() {
+  const dialog = $('web-search-dialog');
+  if (!dialog || dialog.open) return;
+  $('web-search-input').value = ui.webPortSearch || '';
+  dialog.showModal();
+  $('web-search-input').focus();
+}
+function xmbWebSearchApply(query) {
+  ui.webPortSearch = String(query || '').trim().slice(0,100);
+  ui.webPortListKey = '';
+  xmb.nav.idx.webports = 0;
+  $('web-search-dialog').close();
+  xmbRender();
+}
+async function xmbRefreshWebCatalog() {
+  if (ui.webPortRefreshBusy || ui.serviceOffline) return;
+  ui.webPortRefreshBusy = true;
+  try {
+    const first = await request('/api/web-catalog-refresh',{});
+    if (first.active) toast('Actualizando el índice de ports. Puedes seguir navegando.');
+    let status = first;
+    for (let attempt=0; attempt<18 && status.active; attempt++) {
+      await new Promise(resolve=>setTimeout(resolve,1000));
+      status = await request('/api/web-catalog-status');
+    }
+    if (status.active) toast('La actualización sigue en curso; se mantiene el catálogo anterior.');
+    else if (status.error) toast('Se conserva el catálogo local: '+status.error);
+    else { await xmbLoadWebPorts();toast('Catálogo actualizado. Los juegos ya probados mantienen sus enlaces.'); }
+  } catch (error) {
+    toast('El índice anterior permanece disponible: '+error.message);
+  } finally { ui.webPortRefreshBusy = false; }
+}
+async function xmbWebIsoOpen() {
+  const dialog = $('web-iso-dialog');
+  if (!dialog || dialog.open) return;
+  dialog.showModal();
+  $('web-iso-error').hidden = true;
+  $('web-iso-found').textContent = 'Consultando la carpeta local…';
+  try {
+    const listing = await request('/api/web-iso-library');
+    $('web-iso-current').textContent = listing.configured ?
+      'Carpeta configurada: '+listing.folder : 'Todavía no hay una carpeta de ISOs configurada.';
+    $('web-iso-path').value = listing.folder || '';
+    ui.webIsoCount = listing.count || 0;
+    $('web-iso-found').textContent = listing.configured ?
+      (listing.count || 0)+' archivos compatibles identificados (metadatos).' +
+        (listing.truncated ? ' Exploración parcial: se alcanzó un límite de seguridad.' : '') :
+      'Elige una carpeta del disco fijo del PC para empezar.';
+  } catch (error) {
+    $('web-iso-found').textContent = '';
+    $('web-iso-error').textContent = error.message;
+    $('web-iso-error').hidden = false;
+  }
+}
+async function xmbWebIsoSave(folder) {
+  $('web-iso-error').hidden = true;
+  const button = $('web-iso-save');
+  button.disabled = true;
+  try {
+    await request('/api/web-iso-folder',{folder:String(folder || '').trim()});
+    const index = await request('/api/web-iso-library');
+    ui.webIsoCount = index.count || 0;
+    $('web-iso-current').textContent = index.configured ? index.folder : 'Sin configurar';
+    $('web-iso-found').textContent = (index.count || 0) +
+      ' ISOs / imágenes compatibles · metadatos únicamente.';
+    await xmbLoadSettings();
+    toast(index.configured ? 'Carpeta de ISOs configurada. No se ha copiado ni enviado ningún archivo.' :
+      'Carpeta de ISOs desvinculada. No se ha borrado nada.');
+    $('web-iso-dialog').close();
+  } catch (error) {
+    $('web-iso-error').textContent = error.message;
+    $('web-iso-error').hidden = false;
+  } finally {button.disabled = false;}
+}
+async function xmbWebIsoMatches(port) {
+  try {
+    const result = await request('/api/web-iso-match/'+encodeURIComponent(port.id));
+    if (!result.configured) {
+      xmbConfirm('Este proyecto necesita archivos originales propios.<small>Configura primero la carpeta de ISOs en Ajustes. PSP Dock no los descarga ni envía a Internet.</small>',false,()=>void xmbWebIsoOpen());
+      return;
+    }
+    const match = result.matches || {};
+    const candidates = Array.isArray(match.candidates) ? match.candidates : [];
+    const shown = candidates.slice(0,12);
+    const choices = shown.map(row=>({
+      t:row.name || 'Archivo encontrado',
+      s:(row.confidence_label || 'Coincidencia por nombre')+
+        ' · '+bytes(row.size || 0)+' · sin confirmación de edición',
+    }));
+    choices.push({t:'Ver / cambiar carpeta',s:result.folder || ''});
+    xmbSide('Archivos para '+port.title,choices,(index)=>{
+      if (index >= shown.length || !shown.length) {
+        void xmbWebIsoOpen();
+        return;
+      }
+      const choice = shown[index];
+      xmbConfirm('Posible imagen original: '+xmbEscape(choice.name)+
+        '<small>Es solo una coincidencia del nombre. No se ha leído ni enviado el archivo. Si el proyecto web pide datos, deberás elegirlos explícitamente en su selector.</small>',false,()=>{
+        if (port.launch_state === 'catalog_only') void xmbInspectCatalogPort(port);
+        else toast('Imagen localizada en tu PC. Este runtime necesita una selección de archivo manual y todavía no admite importación automática.');
+      });
+    });
+    if (!candidates.length) toast('No hay coincidencias claras. Revisa el nombre del archivo o cambia la carpeta.');
+  } catch (error) { toast('No se pudo revisar la biblioteca ISO: '+error.message); }
+}
+async function xmbInspectCatalogPort(port) {
+  if (!port || port.launch_state !== 'catalog_only' ||
+      ui.serviceOffline || ui.busy) return;
+  if (!port.source_page) {
+    toast('Esta ficha no aporta todavía un enlace directo original. Se conserva en el catálogo como pendiente.');
+    return;
+  }
+  try {
+    toast('Buscando el enlace original del proyecto seleccionado…');
+    const result = await request('/api/web-port-resolve',{id:port.id});
+    if (result.launch_state !== 'unverified' || typeof result.url !== 'string')
+      throw new Error('El proyecto no ha proporcionado un origen comprobable.');
+    xmbConfirm('¿Abrir el proyecto original?<small>Enlace: '+xmbEscape(result.url)+
+      '. Es un sitio externo: PSP Dock no ha comprobado que el juego se inicie ni que funcione con Xbox. No se enviará ninguna ISO automáticamente.</small>',
+      false,()=>xmbOpenCatalogPort(port.id));
+  } catch (error) {
+    toast('No hay un enlace directo verificado para '+port.title+': '+error.message);
+  }
+}
+function xmbOpenCatalogPort(id) {
+  const host = window.chrome?.webview;
+  if (typeof host?.postMessage !== 'function') {
+    toast('Para abrir proyectos externos no verificados necesitas el contenedor Windows WebView2.');
+    return;
+  }
+  if (xmbConnectionView().waiting || ui.serviceOffline || ui.state?.session?.running) return;
+  xmbPreviewGame(null);
+  host.postMessage({type:'launch-catalog-port',id});
+}
 function xmbWebPortMenu(port) {
+  if (port.launch_state === 'catalog_only') {
+    const actions = [
+      {t:'Comprobar enlace directo del autor',
+       s:'Se consulta solo la ficha elegida. El juego no se ejecuta sin confirmación.'},
+    ];
+    if (port.requires_files === true) actions.push({
+      t:'Buscar imágenes propias en el PC',
+      s:'Busca ISOs y otras imágenes de disco por nombre. Algunos ports requieren otros formatos.',
+    });
+    actions.push({t:'Controles y requisitos',
+      s:'Ficha del directorio · '+(port.genre || 'Juego')+
+        ' · '+(port.controls || []).join(', ')+
+        (port.requires_files === true ? ' · requiere archivos originales' : '')});
+    xmbSide(port.title,actions,index=>{
+      if (index === 0) void xmbInspectCatalogPort(port);
+      else if (port.requires_files === true && index === 1)
+        void xmbWebIsoMatches(port);
+      else toast('Este título todavía no está comprobado con el mando Xbox. Fuente: '+
+        port.source_page);
+    });
+    return;
+  }
+  if (port.launch_state === 'requires_original_iso') {
+    xmbSide(port.title,[
+      {t:'Buscar ISO propia en el PC',s:'Compara los nombres de tus archivos sin copiarlos'},
+      {t:'Requisitos del port',s:port.notes || 'Necesita un archivo original del juego'},
+    ],index=>index === 0 ? void xmbWebIsoMatches(port) :
+      toast(port.notes || 'El port requiere archivos originales.'));
+    return;
+  }
   xmbSide(port.title, [
     {t:port.launch_state === 'unverified' ? 'Pendiente de verificar runtime' :
       port.launch_state === 'requires_original_iso' ? 'Abrir runtime (requiere ISO propia)' :
@@ -3224,6 +3527,11 @@ function xmbWebPortLaunch(port) {
     toast('URL de juego web no autorizada en el catálogo de PSP Dock.');
     return;
   }
+  if (port.launch_state === 'catalog_only') {
+    if (port.requires_files === true) void xmbWebIsoMatches(port);
+    else void xmbInspectCatalogPort(port);
+    return;
+  }
   // Never pretend a landing page, file picker or mouse-only program is
   // immediately gamepad-playable. Retain its catalog information, but only
   // launch once an actual play runtime/controller path has been verified.
@@ -3232,7 +3540,7 @@ function xmbWebPortLaunch(port) {
     return;
   }
   if (port.launch_state === 'requires_original_iso') {
-    toast('Este runtime necesita seleccionar una ISO original propia. La selección de archivos con mando aún no está preparada.');
+    void xmbWebIsoMatches(port);
     return;
   }
   if (port.launch_state === 'needs_pointer') {
@@ -3702,6 +4010,31 @@ $('dock-connect-close').addEventListener('click', closeDockApp);
 $('dock-connect-refresh').addEventListener('click', refresh);
 $('dock-connect-prepare').addEventListener('click', requestStorageSetup);
 $('dock-connect-guest').addEventListener('click', xmbStartGuest);
+$('web-search-apply').addEventListener('click',()=>xmbWebSearchApply($('web-search-input').value));
+$('web-search-clear').addEventListener('click',()=>xmbWebSearchApply(''));
+$('web-search-input').addEventListener('keydown',event=>{
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    xmbWebSearchApply(event.currentTarget.value);
+  }
+});
+$('web-iso-save').addEventListener('click',()=>void xmbWebIsoSave($('web-iso-path').value));
+$('web-iso-clear').addEventListener('click',()=>void xmbWebIsoSave(''));
+$('web-iso-browse').addEventListener('click',async()=>{
+  const btn=$('web-iso-browse');
+  btn.disabled=true;
+  $('web-iso-error').hidden=true;
+  try {
+    const result=await request('/api/choose-web-iso-folder',{});
+    if (!result.cancelled && result.folder) {
+      $('web-iso-path').value=result.folder;
+      $('web-iso-current').textContent='Seleccionada: '+result.folder;
+    }
+  } catch (error) {
+    $('web-iso-error').textContent=error.message;
+    $('web-iso-error').hidden=false;
+  } finally {btn.disabled=false;}
+});
 document.querySelectorAll('[data-session-choice]').forEach((button) => {
   button.addEventListener('click', () => chooseProductSession(button.dataset.sessionChoice));
 });
