@@ -167,6 +167,46 @@ async function main() {
     assert.equal(result.smoothX, false, 'Reduced-motion horizontal still interpolates');
     assert.equal(result.smoothY, false, 'Reduced-motion vertical still interpolates');
     console.log('Real PSP Dock demo horizontal + vertical rendering: OK');
+    const inventory = await evaluate(`(async () => {
+      await xmbLoadOfficialPorts();
+      if (!ui.officialCatalog) throw Error(ui.officialError);
+      xmb.nav.cat = XMB_SECTIONS.findIndex(([key]) => key === 'webports');
+      xmbOfficialBrowse(true);
+      const total = ui.officialCatalog.games.length;
+      const defaultCount = xmbOfficialFilteredGames().length;
+      xmbOfficialItems().find(item => item.key === 'official-platform').activate();
+      const platformOptions = xmb.side.opts.length;
+      for (let i = 1; i < platformOptions; i++) xmbPress('down');
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const list = document.querySelector('#xmb-side-list');
+      const selected = list.querySelector('.on');
+      const box = list.getBoundingClientRect(), chosen = selected.getBoundingClientRect();
+      const visible = chosen.top >= box.top - 1 && chosen.bottom <= box.bottom + 1;
+      const scrollTop = list.scrollTop;
+      xmbPress('back');
+      ui.officialFilters.platform = 'PSP';
+      xmbRender();
+      const pspCount = xmbOfficialFilteredGames().length;
+      ui.officialFilters.platform = '';
+      const socom = ui.officialCatalog.games.find(game => game.title === 'SOCOM II');
+      xmbOfficialDetails(socom);
+      xmb.nav.side.i = xmb.side.opts.length - 1;
+      xmbRender();
+      const iso = document.querySelector('#xmb-side-list .on');
+      const isoBox = iso.getBoundingClientRect(), listBox = list.getBoundingClientRect();
+      return {total,defaultCount,platformOptions,visible,scrollTop,pspCount,
+        isoAction:iso.textContent,isoVisible:isoBox.top >= listBox.top - 1 && isoBox.bottom <= listBox.bottom + 1,
+        launchers:ui.webPorts.length,nfs:ui.webPorts.find(game => game.id === 'nfs-underground-2')?.url};
+    })()`);
+    assert.equal(inventory.total, 330);
+    assert.equal(inventory.defaultCount, 190);
+    assert.equal(inventory.platformOptions, 35);
+    assert.equal(inventory.pspCount, 5);
+    assert(inventory.visible && inventory.scrollTop > 0, 'Last platform must stay visible while navigating');
+    assert(inventory.isoVisible && inventory.isoAction.includes('ISOs'), 'ISO metadata action must remain visible');
+    assert.equal(inventory.launchers, 5);
+    assert.equal(inventory.nfs, 'https://nfsu2.xyz/');
+    console.log('Actual inventory, platform scroll, ISO metadata action and NFS preservation:', JSON.stringify(inventory));
   } finally {
     socket?.close();
     for (const child of [browser, server]) {

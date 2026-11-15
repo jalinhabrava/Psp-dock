@@ -21,6 +21,8 @@ const ui = {
   productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
   webPorts: [], webPortCatalogError: '', webPortActive: null, webPortHostActive: false,
   webPortComboAt: 0,
+  officialBrowse: false, officialCatalog: null, officialLoading: false, officialError: '',
+  officialFilters: { platform: '', state: '', category: 'port_candidate' },
   guestRequested: false,
   guestTransitioning: false,
 };
@@ -2473,6 +2475,7 @@ async function xmbWebIsoMatches(port) {
   }
 }
 function xmbWebPortItems() {
+  if (ui.officialBrowse) return xmbOfficialItems();
   const ports = ui.webPorts.map((port) => ({
     key:'web-port-'+port.id, t:port.title, icon:'webports', webPort:port,
     s:port.platform + ' · ' + port.genre + ' · ' + port.author +
@@ -2493,17 +2496,134 @@ function xmbWebPortItems() {
     {key:'owned-iso-folder',t:'Carpeta de ISOs propias',icon:'folder',
       s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · imágenes originales en tu PC',
       activate:()=>void xmbWebIsoOpen()},
-    {key:'original-directory-status',t:'Directorio original · pendiente de importar',icon:'info',
-      s:'ported2browser.com exige comprobación humana · no se importan directorios imitadores',
-      activate:()=>toast('El directorio original exige verificación humana. Solo mostramos enlaces de autores revisados. No usamos ported2browser.sbs ni .org.')},
+    {key:'official-inventory',t:'Inventario oficial · Ported2Browser',icon:'webports',
+      s:'Explorar plataformas, estados y categorías · fichas sin lanzamiento',
+      activate:()=>{xmbOfficialBrowse(true); if (!ui.officialCatalog) void xmbLoadOfficialPorts();}},
   ];
   if (ports.length) return [...tools,...ports];
-  return [{
+  return [...tools,{
     key:'web-ports-loading',
     t:ui.webPortCatalogError ? 'No se ha podido cargar el catálogo web' : 'Cargando juegos web…',
     s:ui.webPortCatalogError || 'Enlaces directos a los proyectos de sus autores',
     icon:'webports', activate:()=>void xmbLoadWebPorts(),
   }];
+}
+const XMB_OFFICIAL_CATEGORIES = {
+  port_candidate:'Candidatos a port', emulator:'Emuladores', flash:'Flash',
+  repository:'Repositorios', fangame:'Fangames', wip:'En desarrollo',
+  compendium:'Recopilaciones', web_native:'Juegos web nativos',
+  mobile_or_other:'Móvil u otros', unclassified:'Sin clasificar',
+  romhack:'ROM hacks', ai:'Proyectos con IA', mashup:'Mezclas de juegos',
+  software:'Software', tabletop:'Juegos de mesa',
+};
+const XMB_OFFICIAL_STATES = {
+  verified_gamepad:'Mando verificado', direct_unverified:'Enlace directo sin verificar',
+  requires_original_files:'Requiere archivos originales', needs_pointer:'Necesita ratón',
+  unavailable:'No disponible', pending:'Pendiente',
+};
+function xmbOfficialBrowse(enabled) {
+  ui.officialBrowse = enabled;
+  xmb.nav.idx = {...xmb.nav.idx, webports:0};
+  xmbRender();
+}
+async function xmbLoadOfficialPorts() {
+  if (ui.officialLoading) return;
+  ui.officialLoading = true;
+  ui.officialError = '';
+  xmbRender();
+  try {
+    const catalog = await request('/api/official-web-ports');
+    if (catalog?.version !== 1 || catalog.source !== 'https://ported2browser.com/' ||
+        !Array.isArray(catalog.games) || !catalog.games.every(game =>
+          game && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(game.id) &&
+          typeof game.title === 'string' && Array.isArray(game.original_platforms) &&
+          game.original_platforms.every(value => typeof value === 'string') &&
+          Object.hasOwn(XMB_OFFICIAL_CATEGORIES, game.category) &&
+          Object.hasOwn(XMB_OFFICIAL_STATES, game.verification_state)))
+      throw new Error('Formato u origen del inventario no válido.');
+    ui.officialCatalog = catalog;
+  } catch (error) {
+    ui.officialCatalog = null;
+    ui.officialError = error.message || 'No se ha podido cargar el inventario.';
+  } finally {
+    ui.officialLoading = false;
+    if (!ui.appClosed) xmbRender();
+  }
+}
+function xmbOfficialFilteredGames() {
+  const filters = ui.officialFilters;
+  return (ui.officialCatalog?.games || []).filter(game =>
+    (!filters.platform || game.original_platforms.includes(filters.platform)) &&
+    (!filters.state || game.verification_state === filters.state) &&
+    (!filters.category || game.category === filters.category));
+}
+function xmbOfficialFilter(key, title, options) {
+  xmbValues(title, options, ui.officialFilters[key], value => {
+    ui.officialFilters[key] = value;
+    xmb.nav.idx = {...xmb.nav.idx, webports:0};
+    xmbRender();
+  });
+}
+function xmbOfficialItems() {
+  const games = ui.officialCatalog?.games || [];
+  const filtered = xmbOfficialFilteredGames();
+  const filters = ui.officialFilters;
+  const platforms = [...new Set(games.flatMap(game => game.original_platforms))].sort();
+  const rows = [
+    {key:'official-back',t:'Volver a juegos habituales',icon:'webports',
+      s:'Los cinco lanzadores revisados de PSP Dock',activate:()=>xmbOfficialBrowse(false)},
+    {key:'official-platform',t:'Plataforma · '+(filters.platform || 'Todas'),icon:'settings',
+      activate:()=>xmbOfficialFilter('platform','Plataforma', [['','Todas'],...platforms.map(p=>[p,p])])},
+    {key:'official-state',t:'Estado · '+(XMB_OFFICIAL_STATES[filters.state] || 'Todos'),icon:'settings',
+      activate:()=>xmbOfficialFilter('state','Estado',[['','Todos'],...Object.entries(XMB_OFFICIAL_STATES)])},
+    {key:'official-category',t:'Categoría · '+(XMB_OFFICIAL_CATEGORIES[filters.category] || 'Todas'),icon:'settings',
+      s:filtered.length+' fichas con estos filtros · '+games.length+' entradas en el inventario completo',
+      activate:()=>xmbOfficialFilter('category','Categoría',[['','Todas'],...Object.entries(XMB_OFFICIAL_CATEGORIES)])},
+  ];
+  if (ui.officialLoading || ui.officialError || !ui.officialCatalog) {
+    rows.push({key:'official-retry',t:ui.officialLoading ? 'Cargando inventario…' : 'Reintentar carga del inventario',
+      s:ui.officialError || 'Fuente: https://ported2browser.com/',icon:'info',
+      activate:()=>void xmbLoadOfficialPorts()});
+    return rows;
+  }
+  if (!filtered.length) rows.push({key:'official-empty',t:'Sin resultados con estos filtros',
+    s:'Cambia plataforma, estado o categoría para explorar otras fichas.',icon:'info'});
+  return [...rows,...filtered.map(game=>({key:'official-'+game.id,t:game.title,icon:'webports',
+    s:game.original_platforms.join(' / ')+' · '+XMB_OFFICIAL_STATES[game.verification_state],
+    activate:()=>xmbOfficialDetails(game),menu:()=>xmbOfficialDetails(game)}))];
+}
+function xmbOfficialDetails(game) {
+  const declared = Object.entries(game.controls_declared || {}).filter(([,value])=>value === true)
+    .map(([key])=>key).join(', ') || 'No declarados';
+  const additional = Object.entries(game.additional_controls || {}).map(([key,value])=>
+    ({l2_r2:'L2/R2',second_stick:'Segundo stick',mouse:'Ratón'}[key] || key)+': '+
+    (value === true ? 'sí' : value === false ? 'no' : 'sin confirmar')).join(' · ');
+  const opts = [
+    {t:'Verificación · '+XMB_OFFICIAL_STATES[game.verification_state],
+      s:'Ficha informativa. No habilita lanzamiento. Enlace: '+({active:'activo',broken:'roto',pending:'pendiente'}[game.link_status] || 'sin confirmar')},
+    {t:'Comprobado',s:'Partida/control: '+(game.runtime_verified === true ? 'verificado' : 'sin verificar')+
+      ' · Mando probado: '+(game.gamepad_tested === true ? 'sí' : 'no')},
+    {t:'Controles declarados por la fuente',s:declared},
+    {t:'Controles adicionales',s:additional || 'Sin confirmar'},
+    {t:'Controles mencionados en la descripción',s:(game.documented_controls || []).join(', ')+
+      ' · Su uso imprescindible sigue pendiente de comprobar.'},
+    {t:'Origen y categoría',s:(game.author || 'Autor sin indicar')+' · '+
+      game.original_platforms.join(' / ')+' · '+XMB_OFFICIAL_CATEGORIES[game.category]},
+    {t:'URL directa (solo texto)',s:game.direct_url || 'No disponible'},
+    {t:'Descripción',s:game.description || 'Sin descripción'},
+    {t:'Requisitos',s:((game.requirements || []).map(item=>item.text).join(' · ') ||
+      (game.requires_original_files ? 'Requiere archivos propios; consulta la descripción.' : 'Sin requisitos declarados'))+
+      (game.optional_original_files ? ' · Archivos propios opcionales para el juego completo.' : '')},
+    ...(game.file_requirement_review ? [{t:'Archivos revisados',s:game.file_requirement_review.note}] : []),
+    ...(game.runtime_observation ? [{t:'Observación en Chrome',s:game.runtime_observation.note}] : []),
+  ];
+  const isoIndex = opts.length;
+  if (game.requires_disc_image === true) opts.push({t:'Buscar coincidencias en mis ISOs',
+    s:'Solo nombres y tamaños locales. No se carga ni envía el archivo.'});
+  xmbSide(game.title,opts,index=>{
+    if (game.requires_disc_image === true && index === isoIndex)
+      void xmbWebIsoMatches({id:game.id,title:game.title});
+  });
 }
 function xmbGuestSections() {
   // Explicitly omit ISO/CSO, RetroArch, SAVEDATA and the graphics profiles.
@@ -3677,6 +3797,7 @@ function xmbRender() {
       li.addEventListener('click', () => { xmb.nav = { ...xmb.nav, side: { i } }; xmbPress('accept'); });
       return li;
     }));
+    $('xmb-side-list').children?.[nav.side.i]?.scrollIntoView?.({block:'nearest'});
   }
   $('xmb-confirm').classList.toggle('open', !!nav.confirm && !!xmb.confirm);
   if (nav.confirm && xmb.confirm) {

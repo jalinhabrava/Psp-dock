@@ -1,0 +1,62 @@
+{
+  "01M6FJS3FP9ER9BWP5FTP5XP7H": {
+    "url": "https://socomlegacy.com/",
+    "state": "disc_required_menu",
+    "note": "Se observa el XMB v0.4.22, Play SOCOM II: Disc needed y No controller connected. No se seleccionó ningún disco ni se inició sesión.",
+    "rendered_game_scene": false,
+    "requirements_conflict": false,
+    "observed_on": "2026-11-15",
+    "method": "existing_chrome_windows_ui",
+    "physical_controller_tested": false
+  },
+  "01M4ZTRTVENYXSAPMVX1HHCNXG": {
+    "url": "https://tkdr-recomp.pages.dev/",
+    "state": "hosted_download_started",
+    "note": "La ficha declara ISO/CSO y EBOOT propios. El destino actual ofrece descargar aproximadamente 1 GB desde su servidor; al pulsar Play se observó contacting the game server/Running, sin seleccionar archivos. Requisito de la ficha en conflicto con el lanzador actual; partida sin comprobar.",
+    "rendered_game_scene": false,
+    "requirements_conflict": true,
+    "observed_on": "2026-11-15",
+    "method": "existing_chrome_windows_ui",
+    "physical_controller_tested": false
+  },
+  "01M4E1FFCXNE4Y9XAES8PWTAKF": {
+    "url": "https://openhaloce.com/",
+    "state": "ownership_gate",
+    "note": "Se muestra Before you play con petición de certificar posesión de una copia original. No se confirmó ni se inició partida.",
+    "rendered_game_scene": false,
+    "requirements_conflict": false,
+    "observed_on": "2026-11-15",
+    "method": "existing_chrome_windows_ui",
+    "physical_controller_tested": false
+  },
+  "01M6YSES5T7JT24ZTF93R20DQ6": {
+    "url": "https://olivers.tools/kart/",
+    "state": "game_scene_rendered",
+    "note": "El runtime entra en una carrera 3D de Luigi Raceway sin pedir ROM. Se consultaron los controles: acelerador flecha arriba/W/X; columna de mando sin dispositivo. No se probaron mando físico, conducción ni integración WebView2.",
+    "rendered_game_scene": true,
+    "requirements_conflict": false,
+    "observed_on": "2026-11-15",
+    "method": "existing_chrome_windows_ui",
+    "physical_controller_tested": false
+  },
+  "01M30H15FZXY4FAR7EHVQ748FS": {
+    "url": "https://qwasm.m-h.org.uk/",
+    "state": "age_gate",
+    "note": "Página de Qwasm con shareware/LibreQuake, archivos PAK opcionales y controles teclado/ratón. Start está deshabilitado hasta la declaración de edad; no se envió esa declaración ni se inició juego.",
+    "rendered_game_scene": false,
+    "requirements_conflict": false,
+    "observed_on": "2026-11-15",
+    "method": "existing_chrome_windows_ui",
+    "physical_controller_tested": false
+  },
+  "01M7B4G8SQ3YWXN97YN95Z7SYP": {
+    "url": "https://mcii.online/",
+    "state": "title_splash_after_download",
+    "note": "Se pulsó Play sin iniciar sesión. La descarga de datos terminó y se observaron audio, Game running y posteriormente la pantalla de título con Loading the game from local files. No se comprobó conducción ni mando físico.",
+    "rendered_game_scene": false,
+    "requirements_conflict": false,
+    "observed_on": "2026-11-15",
+    "method": "existing_chrome_windows_ui",
+    "physical_controller_tested": false
+  }
+}

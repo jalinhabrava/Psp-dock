@@ -349,7 +349,7 @@ body{background:#03141c;overflow:hidden}
 .xmb-side{position:absolute;top:0;right:0;bottom:0;width:max(36vw,64cqh);background:linear-gradient(90deg,#0000,#00000088 12%,#000000b0);transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.7,.2,1);display:grid;align-content:center;padding-left:10cqh;padding-right:4cqh}
 .xmb-side.open{transform:none}
 .xmb-side h4{margin:0 0 2.8cqh;font-weight:500;font-size:2cqh;letter-spacing:.14em;color:#bcd;opacity:.85}
-.xmb-side ul{list-style:none;margin:0;padding:0;display:grid;gap:1.9cqh}
+.xmb-side ul{list-style:none;margin:0;padding:0;display:grid;gap:1.9cqh;max-height:74cqh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;overflow-wrap:anywhere}
 .xmb-side li{font-size:2.7cqh;opacity:.6;padding:.9cqh 2.1cqh;border-radius:.7cqh;cursor:pointer;transition:all .15s}
 .xmb-side li.on{opacity:1;background:#ffffff1c;box-shadow:inset .5cqh 0 0 #7fe3ee}
 .xmb-side li small{display:block;font-size:1.7cqh;opacity:.75}
