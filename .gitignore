@@ -126,6 +126,14 @@ Thumbs.db
 # Local chronological handoff and machine-specific evidence
 HANDOFF.md
 docs/*
+!docs/catalog/
+!docs/catalog/ported2browser-chrome-20261115.json
+!docs/catalog/ported2browser-destinations-20261115.json
+!docs/catalog/ported2browser-inventory-20261115.csv
+!docs/catalog/PORTED2BROWSER-20261115.md
+!docs/catalog/socom-xmb-analysis-20261115.md
+!docs/catalog/ported2browser-runtime-observations-20261115.json
+!docs/catalog/ported2browser-file-requirements-20261115.json
 !docs/GRAFICOS-PPSSPP.md
 !docs/HD-TEXTURAS-HIBRIDAS.md
 !docs/RETRO-AUTO-INSTALL.md

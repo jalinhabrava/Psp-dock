@@ -2100,6 +2100,11 @@ class Dock:
         catalog=json.loads((ROOT/'web/ports.json').read_text(encoding='utf-8'))
         entry=next((game for game in catalog['games'] if game['id']==game_id),None)
         if entry is None:
+            from psp_dock.media.official_port_inventory import load_inventory
+            entry = next((game for game in load_inventory(ROOT)['games']
+                          if game['id'] == game_id and
+                          game.get('requires_original_files')), None)
+        if entry is None:
             raise ValueError('Juego no reconocido en los ports de PSP Dock.')
         listing=self.web_iso_library()
         return {'id':game_id,'title':entry['title'],
@@ -3451,6 +3456,9 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     # Curated metadata only: no proxying third-party websites,
                     # fetching untrusted URLs or serving commercial game data.
                     return self.reply(json.loads((ROOT/'web/ports.json').read_text(encoding='utf-8')))
+                if self.path == '/api/official-web-ports':
+                    from psp_dock.media.official_port_inventory import load_inventory
+                    return self.reply(load_inventory(ROOT))
                 if self.path == '/api/web-iso-library':
                     return self.reply(dock.web_iso_library())
                 if self.path.startswith('/api/web-iso-match/'):

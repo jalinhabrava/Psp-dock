@@ -1,0 +1,211 @@
+{
+  "01M6FJS3FP9ER9BWP5FTP5XP7H": {
+    "title": "SOCOM II",
+    "detail_url": "https://ported2browser.com/ports/01M6FJS3FP9ER9BWP5FTP5XP7H",
+    "direct_url": "https://socomlegacy.com/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": true,
+    "scope": "required_to_play",
+    "note": "ISO de SOCOM II o carpeta con los archivos del disco; el runtime declara almacenamiento local."
+  },
+  "01M5Z6E7C766BWRZVVPDMG6RX4": {
+    "title": "Global Operations",
+    "detail_url": "https://ported2browser.com/ports/01M5Z6E7C766BWRZVVPDMG6RX4",
+    "direct_url": "https://savavlad.com/glops/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Seleccionar la carpeta original de Global Operations en el primer inicio."
+  },
+  "01M52FZSRWMVAAB3F6THXNF8MJ": {
+    "title": "Pokémon Stadium 2",
+    "detail_url": "https://ported2browser.com/ports/01M52FZSRWMVAAB3F6THXNF8MJ",
+    "direct_url": "https://azelf420.github.io/s2w/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "ROM estadounidense propia de Pokemon Stadium 2; el proyecto no incluye datos del juego."
+  },
+  "01M4ZTRTVENYXSAPMVX1HHCNXG": {
+    "title": "Tekken: Dark Resurrection",
+    "detail_url": "https://ported2browser.com/ports/01M4ZTRTVENYXSAPMVX1HHCNXG",
+    "direct_url": "https://tkdr-recomp.pages.dev/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": true,
+    "scope": "required_to_play",
+    "note": "Volcado propio ISO/CSO de Tekken DR y EBOOT descifrado; el runtime declara lectura local."
+  },
+  "01M4ZTRTTVV7VXERJHAZTYTGNG": {
+    "title": "Guitar Hero 3",
+    "detail_url": "https://ported2browser.com/ports/01M4ZTRTTVV7VXERJHAZTYTGNG",
+    "direct_url": "https://gh3.thediaryofchris.net/index.html",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Carpeta de Guitar Hero 3 con GH3.exe y DATA, o archivos individuales. La prueba de sonido sin juego no equivale a jugar."
+  },
+  "01M4RSDRCPXRTKPRT50EBRRCW5": {
+    "title": "Skate 3",
+    "detail_url": "https://ported2browser.com/ports/01M4RSDRCPXRTKPRT50EBRRCW5",
+    "direct_url": "https://skate.aaddpp.lol/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Datos de una copia propia convertida de Skate 3."
+  },
+  "01M4E1FFCXNE4Y9XAES8PWTAKF": {
+    "title": "Halo: Combat Evolved",
+    "detail_url": "https://ported2browser.com/ports/01M4E1FFCXNE4Y9XAES8PWTAKF",
+    "direct_url": "https://openhaloce.com/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Datos propios de Halo y declaracion de posesion; la ficha no confirma formato ISO para la version de navegador."
+  },
+  "01M4E03JWP4R4WMADBACBQZ3VP": {
+    "title": "Red Alert 2",
+    "detail_url": "https://ported2browser.com/ports/01M4E03JWP4R4WMADBACBQZ3VP",
+    "direct_url": "https://game.chronodivide.com/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Importar los archivos originales de Red Alert 2 en el primer inicio."
+  },
+  "01M3WXT98KK6T8QT8V5K3WNT4R": {
+    "title": "Halo: Combat Evolved",
+    "detail_url": "https://ported2browser.com/ports/01M3WXT98KK6T8QT8V5K3WNT4R",
+    "direct_url": "https://mitchellhynes.com/halo/halo.html",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": true,
+    "scope": "required_to_play",
+    "note": "Imagen ISO propia del disco Xbox de Halo: Combat Evolved."
+  },
+  "01M3BAB0GB4VKRDPXZA226JGXD": {
+    "title": "Daggerfall",
+    "detail_url": "https://ported2browser.com/ports/01M3BAB0GB4VKRDPXZA226JGXD",
+    "direct_url": "https://daggerfalljs.dev/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Carpeta ARENA2 o ZIP con los datos de Daggerfall; la ficha enlaza opciones legales gratuitas."
+  },
+  "01M30H15H4VPHBE2C1WFSH5X53": {
+    "title": "Grand Theft Auto: Vice City",
+    "detail_url": "https://ported2browser.com/ports/01M30H15H4VPHBE2C1WFSH5X53",
+    "direct_url": "https://joncodeofficial.github.io/gta-vice-city-wasm/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "Importar una vez el archivo game.tar.gz propio de GTA Vice City."
+  },
+  "01M2R5GXHZ8CAQCRGM83A2NB5C": {
+    "title": "Super Smash Bros. 64",
+    "detail_url": "https://ported2browser.com/ports/01M2R5GXHZ8CAQCRGM83A2NB5C",
+    "direct_url": "https://smash.fun/",
+    "basis": "directory_about_review",
+    "required": true,
+    "optional": false,
+    "disc_image": false,
+    "scope": "required_to_play",
+    "note": "ROM propia de Super Smash Bros. 64 para extraer los recursos localmente."
+  },
+  "01M30H15GV0MWZZE43G90913MN": {
+    "title": "Diablo",
+    "detail_url": "https://ported2browser.com/ports/01M30H15GV0MWZZE43G90913MN",
+    "direct_url": "https://devilutionx.app/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "full_game_only",
+    "note": "DIABDAT.MPQ propio para Diablo completo; shareware incluido por defecto."
+  },
+  "01M30H15GGBJVK6CASYEVR711R": {
+    "title": "Return to Castle Wolfenstein",
+    "detail_url": "https://ported2browser.com/ports/01M30H15GGBJVK6CASYEVR711R",
+    "direct_url": "https://wwasm.m-h.org.uk/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "full_game_only",
+    "note": "pak0.pk3 y sp_pak1/2.pk3 propios para RTCW completo; demo presente."
+  },
+  "01M30H15GAYTY968ZZHPJX8VW4": {
+    "title": "DOOM",
+    "detail_url": "https://ported2browser.com/ports/01M30H15GAYTY968ZZHPJX8VW4",
+    "direct_url": "https://dwasm.m-h.org.uk/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "full_game_only",
+    "note": "IWAD comercial propio para DOOM completo; Freedoom/shareware disponibles."
+  },
+  "01M30H15G3H4X1GPFV7BBGJEDA": {
+    "title": "Quake II",
+    "detail_url": "https://ported2browser.com/ports/01M30H15G3H4X1GPFV7BBGJEDA",
+    "direct_url": "https://qwasm2.m-h.org.uk/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "full_game_only",
+    "note": "PAK0.PAK propio para Quake II completo; demo de tres niveles disponible."
+  },
+  "01M30H15FZXY4FAR7EHVQ748FS": {
+    "title": "Quake",
+    "detail_url": "https://ported2browser.com/ports/01M30H15FZXY4FAR7EHVQ748FS",
+    "direct_url": "https://qwasm.m-h.org.uk/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "full_game_only",
+    "note": "PAK propios para Quake completo; shareware o LibreQuake disponibles."
+  },
+  "01M6YSES5T7JT24ZTF93R20DQ6": {
+    "title": "Mario Kart 64 Online",
+    "detail_url": "https://ported2browser.com/ports/01M6YSES5T7JT24ZTF93R20DQ6",
+    "direct_url": "https://olivers.tools/kart/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "conditional",
+    "note": "Mario Kart 64 Online pide ROM US solo cuando no esta alojada; la fuente no la necesito en su prueba."
+  },
+  "01M553P1891NC0ZPZ3EJ8N9TAJ": {
+    "title": "Link's Arena",
+    "detail_url": "https://ported2browser.com/ports/01M553P1891NC0ZPZ3EJ8N9TAJ",
+    "direct_url": "https://linksarena.pages.dev/",
+    "basis": "directory_about_review",
+    "required": false,
+    "optional": true,
+    "disc_image": false,
+    "scope": "alternative",
+    "note": "Links Arena admite ROM propia como alternativa a recursos alojados tras declarar posesion."
+  }
+}

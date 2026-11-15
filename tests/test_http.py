@@ -100,6 +100,21 @@ class HTTPContract(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError):
             urllib.request.urlopen(self.url+'/ports.json', timeout=10)
 
+    def test_official_inventory_does_not_authorize_remote_launch_or_files(self):
+        status, inventory = self.request('/api/official-web-ports')
+        self.assertEqual(status, 200)
+        self.assertEqual(inventory['source'], 'https://ported2browser.com/')
+        self.assertEqual(len(inventory['games']), inventory['summary']['listed'])
+        self.assertTrue(inventory['summary']['listing_complete'])
+        self.assertEqual(len({game['id'] for game in inventory['games']}), 330)
+        self.assertTrue(all(not g['runtime_verified'] and not g['gamepad_tested']
+                            for g in inventory['games']))
+        self.assertEqual(self.request('/api/web-ports')[1]['games'][2]['url'],
+                         'https://nfsu2.xyz/')
+        # The inventory is metadata. It does not add a filesystem or URL proxy.
+        with self.assertRaises(urllib.error.HTTPError):
+            urllib.request.urlopen(self.url + '/official-ports.json', timeout=10)
+
     def test_ui_sound_is_bounded_and_missing_original_is_silent(self):
         status, result = self.request('/api/ui-sound', {'sound':'cursor','at_ms':time.time()*1000})
         self.assertEqual(status, 200)
