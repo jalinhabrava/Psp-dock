@@ -98,6 +98,8 @@ node --test "tests/*.test.js"
 
 La prueba de movimiento del XMB utiliza un navegador Chromium real, una biblioteca de demostración aislada y **no accede a la PSP**.
 
+La [prueba de ports de Ported2Browser](windows/PORTED2BROWSER-PREVIEW.md) permite abrir los enlaces importados en un WebView2 separado, sin cambiar la instalación habitual. Algunos menús necesitan ratón o teclado aunque la partida admita mando. Para volver al XMB, mantén **Start + Select durante 2 segundos** (**Menu + View** en Xbox).
+
 Puedes consultar la [estructura actual del proyecto](docs/PROJECT-STRUCTURE.md), el [homebrew PSP 0308](homebrew/native-dock/README.md), la [instalación de RetroArch](docs/RETRO-AUTO-INSTALL.md) y los [gráficos de PPSSPP](docs/GRAFICOS-PPSSPP.md). Los experimentos anteriores permanecen en Git, no en el código principal.
 
 </details>

@@ -9,6 +9,11 @@ namespace PspDockWebShell;
 /// </summary>
 internal static class XboxInput
 {
+    internal sealed record Frame(bool connected, string id, float[] buttons, float[] axes)
+    {
+        internal bool StartSelectHeld => connected && buttons.Length > 9 &&
+            buttons[8] > .65f && buttons[9] > .65f;
+    }
     private const uint Success = 0;
     private const ushort DpadUp = 0x0001, DpadDown = 0x0002,
         DpadLeft = 0x0004, DpadRight = 0x0008,
@@ -44,7 +49,7 @@ internal static class XboxInput
         return Math.Abs(normalized) < .12f ? 0f : normalized;
     }
 
-    internal static object? Read()
+    internal static Frame? Read()
     {
         try
         {
@@ -53,11 +58,8 @@ internal static class XboxInput
                 if (XInputGetState(i, out var state) != Success) continue;
                 var p = state.Pad;
                 bool Has(ushort mask) => (p.Buttons & mask) != 0;
-                return new
-                {
-                    connected = true,
-                    id = "Xbox XInput " + i,
-                    buttons = new float[]
+                return new Frame(true, "Xbox XInput " + i,
+                    new float[]
                     {
                         Has(A) ? 1 : 0, Has(B) ? 1 : 0, Has(X) ? 1 : 0,
                         Has(Y) ? 1 : 0, Has(LeftShoulder) ? 1 : 0,
@@ -68,8 +70,7 @@ internal static class XboxInput
                         Has(DpadUp) ? 1 : 0, Has(DpadDown) ? 1 : 0,
                         Has(DpadLeft) ? 1 : 0, Has(DpadRight) ? 1 : 0, 0
                     },
-                    axes = new [] { Axis(p.LeftX), -Axis(p.LeftY), Axis(p.RightX), -Axis(p.RightY) }
-                };
+                    new [] { Axis(p.LeftX), -Axis(p.LeftY), Axis(p.RightX), -Axis(p.RightY) });
             }
         }
         catch (DllNotFoundException) { /* Older Windows without XInput 1.4. */ }

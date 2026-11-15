@@ -561,12 +561,14 @@ async function inputs() {
     ui: { state: { ...native, product_flow: flow('choosing') }, nativePadConnected: false,
       nativePadHeld: {}, nativePadDirection: '', nativePadAt: 0, busy: false, serviceOffline: false },
     document: { hidden: false, querySelectorAll: () => [] },
-    $: () => ({}), setTimeout: () => 0, Date,
+    $: () => ({}), setTimeout: () => 0, Date, performance,
     xmbPress: (button) => pad.pressed.push(button), pressed: [],
     request: async () => pad.frame,
     frame: { connected: true, source: 'psp_winmm', accept: true },
   };
   vm.createContext(pad);
+  vm.runInContext(source.slice(source.indexOf('function xmbWebPortResetHolds('),
+    source.indexOf('\nfunction xmbGoto(')), pad);
   vm.runInContext(source.slice(inputStart, inputEnd), pad);
   await pad.pollNativePspInput();
   equal(pad.pressed.length, 0, 'Initial held Cross only primes the connected controller');

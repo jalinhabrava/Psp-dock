@@ -6,7 +6,8 @@ static class Program
     static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
-        if (args.Length != 1 ||
+        var previewWebPorts = args.Length == 2 && args[1] == "--preview-web-ports";
+        if ((args.Length != 1 && !previewWebPorts) ||
             !Uri.TryCreate(args[0], UriKind.Absolute, out var uri) ||
             uri.Scheme != Uri.UriSchemeHttp || uri.Host != "127.0.0.1" ||
             uri.AbsolutePath != "/" || uri.Query.Length != 0 ||
@@ -16,6 +17,6 @@ static class Program
                 "PSP Dock", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
-        Application.Run(new DockWindow(uri));
+        Application.Run(new DockWindow(uri, previewWebPorts));
     }
 }

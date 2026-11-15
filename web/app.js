@@ -20,8 +20,9 @@ const ui = {
   storageSetupRequested: false,
   productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
   webPorts: [], webPortCatalogError: '', webPortActive: null, webPortHostActive: false,
-  webPortComboAt: 0,
+  webPortHolds: {}, webPortSuppress: {},
   officialBrowse: false, officialCatalog: null, officialLoading: false, officialError: '',
+  previewCatalog: null,
   officialFilters: { platform: '', state: '', category: 'port_candidate' },
   guestRequested: false,
   guestTransitioning: false,
@@ -1356,8 +1357,21 @@ function controllerInput(pad) {
 }
 function gamepadLoop(time) {
   if (ui.appClosed) return;
+  let pads = [];
+  try { pads = navigator.getGamepads ? Array.from(navigator.getGamepads()) : []; }
+  catch { /* Some browsers do not allow polling before controller interaction. */ }
+  let pad = pads.find(item => item && item.connected !== false) || null;
   // The embedded game owns its pad; the XMB must not react to the same input.
   if (ui.webPortActive || ui.webPortHostActive) {
+    const nativePsp = ui.nativePadConnected && Date.now() - ui.nativePadLastAt < 600;
+    pad = pads.find(item => item && item.connected !== false &&
+      !(nativePsp && /054c/i.test(item.id || '') && /01cb/i.test(item.id || ''))) || null;
+    const input = pad ? {...controllerInput(pad), connected:true} : {connected:false};
+    ui.gamepadHeld = input;
+    if (xmbWebPortHold('browser', input, time, pad ? `${pad.index}:${pad.id}` : '')) {
+      if (ui.webPortActive) xmbWebPortClose();
+      else window.chrome?.webview?.postMessage?.({type:'close-web-port',reason:'controller-exit'});
+    }
     requestAnimationFrame(gamepadLoop);
     return;
   }
@@ -1367,9 +1381,6 @@ function gamepadLoop(time) {
     requestAnimationFrame(gamepadLoop);
     return;
   }
-  let pad = null;
-  try { pad = navigator.getGamepads && Array.from(navigator.getGamepads()).find((item) => item?.connected !== false) || null; }
-  catch { /* Some browsers do not allow polling before controller interaction. */ }
   const flowKey = ui.state?.product_flow?.enabled === true ?
     `${ui.state.product_flow.offer_id}:${ui.state.product_flow.phase}:${ui.state.controller_status?.phase}` : '';
   const identity = pad ? `${pad.index}:${pad.id}:${flowKey}` : '';
@@ -1398,7 +1409,7 @@ function gamepadLoop(time) {
     if (ready && document.activeElement !== guestEntry) guestEntry.focus({preventScroll:true});
   }
   if (pad) {
-    const input = controllerInput(pad);
+    const input = xmbWebPortSuppressActions('browser', controllerInput(pad));
     const edge = (name) => input[name] && !ui.gamepadHeld[name];
     const direction = input.left ? 'left' : input.right ? 'right' : input.up ? 'up' : input.down ? 'down' : '';
     const navigate = direction && (direction !== ui.gamepadDirection || time - ui.gamepadAt > 230);
@@ -1432,6 +1443,7 @@ function gamepadLoop(time) {
     ui.gamepadHeld = input;
     ui.gamepadDirection = direction;
   } else {
+    xmbWebPortSuppressActions('browser', {});
     ui.gamepadHeld = {};
     ui.gamepadDirection = '';
   }
@@ -1439,15 +1451,16 @@ function gamepadLoop(time) {
 }
 function processNativePspFrame(input, now) {
   if (ui.webPortActive || ui.webPortHostActive) {
-    // The native shell handles this chord itself; in iframe fallback
-    // the parent still reads PSP WinMM input and keeps a safe escape route.
-    if (ui.webPortActive && input.pageLeft && input.pageRight && input.exit) {
-      if (!ui.webPortComboAt) ui.webPortComboAt = now;
-      if (now - ui.webPortComboAt >= 1200) xmbWebPortClose();
-    } else ui.webPortComboAt = 0;
+    // The native shell also watches PSP input. Iframes retain this route
+    // without forwarding any XMB actions while the game owns its input.
+    if (xmbWebPortHold('native', input, now, input.source || 'psp_winmm')) {
+      if (ui.webPortActive) xmbWebPortClose();
+      else window.chrome?.webview?.postMessage?.({type:'close-web-port',reason:'controller-exit'});
+    }
     ui.nativePadHeld = input;
     return;
   }
+  input = xmbWebPortSuppressActions('native', input);
   // The physical PSP buttons are mapped explicitly by Windows WinMM,
   // independent of Chromium's nonstandard Gamepad API mapping.
   const edge = (name) => !!input[name] && !ui.nativePadHeld[name];
@@ -1498,29 +1511,35 @@ async function pollNativePspInput() {
         const flowKey = ui.state?.product_flow?.enabled === true ?
           `${ui.state.product_flow.offer_id}:${ui.state.product_flow.phase}:${ui.state.controller_status?.phase}` : '';
         if (!ui.nativePadConnected || ui.nativePadFlowKey !== flowKey) {
+          if (ui.webPortHolds) delete ui.webPortHolds.native;
           // First frame only establishes initial held inputs. This is
           // essential: holding CROSS while plugging in USB never opens
           // the first game or presses a preflight button.
           ui.nativePadHeld = frame;
           ui.nativePadDirection = frame.left ? 'left' : frame.right ? 'right' :
             frame.up ? 'up' : frame.down ? 'down' : '';
-          ui.nativePadAt = Date.now();
+          ui.nativePadAt = performance.now();
           ui.gamepadId = '';
           ui.nativePadFlowKey = flowKey;
         } else {
-          processNativePspFrame(frame, Date.now());
+          processNativePspFrame(frame, performance.now());
         }
         ui.nativePadConnected = true;
         ui.nativePadLastAt = Date.now();
         $('gamepad-status').textContent = 'Mando PSP conectado';
-      } else if (ui.nativePadConnected) {
-        ui.nativePadConnected = false;
-        ui.nativePadHeld = {};
-        ui.nativePadDirection = '';
-        ui.gamepadId = '';
+      } else {
+        xmbWebPortHold('native', {connected:false}, Date.now(), '');
+        xmbWebPortSuppressActions('native', {});
+        if (ui.nativePadConnected) {
+          ui.nativePadConnected = false;
+          ui.nativePadHeld = {};
+          ui.nativePadDirection = '';
+          ui.gamepadId = '';
+        }
       }
     }
   } catch {
+    xmbWebPortHold('native', {connected:false}, Date.now(), '');
     ui.nativePadConnected = false;
     ui.nativePadHeld = {};
     ui.nativePadDirection = '';
@@ -1954,6 +1973,7 @@ function xmbConnectionView() {
       $('web-port-frame').src = 'about:blank';
       $('web-port-view').hidden = true;
       ui.webPortActive = null;
+      xmbWebPortReturned();
     }
     // Also close a game whose initial "active" event has not yet returned.
     if (typeof window.chrome?.webview?.postMessage === 'function')
@@ -2507,8 +2527,10 @@ function xmbWebPortItems() {
     {key:'owned-iso-folder',t:'Carpeta de ISOs propias',icon:'folder',
       s:()=>xmb.settings?.web_iso_folder || 'Sin configurar · imágenes originales en tu PC',
       activate:()=>void xmbWebIsoOpen()},
-    {key:'official-inventory',t:'Inventario oficial · Ported2Browser',icon:'webports',
-      s:'Explorar plataformas, estados y categorías · fichas sin lanzamiento',
+    {key:'official-inventory',t:ui.state?.preview_web_ports ?
+      'Catálogo experimental · Ported2Browser' : 'Inventario oficial · Ported2Browser',icon:'webports',
+      s:ui.state?.preview_web_ports ? 'Prueba local · enlaces y controles sin certificar · algunos menús requieren ratón o teclado' :
+        'Explorar plataformas, estados y categorías · fichas sin lanzamiento',
       activate:()=>{xmbOfficialBrowse(true); if (!ui.officialCatalog) void xmbLoadOfficialPorts();}},
   ];
   if (ports.length) return [...tools,...ports];
@@ -2553,8 +2575,20 @@ async function xmbLoadOfficialPorts() {
           Object.hasOwn(XMB_OFFICIAL_STATES, game.verification_state)))
       throw new Error('Formato u origen del inventario no válido.');
     ui.officialCatalog = catalog;
+    ui.previewCatalog = null;
+    if (ui.state?.demo === true && ui.state?.preview_web_ports === true) {
+      const preview = await request('/api/preview-web-ports');
+      if (preview?.version !== 1 || preview.source !== catalog.source ||
+          preview.demo !== true || preview.preview_web_ports !== true ||
+          !Array.isArray(preview.games) || preview.games.length !== catalog.games.length ||
+          !preview.games.every((game,index) => game.id === catalog.games[index].id &&
+            typeof game.preview_allowed === 'boolean'))
+        throw new Error('Manifiesto de prueba local no válido.');
+      ui.previewCatalog = preview;
+    }
   } catch (error) {
     ui.officialCatalog = null;
+    ui.previewCatalog = null;
     ui.officialError = error.message || 'No se ha podido cargar el inventario.';
   } finally {
     ui.officialLoading = false;
@@ -2600,10 +2634,12 @@ function xmbOfficialItems() {
   if (!filtered.length) rows.push({key:'official-empty',t:'Sin resultados con estos filtros',
     s:'Cambia plataforma, estado o categoría para explorar otras fichas.',icon:'info'});
   return [...rows,...filtered.map(game=>({key:'official-'+game.id,t:game.title,icon:'webports',
-    s:game.original_platforms.join(' / ')+' · '+XMB_OFFICIAL_STATES[game.verification_state],
+    s:game.original_platforms.join(' / ')+' · '+XMB_OFFICIAL_STATES[game.verification_state]+
+      ' · '+XMB_OFFICIAL_CATEGORIES[game.category],
     activate:()=>xmbOfficialDetails(game),menu:()=>xmbOfficialDetails(game)}))];
 }
 function xmbOfficialDetails(game) {
+  const preview = xmbOfficialPreviewEntry(game.id);
   const declared = Object.entries(game.controls_declared || {}).filter(([,value])=>value === true)
     .map(([key])=>key).join(', ') || 'No declarados';
   const additional = Object.entries(game.additional_controls || {}).map(([key,value])=>
@@ -2611,7 +2647,8 @@ function xmbOfficialDetails(game) {
     (value === true ? 'sí' : value === false ? 'no' : 'sin confirmar')).join(' · ');
   const opts = [
     {t:'Verificación · '+XMB_OFFICIAL_STATES[game.verification_state],
-      s:'Ficha informativa. No habilita lanzamiento. Enlace: '+({active:'activo',broken:'roto',pending:'pendiente'}[game.link_status] || 'sin confirmar')},
+      s:(preview ? 'Prueba local; no certifica partida ni controles. Enlace: ' :
+        'Ficha informativa. No habilita lanzamiento. Enlace: ')+({active:'activo',broken:'roto',pending:'pendiente'}[game.link_status] || 'sin confirmar')},
     {t:'Comprobado',s:'Partida/control: '+(game.runtime_verified === true ? 'verificado' : 'sin verificar')+
       ' · Mando probado: '+(game.gamepad_tested === true ? 'sí' : 'no')},
     {t:'Controles declarados por la fuente',s:declared},
@@ -2628,13 +2665,52 @@ function xmbOfficialDetails(game) {
     ...(game.file_requirement_review ? [{t:'Archivos revisados',s:game.file_requirement_review.note}] : []),
     ...(game.runtime_observation ? [{t:'Observación en Chrome',s:game.runtime_observation.note}] : []),
   ];
+  if (preview) opts.unshift({t:preview.preview_allowed ? 'Probar enlace · experimental' : 'Prueba no disponible',
+    s:preview.preview_allowed ? 'Abrir en el contenedor WebView2 local. Archivos propios y controles: consulta los requisitos.' :
+      preview.preview_block_reason});
   const isoIndex = opts.length;
   if (game.requires_disc_image === true) opts.push({t:'Buscar coincidencias en mis ISOs',
     s:'Solo nombres y tamaños locales. No se carga ni envía el archivo.'});
   xmbSide(game.title,opts,index=>{
+    if (preview && index === 0) xmbOfficialPreviewLaunch(game.id);
     if (game.requires_disc_image === true && index === isoIndex)
       void xmbWebIsoMatches({id:game.id,title:game.title});
   });
+}
+function xmbOfficialPreviewEntry(id) {
+  if (ui.state?.demo !== true || ui.state?.preview_web_ports !== true ||
+      ui.previewCatalog?.preview_web_ports !== true) return null;
+  return ui.previewCatalog.games.find(game => game.id === id) || null;
+}
+function xmbOfficialPreviewLaunch(id) {
+  const entry = xmbOfficialPreviewEntry(id);
+  if (!entry || entry.preview_allowed !== true) {
+    toast(entry?.preview_block_reason || 'La prueba local no está habilitada.');
+    return;
+  }
+  if (ui.busy || ui.serviceOffline || ui.state?.session?.running) {
+    toast('Termina la operación en curso antes de probar otro juego.');
+    return;
+  }
+  const host = window.chrome?.webview;
+  if (typeof host?.postMessage !== 'function') {
+    toast('La prueba experimental necesita el contenedor WebView2 local. No se fuerzan iframes ni se modifica la política del autor.');
+    return;
+  }
+  const files = entry.requires_original_files || entry.requires_disc_image ?
+    ' Requiere archivos propios: selección manual en la página del autor; PSP Dock no los lee ni los envía.' :
+    entry.optional_original_files ? ' El juego completo puede pedir archivos propios; su selección es manual.' : '';
+  const pointer = entry.additional_controls?.mouse === true || entry.verification_state === 'needs_pointer' ?
+    ' Necesita ratón o puntero.' : '';
+  xmbConfirm('Prueba local de '+xmbEscape(entry.title)+
+    '<small>Partida y mando sin certificar. Puede necesitar teclado, ratón, L2/R2 o segundo stick.'+
+    files+pointer+' Algunos menús requieren ratón o teclado; mando en partida no implica menús completos. '+
+    'El enlace conserva su estado original. Mantén START + SELECT (2 s), Menu + View en Xbox, para volver al XMB.</small>',
+    false,()=>{
+      if (xmbOfficialPreviewEntry(id)?.preview_allowed !== true) return;
+      xmbPreviewGame(null);
+      host.postMessage({type:'launch-preview-web-port',id});
+    });
 }
 function xmbGuestSections() {
   // Explicitly omit ISO/CSO, RetroArch, SAVEDATA and the graphics profiles.
@@ -3479,6 +3555,8 @@ function xmbWebPortLaunch(port) {
   xmbWebPortOpen(port);
 }
 function xmbWebPortOpen(port) {
+  xmbWebPortResetHolds();
+  ui.webPortSuppress = {};
   xmbPreviewGame(null);
   const host = window.chrome?.webview;
   if (typeof host?.postMessage === 'function') {
@@ -3491,7 +3569,6 @@ function xmbWebPortOpen(port) {
     return;
   }
   ui.webPortActive = port.id;
-  ui.webPortComboAt = 0;
   $('web-port-title').textContent = port.title;
   $('web-port-view').hidden = false;
   $('web-port-frame').src = port.url;
@@ -3501,17 +3578,58 @@ function xmbWebPortClose() {
   $('web-port-frame').src = 'about:blank';
   $('web-port-view').hidden = true;
   ui.webPortActive = null;
-  ui.webPortComboAt = 0;
+  xmbWebPortReturned();
   $('xmb').focus();
   xmbRender();
 }
 function xmbWebPortHostMessage(event) {
   const data = event?.data;
-  if (data?.type === 'web-port-session')
+  if (data?.type === 'web-port-session') {
+    const wasActive = ui.webPortHostActive;
     ui.webPortHostActive = data.active === true;
+    if (ui.webPortHostActive && !wasActive) {
+      xmbWebPortResetHolds();
+      ui.webPortSuppress = {};
+    }
+    else if (!ui.webPortHostActive) xmbWebPortReturned();
+  }
   else if (data?.type === 'web-port-error')
     toast(data.message || 'No se ha podido iniciar el juego web.');
   if (!ui.webPortHostActive && !ui.webPortActive) xmbRender();
+}
+function xmbWebPortResetHolds() {
+  ui.webPortHolds = {};
+}
+function xmbWebPortHold(source, input, now, identity) {
+  const holds = ui.webPortHolds ||= {};
+  if (input.connected !== true || !input.settings || !input.exit) {
+    delete holds[source];
+    return false;
+  }
+  if (document.hidden || (!ui.webPortHostActive && document.hasFocus?.() === false)) {
+    if (!holds[source]?.sent) delete holds[source];
+    return false;
+  }
+  let hold = holds[source];
+  if (!hold || hold.identity !== identity || now < hold.since)
+    hold = holds[source] = {identity, since:now, sent:false};
+  if (hold.sent || now - hold.since < 2000) return false;
+  hold.sent = true;
+  return true;
+}
+function xmbWebPortReturned() {
+  xmbWebPortResetHolds();
+  // Each origin must observe its own neutral frame. A neutral PSP frame
+  // cannot release a still-held Xbox Menu/View pair (or vice versa).
+  ui.webPortSuppress = {browser:true, native:true};
+}
+function xmbWebPortSuppressActions(source, input) {
+  if (!ui.webPortSuppress?.[source]) return input;
+  if (!input.settings && !input.exit) {
+    ui.webPortSuppress[source] = false;
+    return input;
+  }
+  return {...input, settings:false, exit:false};
 }
 function xmbGoto(id) {
   const connection = xmbConnectionView();
@@ -4049,7 +4167,11 @@ if (typeof window.chrome?.webview?.addEventListener === 'function')
 window.addEventListener('pagehide', appPageLeaving);
 window.addEventListener('pagehide', () => xmbPreviewGame(null));
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden) xmbPreviewGame(null);
+  if (document.hidden) {
+    xmbPreviewGame(null);
+    for (const [source, hold] of Object.entries(ui.webPortHolds))
+      if (!hold.sent) delete ui.webPortHolds[source];
+  }
   else if (!ui.appClosed && !ui.appClosing) { void refresh(); if (ui.state) render(); }
 });
 window.addEventListener('pageshow', () => {

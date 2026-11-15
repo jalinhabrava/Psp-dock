@@ -86,6 +86,8 @@ Object.assign(scope,{
 const runtimeStart = source.indexOf('function xmbConnectionView(');
 const runtimeEnd = source.indexOf('function xmbRenderConnection(',runtimeStart);
 vm.runInContext(source.slice(runtimeStart,runtimeEnd),scope);
+vm.runInContext(source.slice(source.indexOf('function xmbWebPortResetHolds('),
+  source.indexOf('\nfunction xmbGoto(')),scope);
 async function main() {
 await scope.xmbStartGuest();
 assert(events.includes('guest:true'), 'guest input must pause PSP USB polling in the backend');

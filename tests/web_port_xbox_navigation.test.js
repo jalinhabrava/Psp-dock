@@ -70,17 +70,22 @@ send('wipeout','#load-full-version');
 down(0);frame(100);
 assert(keys.includes('keydown:x'),'WipEout thrust is accessible from Xbox A');
 down(4);down(5);down(8);frame(150);
-frame(1400);
+frame(2150);
+assert.equal(messages.length,0,'The old LB+RB+View shortcut must not close a port');
+up(4);up(5);down(9);frame(2200);
+frame(4199);
+assert.equal(messages.length,0,'Menu+View requires a full 2000 ms hold');
+frame(4200);
 assert(messages.some(m=>m.type==='game-exit-request'),
-  'LB+RB+View must return to Dock without touching the mouse');
-frame(1600);
+  'Menu+View must return to Dock without touching the mouse');
+frame(4600);
 assert.equal(messages.filter(m=>m.type==='game-exit-request').length,1,
   'exit request must be sent once per hold');
-up(4);up(5);up(8);up(0);
+up(8);up(9);up(0);
 const beforeAutostart = clicks;
 send('gamepad','#start',true);
-frame(1700);
+frame(4700);
 assert.equal(clicks,beforeAutostart+1,'XMB selection should start a verified runtime without using the mouse');
-frame(1710);
+frame(4710);
 assert.equal(clicks,beforeAutostart+1,'Auto-start must not click repeatedly each animation frame');
 console.log('Xbox WebView2 start buttons, keyboard ports and exit chord: OK');

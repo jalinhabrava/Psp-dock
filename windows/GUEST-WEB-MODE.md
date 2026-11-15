@@ -22,6 +22,11 @@ No se ofrecen **Juegos (ISO)**, **Retro (RetroArch)**, **Partidas PSP** ni
 ROMs asociadas a una PSP y sobrescribir guardados en una conexión futura.
 Los guardados de un port web permanecen en su propio origen WebView2/navegador.
 
+Para volver al XMB desde un port, mantén **Start + Select durante 2 segundos**
+(**Menu + View** en Xbox). Algunos ports necesitan ratón o teclado en los menús
+anteriores a la partida; que el mando funcione jugando no certifica todo el flujo.
+El catálogo importado se puede explorar en la [prueba local separada](PORTED2BROWSER-PREVIEW.md).
+
 ## Transiciones y seguridad
 
 La nueva entrada se muestra solo cuando la API informa de espera de PSP

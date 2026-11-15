@@ -53,7 +53,7 @@ assert.deepEqual(movements.at(-1), { dialog, delta:-1 });
 assert(code.includes('ui.nativePadHeld = frame;'));
 assert(code.includes('ui.gamepadHeld = pad && !(entry.waiting && entry.canStartGuest) ?'));
 assert(code.includes('controllerInput(pad) : {};'));
-assert(code.includes('processNativePspFrame(frame, Date.now());'));
+assert(code.includes('processNativePspFrame(frame, performance.now());'));
 assert(code.includes("await mutate('/api/copy-policy'"));
 
 console.log('PSP XMB controller UI navigation / first-frame safety tests: OK');

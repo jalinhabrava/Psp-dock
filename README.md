@@ -100,6 +100,8 @@ node --test "tests/*.test.js"
 
 The XMB animation test uses a real Chromium browser and a synthetic game library. It **never accesses a real PSP**.
 
+The [Ported2Browser preview](windows/PORTED2BROWSER-PREVIEW.md) opens imported author links in a separate WebView2 profile without changing the installed Dock. Some menus require a mouse or keyboard even when gameplay supports a controller. Hold **Start + Select for 2 seconds** (**Menu + View** on Xbox) to return to the XMB.
+
 Read about the [project structure](docs/PROJECT-STRUCTURE.md), the [PSP 0308 homebrew](homebrew/native-dock/README.md), [RetroArch setup](docs/RETRO-AUTO-INSTALL.md), or [PPSSPP graphics](docs/GRAFICOS-PPSSPP.md). Older experiments are available in the Git history, not included in this checkout.
 
 </details>

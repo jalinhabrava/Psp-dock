@@ -18,9 +18,11 @@
   let physicalKeys = new Set();
   let physicalPadId = '';
   let physicalAcceptHeld = false;
-  let physicalExitSince = 0;
+  let physicalExitSince = null;
   let physicalExitSent = false;
   let nativeXbox = null;
+  let nativeXboxAt = null;
+  let nativeXboxInUse = false;
   let nativeXboxConnected = false;
   const allowedSelectors = new Set(['#play', '#start', '#load-full-version']);
   const arrowCodes = {up:38, down:40, left:37, right:39};
@@ -77,7 +79,8 @@
     };
   }
   function xboxPad(index = 0) {
-    if (!nativeXbox?.connected || !Array.isArray(nativeXbox.buttons) ||
+    if (!nativeXbox?.connected || nativeXboxAt === null || performance.now() - nativeXboxAt > 600 ||
+        !Array.isArray(nativeXbox.buttons) ||
         nativeXbox.buttons.length !== 17 ||
         !Array.isArray(nativeXbox.axes) || nativeXbox.axes.length !== 4) return null;
     const buttons = nativeXbox.buttons.map(value => {
@@ -99,6 +102,7 @@
         !(/054c/i.test(pad.id || '') && /01cb/i.test(pad.id || '')));
     } catch { /* Browser Gamepad API not activated in the game view. */ }
     const native = physical.length ? null : xboxPad(0);
+    nativeXboxInUse = native !== null;
     return native ? [native] : physical;
   }
   function allGamepads() {
@@ -115,6 +119,7 @@
   window.chrome.webview.addEventListener('message', ({data}) => {
     if (!data || data.type !== 'psp-input' || !data.input) return;
     nativeXbox = data.xbox?.connected === true ? data.xbox : null;
+    nativeXboxAt = performance.now();
     const currentNativeXbox = nativeXbox !== null;
     if (currentNativeXbox !== nativeXboxConnected) {
       nativeXboxConnected = currentNativeXbox;
@@ -153,12 +158,12 @@
   function pollPhysical(time) {
     const pads = physicalPads();
     const pad = pads[0] || null;
-    const identity = pad ? pad.index + ':' + pad.id : '';
+    const identity = pad ? (nativeXboxInUse ? 'native:' : 'browser:') + pad.index + ':' + pad.id : '';
     const accept = pressed(pad, 0);
     if (identity !== physicalPadId) {
       physicalPadId = identity;
       physicalAcceptHeld = accept; // Never launch from a held connection key.
-      physicalExitSince = 0;
+      physicalExitSince = null;
       physicalExitSent = false;
     }
 
@@ -204,18 +209,23 @@
 
     // Keep an escape route that does not require a mouse. The native host
     // accepts only a close request, never privileged commands from a port.
-    const exitChord = !!pad && pressed(pad,4) && pressed(pad,5) && pressed(pad,8);
+    const exitChord = !document.hidden && document.hasFocus?.() !== false &&
+      !!pad && pressed(pad,8) && pressed(pad,9);
     if (exitChord) {
-      if (!physicalExitSince) physicalExitSince = time;
-      if (time - physicalExitSince >= 1200 && !physicalExitSent) {
+      if (physicalExitSince === null || time < physicalExitSince) physicalExitSince = time;
+      if (time - physicalExitSince >= 2000 && !physicalExitSent) {
         physicalExitSent = true;
         window.chrome.webview.postMessage?.({type:'game-exit-request'});
       }
     } else {
-      physicalExitSince = 0;
+      physicalExitSince = null;
       physicalExitSent = false;
     }
     requestAnimationFrame(pollPhysical);
   }
+  document.addEventListener?.('visibilitychange', () => {
+    if (document.hidden) physicalExitSince = null;
+  });
+  window.addEventListener?.('blur', () => { physicalExitSince = null; });
   if (typeof requestAnimationFrame === 'function') requestAnimationFrame(pollPhysical);
 })();

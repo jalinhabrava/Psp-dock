@@ -27,6 +27,7 @@ public sealed class DockWindow : Form
     };
 
     private readonly Uri _dock;
+    private readonly bool _previewWebPorts;
     private readonly HttpClient _client;
     private readonly WebView2 _xmbView = new() { Dock = DockStyle.Fill };
     private readonly WebView2 _gameView = new() { Dock = DockStyle.Fill };
@@ -38,20 +39,25 @@ public sealed class DockWindow : Form
     };
     private readonly System.Windows.Forms.Timer _inputTimer = new() { Interval = 80 };
     private readonly Dictionary<string, Port> _ports = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Port> _previewPorts = new(StringComparer.Ordinal);
     private readonly HashSet<CoreWebView2Frame> _gameFrames = new();
     private Port? _active;
     private bool _polling;
-    private DateTimeOffset? _escapeAt;
+    private readonly ExitHoldGesture _xboxExit = new();
+    private readonly ExitHoldGesture _pspExit = new();
+    private int _gameGeneration;
+    private bool HasGameFocus => _active != null && (Form.ActiveForm == this || ContainsFocus);
 
-    public DockWindow(Uri dock)
+    public DockWindow(Uri dock, bool previewWebPorts = false)
     {
         _dock = dock;
+        _previewWebPorts = previewWebPorts;
         _client = new HttpClient
         {
             BaseAddress = dock,
             Timeout = TimeSpan.FromSeconds(3)
         };
-        Text = "PSP Dock";
+        Text = previewWebPorts ? "PSP Dock · prueba local de juegos" : "PSP Dock";
         WindowState = FormWindowState.Maximized;
         MinimumSize = new Size(800, 480);
         BackColor = Color.FromArgb(6, 37, 54);
@@ -64,7 +70,7 @@ public sealed class DockWindow : Form
         };
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
         top.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 225));
+        top.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 290));
         var back = new Button
         {
             Text = "← Volver al XMB", Dock = DockStyle.Fill,
@@ -75,7 +81,7 @@ public sealed class DockWindow : Form
         back.Click += (_, _) => ClosePort();
         var hint = new Label
         {
-            Text = "LB + RB + View · Volver", Dock = DockStyle.Fill,
+            Text = "Start + Select (Menu + View) · 2 s", Dock = DockStyle.Fill,
             ForeColor = Color.LightGray, TextAlign = ContentAlignment.MiddleCenter
         };
         top.Controls.Add(back, 0, 0);
@@ -86,6 +92,7 @@ public sealed class DockWindow : Form
         Controls.Add(_xmbView);
         Controls.Add(_gamePanel);
         _inputTimer.Tick += async (_, _) => await PollPspAsync();
+        Deactivate += (_, _) => { _xboxExit.Reset(); _pspExit.Reset(); };
     }
 
     protected override async void OnShown(EventArgs e)
@@ -107,7 +114,8 @@ public sealed class DockWindow : Form
     {
         // An installed WebView2 runtime is required (Edge runtime, not Edge UI).
         var userData = Path.Combine(Environment.GetFolderPath(
-            Environment.SpecialFolder.LocalApplicationData), "PSP-Dock", "WebView2");
+            Environment.SpecialFolder.LocalApplicationData),
+            _previewWebPorts ? "PSP-Dock-SOCOM-Preview" : "PSP-Dock", "WebView2");
         var env = await CoreWebView2Environment.CreateAsync(userDataFolder: userData);
         await _xmbView.EnsureCoreWebView2Async(env);
         await _gameView.EnsureCoreWebView2Async(env);
@@ -128,7 +136,7 @@ public sealed class DockWindow : Form
         // open an arbitrary URL or perform privileged USB/save operations.
         _gameView.CoreWebView2.WebMessageReceived += (_, args) =>
         {
-            if (_active == null ||
+            if (_active == null || !HasGameFocus ||
                 !Uri.TryCreate(args.Source, UriKind.Absolute, out var source) ||
                 !string.Equals(source.Host, _active.Url.Host, StringComparison.OrdinalIgnoreCase))
                 return;
@@ -153,7 +161,9 @@ public sealed class DockWindow : Form
         {
             if (_active == null || !Uri.TryCreate(args.Uri, UriKind.Absolute, out var uri) ||
                 uri.Scheme != Uri.UriSchemeHttps ||
-                !string.Equals(uri.Host, _active.Url.Host, StringComparison.OrdinalIgnoreCase))
+                uri.UserInfo.Length > 0 ||
+                !string.Equals(uri.GetLeftPart(UriPartial.Authority),
+                    _active.Url.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
             {
                 if (args.Uri != "about:blank") args.Cancel = true;
             }
@@ -169,6 +179,7 @@ public sealed class DockWindow : Form
         await _gameView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
             await reader.ReadToEndAsync());
         await LoadCatalogAsync();
+        if (_previewWebPorts) await LoadPreviewCatalogAsync();
         _xmbView.Source = _dock;
     }
 
@@ -243,12 +254,16 @@ public sealed class DockWindow : Form
             var messageType = msg.GetProperty("type").GetString();
             if (messageType == "close-web-port")
             {
+                if (msg.TryGetProperty("reason", out var reason) &&
+                    reason.ValueKind == JsonValueKind.String &&
+                    reason.GetString() == "controller-exit" && !HasGameFocus) return;
                 ClosePort();
                 return;
             }
-            if (messageType != "launch-web-port") return;
+            if (messageType is not ("launch-web-port" or "launch-preview-web-port")) return;
             var id = msg.GetProperty("id").GetString() ?? "";
-            if (_ports.TryGetValue(id, out var port))
+            var catalog = messageType == "launch-preview-web-port" ? _previewPorts : _ports;
+            if (catalog.TryGetValue(id, out var port))
                 OpenPort(port);
             else
                 NotifyDock(new { type = "web-port-error", message = "Juego no aprobado en este catálogo." });
@@ -256,6 +271,30 @@ public sealed class DockWindow : Form
         catch (JsonException) { /* Ignore messages from invalid documents. */ }
         catch (KeyNotFoundException) { /* Invalid message schema. */ }
         catch (InvalidOperationException) { /* Invalid message type. */ }
+    }
+
+    private async Task LoadPreviewCatalogAsync()
+    {
+        using var health = await _client.GetFromJsonAsync<JsonDocument>("api/health");
+        if (health == null || !PreviewWebPortPolicy.Enabled(health.RootElement))
+            throw new InvalidOperationException("La prueba de juegos necesita un servidor --demo --preview-web-ports.");
+        using var manifest = await _client.GetFromJsonAsync<JsonDocument>("api/preview-web-ports");
+        if (manifest == null || !PreviewWebPortPolicy.ValidManifest(manifest.RootElement))
+            throw new InvalidOperationException("Manifiesto experimental no válido.");
+        _previewPorts.Clear();
+        foreach (var entry in manifest.RootElement.GetProperty("games").EnumerateArray())
+        {
+            var preview = PreviewWebPortPolicy.Parse(entry);
+            if (preview == null) continue;
+            // Reuse a reviewed profile only for the exact same author URL.
+            // Other experimental entries get no auto-start or file handling.
+            var known = _ports.Values.FirstOrDefault(port => port.Url == preview.Url);
+            var port = known is null ?
+                new Port(preview.Id, preview.Title, preview.Url, false, "gamepad", null, false) :
+                known with { Id = preview.Id, Title = preview.Title };
+            if (!_previewPorts.TryAdd(port.Id, port))
+                throw new InvalidOperationException("ID experimental duplicado.");
+        }
     }
 
     private void NotifyDock(object message)
@@ -269,7 +308,9 @@ public sealed class DockWindow : Form
         if (_active != null) ClosePort();
         _active = port;
         _gameTitle.Text = port.Title;
-        _escapeAt = null;
+        _xboxExit.Reset();
+        _pspExit.Reset();
+        _gameGeneration++;
         _gamePanel.Visible = true;
         _gamePanel.BringToFront();
         NotifyDock(new { type = "web-port-session", active = true, id = port.Id });
@@ -283,7 +324,9 @@ public sealed class DockWindow : Form
         if (_active == null) return;
         _inputTimer.Stop();
         _active = null;
-        _escapeAt = null;
+        _xboxExit.Reset();
+        _pspExit.Reset();
+        _gameGeneration++;
         _gameFrames.Clear();
         _gameView.CoreWebView2.Navigate("about:blank");
         _gamePanel.Visible = false;
@@ -296,28 +339,34 @@ public sealed class DockWindow : Form
 
     private async Task PollPspAsync()
     {
-        if (_polling || _active == null) return;
+        if (_active == null) return;
+        // Read Xbox in the host before the HTTP re-entry guard. A busy game
+        // renderer, child frame or slow PSP backend cannot starve this gesture.
+        var xbox = XboxInput.Read();
+        var foreground = HasGameFocus;
+        if (_xboxExit.Update(foreground ? xbox?.id : null,
+                foreground && xbox?.StartSelectHeld == true, Environment.TickCount64))
+        {
+            ClosePort();
+            return;
+        }
+        if (_polling) return;
         _polling = true;
+        var generation = _gameGeneration;
         try
         {
             using var response = await _client.GetAsync("api/controller-input");
             response.EnsureSuccessStatusCode();
             using var doc = await response.Content.ReadFromJsonAsync<JsonDocument>();
-            if (doc == null || _active == null) return;
+            if (doc == null || _active == null || generation != _gameGeneration) return;
             var frame = doc.RootElement;
             var connected = IsDown(frame, "connected");
-            var chord = connected && IsDown(frame, "pageLeft") &&
-                IsDown(frame, "pageRight") && IsDown(frame, "exit");
-            if (chord)
+            var chord = HasGameFocus && connected && IsDown(frame, "settings") && IsDown(frame, "exit");
+            if (_pspExit.Update(connected ? "psp" : null, chord, Environment.TickCount64))
             {
-                _escapeAt ??= DateTimeOffset.UtcNow;
-                if ((DateTimeOffset.UtcNow - _escapeAt).Value.TotalMilliseconds >= 1200)
-                {
-                    ClosePort();
-                    return;
-                }
+                ClosePort();
+                return;
             }
-            else _escapeAt = null;
             // No keyboard or gamepad injection into arbitrary Windows windows.
             // The injected bridge exists ONLY inside this author's WebView2.
             var inputMessage = JsonSerializer.Serialize(new
@@ -335,11 +384,11 @@ public sealed class DockWindow : Form
                 catch (ArgumentException) { _gameFrames.Remove(child); }
             }
         }
-        catch (HttpRequestException) { _escapeAt = null; }
-        catch (TaskCanceledException) { _escapeAt = null; }
-        catch (JsonException) { _escapeAt = null; }
-        catch (COMException) { _escapeAt = null; }
-        catch (InvalidOperationException) { _escapeAt = null; }
+        catch (HttpRequestException) { _pspExit.Reset(); }
+        catch (TaskCanceledException) { _pspExit.Reset(); }
+        catch (JsonException) { _pspExit.Reset(); }
+        catch (COMException) { _pspExit.Reset(); }
+        catch (InvalidOperationException) { _pspExit.Reset(); }
         finally { _polling = false; }
     }
 
