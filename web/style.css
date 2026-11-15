@@ -198,7 +198,7 @@
    16:9 (y cqh de la pantalla completa para paneles laterales).
    =================================================================== */
 body{background:#03141c;overflow:hidden}
-.xmb{--xmb-top:#0b5672;--xmb-bottom:#052433;position:fixed;inset:0;overflow:hidden;container-type:size;background:radial-gradient(120% 90% at 30% 10%,var(--xmb-top),var(--xmb-bottom));transition:background 1.2s;font-family:"Segoe UI","Segoe UI Variable",system-ui,sans-serif;color:#fff;user-select:none;outline:none}
+.xmb{--xmb-top:#0b5672;--xmb-bottom:#052433;position:fixed;inset:0;overflow:clip;container-type:size;background:linear-gradient(180deg,color-mix(in srgb,var(--xmb-top) 25%,#03090e),color-mix(in srgb,var(--xmb-bottom) 60%,#030b10) 75%,#02080d);transition:background 1.2s;font-family:"Segoe UI","Segoe UI Variable",system-ui,sans-serif;color:#fff;user-select:none;outline:none}
 .xmb-menu{position:absolute;inset:0}
 .xmb-menu[hidden],.dock-connect[hidden],.dock-diagnostic[hidden]{display:none!important}
 .xmb.waiting{background:radial-gradient(ellipse at 82% 40%,#123445 0,#101e29 43%,#0d141d 82%)}
@@ -343,9 +343,19 @@ body{background:#03141c;overflow:hidden}
 .xmb-chip{display:inline-block;margin-left:.6cqw;padding:.1cqw .6cqw;border-radius:.4cqw;font-size:.85cqw;vertical-align:middle;font-weight:700;letter-spacing:.04em}
 .xmb-chip.pc{background:#7fe3ee33;color:#bff4fa}.xmb-chip.copy{background:#ffcf7a33;color:#ffe2a8}.xmb-chip.conf{background:#ff8f8633;color:#ffc4bf}
 .xmb-chip.toPsp{background:#c7a8ff33;color:#e2d4ff}.xmb-chip.inh{background:#ffffff18;color:#cbd6da}
-.xmb-hints{position:absolute;left:3cqw;right:3cqw;bottom:2cqw;display:flex;gap:2.4cqw;justify-content:flex-end;font-size:1.05cqw;opacity:.85}
-.xmb-hints span{display:flex;align-items:center;gap:.5cqw}
-.xmb-hints i{font-style:normal;display:inline-grid;place-items:center;min-width:1.7cqw;height:1.7cqw;padding:0 .2cqw;border-radius:1cqw;border:.1cqw solid #fff9;font-size:.9cqw}
+.xmb-hints{position:absolute;left:3cqw;right:3cqw;bottom:1.6cqw;display:flex;align-items:center;gap:clamp(12px,1.8cqw,36px);justify-content:flex-end;flex-wrap:wrap;font-size:clamp(10px,1.05cqw,19px);color:#c2ced3;text-shadow:0 1px 3px #0008}
+.xmb-hints .xmb-hint{display:inline-flex;align-items:center;gap:clamp(5px,.5cqw,10px);min-width:0;white-space:nowrap}
+.xmb-hints b{font-weight:500;letter-spacing:.025em}
+.xmb-hints .xmb-hint-glyph{font-style:normal;display:inline-flex;flex:0 0 auto;width:clamp(19px,1.8cqw,31px);height:clamp(19px,1.8cqw,31px);color:#a9bac1}
+.xmb-hint-glyph svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.xmb-hint-glyph .xmb-hint-ring{stroke-width:1.4;opacity:.85}
+.xmb-hint-glyph[data-action="accept"]{color:#69b6c3}
+.xmb-hint-glyph[data-action="back"]{color:#d7a9a7}
+.xmb-hint-glyph[data-action="menu"]{color:#60bc94}
+.xmb-hint-glyph .xmb-hint-letter{fill:currentColor;stroke:none;text-anchor:middle;font-family:"Segoe UI",sans-serif;font-size:14px;font-weight:600}
+.xmb-hints[data-controller="xbox"] [data-action="accept"]{color:#79c88a}
+.xmb-hints[data-controller="xbox"] [data-action="back"]{color:#e59389}
+.xmb-hints[data-controller="xbox"] [data-action="menu"]{color:#e2c276}
 .xmb-side{position:absolute;top:0;right:0;bottom:0;width:max(36vw,64cqh);background:linear-gradient(90deg,#0000,#00000088 12%,#000000b0);transform:translateX(100%);transition:transform .24s cubic-bezier(.2,.7,.2,1);display:grid;align-content:center;padding-left:10cqh;padding-right:4cqh}
 .xmb-side.open{transform:none}
 .xmb-side h4{margin:0 0 2.8cqh;font-weight:500;font-size:2cqh;letter-spacing:.14em;color:#bcd;opacity:.85}

@@ -1859,6 +1859,17 @@ function xmbMonthColors(month, hour) {
   };
   return { top: shade(base, .95 * light + .1), bottom: shade(base, .28 * light + .04) };
 }
+function xmbBackdropPalette(theme, month, hour) {
+  const colors = theme === 'month' ? xmbMonthColors(month, hour) : { top:'#0b5672', bottom:'#052433' };
+  const value = parseInt(colors.top.slice(1), 16);
+  const rgb = [value >> 16, (value >> 8) & 255, value & 255];
+  const lifted = amount => rgb.map(channel => Math.round(channel + (255 - channel) * amount)).join(',');
+  // A cool counterpoint for the warm autumn/winter months, and a restrained
+  // ochre counterpoint for the blue/green/violet months and the fixed Dock theme.
+  const warm = rgb[0] > rgb[2] * 1.15 && rgb[0] > rgb[1] * .85;
+  return { ...colors, glow:rgb.join(','), ribbon:lifted(.12), edge:lifted(.35),
+    accent:warm ? '94,161,187' : '182,151,88' };
+}
 // ==== fin del modelo puro ====
 
 const XMB_SVG = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
@@ -3659,6 +3670,7 @@ function xmbPlaceColumn(prefix, items, focus, x, collapsed, used) {
   });
 }
 function xmbRender() {
+  xmbWaves();
   const connection = xmbConnectionView();
   xmbRenderConnection(connection);
   if (connection.waiting || connection.product?.visible && !connection.guestMode) return;
@@ -3843,46 +3855,133 @@ function xmbRenderHints(item) {
     if (item?.game) { add('✕', xmbConnectionView().diagnostic ? 'Información' : item.game.availability === 'missing' ? 'Menú' : 'Jugar'); add('△', 'Opciones'); }
     else if (item) add('✕', 'Entrar');
   }
+  const xbox = !ui.nativePadConnected &&
+    (/xbox|xinput|045e/i.test(ui.gamepadId || '') || xmbConnectionView().guestMode);
+  $('xmb-hints').dataset.controller = xbox ? 'xbox' : 'psp';
   $('xmb-hints').replaceChildren(...hints.map(([glyph, label]) => {
     const span = document.createElement('span');
-    if (glyph) { const i = document.createElement('i'); i.textContent = glyph; span.append(i); }
-    span.append(label);
+    span.className = 'xmb-hint';
+    if (glyph) {
+      const icon = document.createElement('i');
+      icon.className = 'xmb-hint-glyph';
+      const action = { '✕':'accept', '○':'back', '△':'menu' }[glyph];
+      icon.dataset.action = action || 'direction';
+      const shape = action ? (xbox ?
+        `<text x="13" y="17.5" class="xmb-hint-letter">${{accept:'A',back:'B',menu:'Y'}[action]}</text>` :
+        {accept:'<path d="m8.5 8.5 9 9m0-9-9 9"/>',
+          back:'<circle cx="13" cy="13" r="5.5"/>',
+          menu:'<path d="m13 7 6.5 11h-13z"/>'}[action]) :
+        glyph === '◀▶' ? '<path d="m10 7-6 6 6 6m6-12 6 6-6 6"/>' :
+        '<path d="m7 10 6-6 6 6m-12 6 6 6 6-6"/>';
+      icon.innerHTML = `<svg viewBox="0 0 26 26" aria-hidden="true">${action ? '<circle class="xmb-hint-ring" cx="13" cy="13" r="11"/>' : ''}${shape}</svg>`;
+      span.append(icon);
+    }
+    const text = document.createElement('b');
+    text.textContent = label;
+    span.append(text);
     return span;
   }));
 }
 function xmbApplyTheme() {
   const now = new Date();
-  const colors = xmb.theme === 'month' ? xmbMonthColors(now.getMonth(), now.getHours()) : { top: '#0b5672', bottom: '#052433' };
+  const colors = xmbBackdropPalette(xmb.theme, now.getMonth(), now.getHours());
+  const changed = JSON.stringify(xmb.wavePalette) !== JSON.stringify(colors);
+  xmb.wavePalette = colors;
   $('xmb').style.setProperty('--xmb-top', colors.top);
   $('xmb').style.setProperty('--xmb-bottom', colors.bottom);
+  // The minute clock also refreshes a stationary reduced-motion backdrop.
+  if (changed) xmbWaves();
 }
 let xmbWavesFrameId = null;
+let xmbWavesPhase = 0;
+function xmbWavesPaused() {
+  return document.hidden || ui.appClosed || ui.appPageHidden ||
+    ui.state?.session?.running || ui.webPortActive || ui.webPortHostActive;
+}
 function xmbWaves() {
+  if (xmbWavesPaused()) {
+    if (xmbWavesFrameId !== null) cancelAnimationFrame(xmbWavesFrameId);
+    xmbWavesFrameId = null;
+    return;
+  }
   if (xmbWavesFrameId !== null) return;
-  if (document.hidden) return;
   const canvas = $('xmb-waves'), ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  let previousPaint = -Infinity;
   const frame = (time) => {
     xmbWavesFrameId = null;
+    if (xmbWavesPaused()) return;
     const still = xmbReducedMotion();
-    const w = canvas.clientWidth, h = canvas.clientHeight, dpr = devicePixelRatio || 1;
+    // A quiet 30 fps backdrop, bounded on high-DPI screens. Navigation keeps
+    // its own compositor animations and is not throttled by this canvas.
+    if (!still && time - previousPaint < 1000 / 30) {
+      xmbWavesFrameId = requestAnimationFrame(frame);
+      return;
+    }
+    previousPaint = time;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w || !h) return;
+    const dpr = Math.min(devicePixelRatio || 1, 2);
     if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     const s = still ? 0 : time / 1000;
-    for (let k = 0; k < 3; k++) {
+    const target = (xmb.nav.cat || 0) * .32;
+    xmbWavesPhase = still ? target : xmbWavesPhase + (target - xmbWavesPhase) * .045;
+    const phase = xmbWavesPhase;
+    const palette = xmb.wavePalette || xmbBackdropPalette('dock', 0, 13);
+    const glow = ctx.createRadialGradient(w * .5, h * .76, 0, w * .5, h * .76, Math.max(w * .65, h));
+    glow.addColorStop(0, `rgba(${palette.glow},.25)`);
+    glow.addColorStop(.46, `rgba(${palette.glow},.055)`);
+    glow.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, w, h);
+    // Long, almost parallel contours; colour belongs to the hairline edge,
+    // while the sheet below it should dissolve into the backdrop.
+    const sheets = [
+      { y:.64, amplitude:.034, offset:.2, width:.012 },
+      { y:.666, amplitude:.032, offset:.55, width:.018 },
+      { y:.76, amplitude:.030, offset:1.7, width:.012 },
+      { y:.794, amplitude:.026, offset:2.1, width:.009, warm:true },
+    ];
+    const curve = (x, sheet, k) => h * sheet.y +
+      Math.sin(x / w * 2.6 + s * (.065 + k * .008) + sheet.offset + phase * .4) * h * sheet.amplitude +
+      Math.sin(x / w * 1.4 - s * .035 + sheet.offset + phase * .3) * h * .009;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const [k, sheet] of sheets.entries()) {
       ctx.beginPath();
-      for (let x = 0; x <= w; x += 8) {
-        const y = h * (.62 + k * .05) + Math.sin(x / w * 3.2 + s * (.35 + k * .12) + k) * h * .06 + Math.sin(x / w * 7 + s * .5) * h * .012;
+      for (let x = 0; x <= w + 12; x += 12) {
+        const y = curve(x, sheet, k);
         if (x) ctx.lineTo(x, y); else ctx.moveTo(x, y);
       }
-      ctx.strokeStyle = `rgba(255,255,255,${.22 - k * .05})`;
-      ctx.lineWidth = 1.2;
-      ctx.stroke();
-      ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
-      ctx.fillStyle = `rgba(255,255,255,${.035 - k * .008})`;
+      for (let x = Math.ceil(w / 12) * 12; x >= 0; x -= 12)
+        ctx.lineTo(x, curve(x, sheet, k) + h * sheet.width * (1 + .6 * Math.sin(x / w * 2 + sheet.offset + phase * .4)));
+      ctx.closePath();
+      const ribbon = ctx.createLinearGradient(0, h * (sheet.y - .04), 0, h * (sheet.y + .045));
+      ribbon.addColorStop(0, `rgba(${sheet.warm ? palette.accent : palette.ribbon},${sheet.warm ? .02 : .065})`);
+      ribbon.addColorStop(1, `rgba(${palette.ribbon},0)`);
+      ctx.fillStyle = ribbon;
       ctx.fill();
+      const edge = ctx.createLinearGradient(0, 0, w, 0);
+      const edgeRgb = sheet.warm ? palette.accent : palette.edge;
+      edge.addColorStop(0, `rgba(${edgeRgb},.08)`);
+      edge.addColorStop(.38, `rgba(${edgeRgb},${sheet.warm ? .42 : .50 - k * .035})`);
+      edge.addColorStop(1, `rgba(${edgeRgb},.04)`);
+      ctx.beginPath();
+      for (let x = 0; x <= w + 12; x += 12)
+        x ? ctx.lineTo(x, curve(x, sheet, k)) : ctx.moveTo(x, curve(x, sheet, k));
+      ctx.strokeStyle = edge;
+      ctx.lineWidth = .65;
+      ctx.stroke();
     }
-    if (!still && !document.hidden) xmbWavesFrameId = requestAnimationFrame(frame);
+    ctx.restore();
+    const vignette = ctx.createRadialGradient(w * .5, h * .52, h * .24, w * .5, h * .52, Math.max(w * .65, h));
+    vignette.addColorStop(0, 'rgba(0,0,0,0)');
+    vignette.addColorStop(1, 'rgba(0,0,0,.48)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, w, h);
+    if (!still && !xmbWavesPaused()) xmbWavesFrameId = requestAnimationFrame(frame);
   };
   // An existing loop owns the next frame. Re-entering after a setting change
   // starts one loop only, while reduced motion paints one stationary frame.
@@ -3892,7 +3991,12 @@ function xmbEscape(text) { return String(text).replace(/[&<>"']/g, (c) => ({ '&'
 xmbApplyTheme();
 setInterval(xmbApplyTheme, 60000);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) xmbWaves();
+  xmbWaves();
+});
+window.addEventListener('resize', () => {
+  if (xmbWavesFrameId !== null) cancelAnimationFrame(xmbWavesFrameId);
+  xmbWavesFrameId = null;
+  xmbWaves();
 });
 matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => {
   if (xmb.motion === 'system') xmbSyncMotion();
