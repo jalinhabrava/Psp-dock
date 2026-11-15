@@ -3,6 +3,7 @@
 (() => {
   const STORAGE_KEY = 'psp-dock-language';
   const translations = {
+    'START + SELECT (2 s) · Xbox: Menu + View · Volver':'START + SELECT (2 s) · Xbox: Menu + View · Return',
     'TU PSP, EN ESTE PC':'YOUR PSP, ON THIS PC',
     'Conecta tu PSP':'Connect your PSP',
     'Abre Dock en la consola para preparar tu sesión.':'Open Dock on your console to prepare your session.',

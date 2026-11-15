@@ -430,7 +430,10 @@ def prepare_psp_controls(memstick, backups):
     return {'changed': True, 'status': 'PSP-CORRECT', 'created': str(profile)}
 
 class Dock:
-    def __init__(self, data, demo=False):
+    def __init__(self, data, demo=False, *, preview_web_ports=False):
+        if preview_web_ports and not demo:
+            raise ValueError('La prueba de juegos web requiere --demo.')
+        self.preview_web_ports = bool(preview_web_ports and demo)
         self.data = Path(data).resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         self.events = EventJournal(self.data / 'events.jsonl')
@@ -3435,6 +3438,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     ui_state = ui.snapshot() if ui else {}
                     return self.reply({
                         'product':'psp-dock', 'demo':dock.demo,
+                        'preview_web_ports':dock.preview_web_ports,
                         'data_fingerprint':service_fingerprint(dock.data),
                         'port':self.server.server_port,
                         'ui_lifecycle': ui is not None,
@@ -3445,6 +3449,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                     })
                 if self.path == '/api/state':
                     return self.reply({**dock.snapshot, 'guest_mode':dock.guest_mode,
+                                       'preview_web_ports':dock.preview_web_ports,
                                        'product_flow':dock.product_session.snapshot()})
                 if self.path == '/api/connection-diagnostics':
                     return self.reply(dock.product_session.diagnostics.snapshot())
@@ -3459,6 +3464,11 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
                 if self.path == '/api/official-web-ports':
                     from psp_dock.media.official_port_inventory import load_inventory
                     return self.reply(load_inventory(ROOT))
+                if self.path == '/api/preview-web-ports':
+                    if not dock.demo or not dock.preview_web_ports:
+                        return self.reply({'error':'La prueba local no está habilitada.'},404)
+                    from psp_dock.media.preview_web_ports import load_preview_manifest
+                    return self.reply(load_preview_manifest(ROOT))
                 if self.path == '/api/web-iso-library':
                     return self.reply(dock.web_iso_library())
                 if self.path.startswith('/api/web-iso-match/'):
@@ -3845,6 +3855,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
     url = f'http://127.0.0.1:{server.server_port}'
     metadata = {'product':'psp-dock', 'port':server.server_port,
                 'pid':os.getpid(), 'demo':dock.demo,
+                'preview_web_ports':dock.preview_web_ports,
                 'data_fingerprint':service_fingerprint(dock.data),
                 'ui_lifecycle': ui is not None}
     try:
@@ -3900,6 +3911,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='PSP Dock · prototipo local para Windows')
     parser.add_argument('--demo',action='store_true')
+    parser.add_argument('--preview-web-ports',action='store_true',
+                        help='Prueba local de enlaces importados; requiere --demo')
     parser.add_argument('--no-browser',action='store_true')
     parser.add_argument('--app-window',action='store_true',
                         help='Abre la interfaz XMB en una ventana fullscreen sin barra de navegador')
@@ -3909,9 +3922,13 @@ if __name__ == '__main__':
     parser.add_argument('--port',type=int,default=0,help='0 elige automáticamente un puerto libre')
     parser.add_argument('--data',type=Path)
     args = parser.parse_args()
+    if args.preview_web_ports and not args.demo:
+        parser.error('--preview-web-ports requiere --demo')
     try:
-        data = args.data or default_data_path(
-            os.environ.get('LOCALAPPDATA',str(ROOT)), demo=args.demo
+        data = args.data or (
+            Path(os.environ.get('LOCALAPPDATA',str(ROOT))) / 'PSP-Dock-SOCOM-Preview/datos-juegos-v2'
+            if args.preview_web_ports else default_data_path(
+                os.environ.get('LOCALAPPDATA',str(ROOT)), demo=args.demo)
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -3919,7 +3936,7 @@ if __name__ == '__main__':
         recover_session(data)
     elif args.demo:
         make_demo(data)
-        serve(Dock(data,args.demo),args.port,not args.no_browser,args.open_on_connect,
+        serve(Dock(data,args.demo,preview_web_ports=args.preview_web_ports),args.port,not args.no_browser,args.open_on_connect,
               args.app_window, ui_lifecycle=args.app_window and not args.no_browser)
     else:
         serve(Dock(data,args.demo),args.port,not args.no_browser,args.open_on_connect,
