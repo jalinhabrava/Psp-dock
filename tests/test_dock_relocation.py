@@ -37,9 +37,9 @@ class OneRootMigrationTests(unittest.TestCase):
         destination=self.root/'new-library'
         report=self.dock.relocate_storage(str(destination))
         self.assertTrue(report['old_files_preserved'])
-        self.assertEqual(self.dock.config['storage_root'],str(destination))
-        self.assertEqual(self.dock.config['library'],str(destination/'library'))
-        self.assertEqual(self.dock.config['memstick'],str(destination/'memstick'))
+        self.assertEqual(self.dock.config['storage_root'],str(destination.resolve()))
+        self.assertEqual(self.dock.config['library'],str((destination/'library').resolve()))
+        self.assertEqual(self.dock.config['memstick'],str((destination/'memstick').resolve()))
         self.assertEqual((destination/'library/ISO/game.iso').read_bytes(),b'LOCAL_GAME')
         self.assertEqual((destination/'memstick/PSP/SAVEDATA/PLAYER/SAVE.BIN').read_bytes(),b'LOCAL_SAVE')
         self.assertEqual((destination/'memstick/PSP/TEXTURES/ULJM05558/textures.zip').read_bytes(),b'SYNTHETIC_HD')
@@ -47,7 +47,7 @@ class OneRootMigrationTests(unittest.TestCase):
         self.assertEqual(self.local_game.read_bytes(),b'LOCAL_GAME')
         self.assertEqual(self.save.read_bytes(),b'LOCAL_SAVE')
         self.assertEqual((self.psp/'PSP/SAVEDATA/ORIGINAL.BIN').read_bytes(),b'ONLY_ON_PSP')
-        self.assertEqual(json.loads((self.dock.data/'settings.json').read_text())['storage_root'],str(destination))
+        self.assertEqual(json.loads((self.dock.data/'settings.json').read_text())['storage_root'],str(destination.resolve()))
         self.assertIsNone(self.dock.session.get('prepared_volume'))
 
     def test_refuses_relocation_while_game_or_return_is_pending(self):

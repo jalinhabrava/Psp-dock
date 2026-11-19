@@ -2,6 +2,7 @@
 from pathlib import Path
 import os
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -182,6 +183,39 @@ class SaveContinuityTests(unittest.TestCase):
         except (OSError,NotImplementedError):
             self.skipTest('No symlink permissions')
         with self.assertRaises(ValueError):
+            self.plan()
+
+    def test_parent_traversal_never_writes_outside_allowed_sram_root(self):
+        self.write_psp()
+        outside = self.root/'outside.sav'
+        outside.write_bytes(b'b'*32768)
+        with self.assertRaisesRegex(ValueError, 'fuera'):
+            copy_sram_verified(
+                source=self.psp_save, target=self.psp/'..'/outside.name,
+                source_root=self.psp, target_root=self.psp, storage_root=self.pc,
+                backup_dir=self.pc/'backups', journal_dir=self.pc/'journals',
+                expected_source=_sha(self.psp_save), expected_target=_sha(outside), system='gba')
+        self.assertEqual(outside.read_bytes(), b'b'*32768)
+        self.assertFalse(self.pc.exists())
+
+    def test_root_ancestor_symlink_is_rejected_before_resolving(self):
+        alias = self.root/'linked'
+        try:
+            alias.symlink_to(self.psp, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest('No symlink permissions')
+        with self.assertRaisesRegex(ValueError, 'enlaces'):
+            plan_retro_saves(root=alias/'PSP', storage_root=self.pc, volume=self.volume,
+                             roms=[], emulators=[], baselines={})
+
+    def test_root_reparse_attribute_is_rejected_before_resolving(self):
+        original_lstat = Path.lstat
+        def reparse_root(path, *args, **kwargs):
+            info = original_lstat(path, *args, **kwargs)
+            if path == self.psp:
+                return SimpleNamespace(st_mode=info.st_mode, st_file_attributes=0x400)
+            return info
+        with patch.object(Path, 'lstat', reparse_root), self.assertRaisesRegex(ValueError, 'enlaces'):
             self.plan()
 
     def test_snes9xtyl_raw_srm_supported_not_savestate(self):

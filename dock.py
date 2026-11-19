@@ -85,7 +85,9 @@ def read_json(path, default):
     return json.loads(path.read_text(encoding='utf-8')) if path.exists() else default
 
 def tree_signature(path):
-    path = Path(path)
+    # inside() canonicalizes existing Windows 8.3 aliases. Use the same
+    # checked spelling for the root and children before relative_to().
+    path = inside(path, '')
     if not path.exists():
         return None
     rows = []
@@ -175,7 +177,7 @@ def copy_slot(source, target, backups, expected_source, expected_target):
             shutil.rmtree(stage)
 
 def game_inventory(root):
-    root = Path(root)
+    root = inside(root, '')
     found = []
     for folder in ('ISO', 'PSP/GAME'):
         base = inside(root, folder)

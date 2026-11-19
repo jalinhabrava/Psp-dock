@@ -43,9 +43,9 @@ class HidPpssppSessionTests(unittest.TestCase):
     @patch.object(hid, "windows_devices", return_value=[])
     def test_local_only_game_selected_without_opening_psp(self, devices):
         plan = hid.plan_game(self.live, private_data=self.private, emulator=self.emu)
-        self.assertEqual(plan.game, self.game)
+        self.assertEqual(plan.game, self.game.resolve())
         self.assertEqual(plan.relative, "ISO/Example.iso")
-        self.assertEqual(plan.private_memstick, self.private / "memstick")
+        self.assertEqual(plan.private_memstick, (self.private / "memstick").resolve())
         self.assertFalse(plan.private_data.exists())
         self.assertEqual(devices.call_count, 2)
 
@@ -128,7 +128,7 @@ class HidPpssppSessionTests(unittest.TestCase):
             self.assertEqual(checked.call_count, 2)
             args = popen.call_args.args[0]
             self.assertEqual(args[0], str(self.emu))
-            self.assertEqual(args[-1], str(self.game))
+            self.assertEqual(args[-1], str(self.game.resolve()))
             self.assertNotIn("G:\\", str(args))
 
         with patch.object(hid, "_prevent_concurrent_usage"), \
@@ -158,7 +158,7 @@ class HidPpssppSessionTests(unittest.TestCase):
         with patch.object(hid, "_prevent_concurrent_usage"), \
                 patch.object(hid, "prepare_emulator", return_value=private_exe):
             self.assertEqual(hid.prepare_private_runtime(plan), private_exe)
-        self.assertEqual(hid.verified_prepared_runtime(plan), private_exe)
+        self.assertEqual(hid.verified_prepared_runtime(plan), private_exe.resolve())
         (private_exe.parent / "installed.txt").write_text("G:\\\n")
         with self.assertRaisesRegex(hid.HidPpssppError, "Memory Stick local"):
             hid.verified_prepared_runtime(plan)

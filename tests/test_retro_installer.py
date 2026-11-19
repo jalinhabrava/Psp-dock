@@ -70,7 +70,7 @@ class RetroInstallerUnitTests(unittest.TestCase):
 
     def test_installer_path_is_inside_selected_storage_not_psp(self):
         exe=managed_retroarch(self.root)
-        self.assertEqual(exe,self.root/'emulators/retroarch/retroarch.exe')
+        self.assertEqual(exe,(self.root/'emulators/retroarch/retroarch.exe').resolve())
         plan=install_plan(self.root,[emu('gba','gb')])
         self.assertTrue(plan['needed'])
         self.assertFalse(plan['retroarch_installed'])

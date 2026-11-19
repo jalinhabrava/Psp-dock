@@ -45,6 +45,27 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
+      - name: Install image test dependency
+        run: python -m pip install Pillow==13.0.0
+      - name: Select one browser for Python and JavaScript acceptance
+        shell: python
+        run: |
+          from pathlib import Path
+          import os
+          import subprocess
+          import sys
+
+          sys.path.insert(0, str(Path.cwd() / "tests"))
+          from test_frontend_i18n_browser import find_browser
+
+          browser = find_browser()
+          if not browser:
+              raise SystemExit("Chrome/Chromium/Edge is required for browser acceptance")
+          print("Browser acceptance binary:", browser, flush=True)
+          if sys.platform.startswith("linux"):
+              subprocess.run([browser, "--version"], check=True)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as environment:
+              environment.write("PSP_DOCK_CHROME=" + browser + "\n")
       - name: Import application without accessing USB
         run: python -c "import dock; from psp_dock.devices import native_dock, native_shutdown, linux_native, linux_shutdown; from psp_dock.core import dock_product_flow, dock_product_session, storage_layout; from psp_dock.emulation import retro_runtime, linux_runtime"
       - name: Full Python regression without physical USB
@@ -52,7 +73,10 @@ jobs:
         run: |
           import sys
           import unittest
+          from pathlib import Path
 
+          # Actions runs this script from its temp directory, not the repo.
+          sys.path.insert(0, str(Path.cwd()))
           suite = unittest.defaultTestLoader.discover("tests", pattern="test_*.py")
           if suite.countTestCases() == 0:
               raise SystemExit("Python tests are missing")
@@ -63,7 +87,6 @@ jobs:
         run: |
           from pathlib import Path
           import os
-          import shutil
           import subprocess
           import sys
 
@@ -71,11 +94,6 @@ jobs:
           if not tests:
               raise SystemExit("XMB tests are missing")
           child_env = dict(os.environ, PSP_DOCK_PYTHON=sys.executable)
-          if sys.platform.startswith("linux"):
-              browser = shutil.which("google-chrome") or shutil.which("chromium")
-              if not browser:
-                  raise SystemExit("Chrome/Chromium is required for browser acceptance")
-              child_env["PSP_DOCK_CHROME"] = browser
           for test in tests:
               print(test, flush=True)
               subprocess.run(["node", str(test)], env=child_env, check=True)
