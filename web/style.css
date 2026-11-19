@@ -257,8 +257,11 @@ body{background:#03141c;overflow:hidden}
 .dock-session-choices button{display:flex;flex-direction:column;gap:8px;text-align:left;padding:20px 22px;border:1px solid #a0c9d12b;border-radius:8px;background:#a8d0d408;color:#e6f0f3;min-width:0;transition:background .16s,border-color .16s}
 .dock-session-choices button strong{font-weight:550;font-size:16px;line-height:1.3}
 .dock-session-choices button span{color:#8faebc;font-size:12px;line-height:1.6}
+.dock-session-choices #dock-session-remember{grid-column:1/-1;padding:12px 18px;font-size:12px}
+.dock-session-choices #dock-session-remember[aria-pressed="true"]{border-color:#9cd7d3a1;background:#96cbd216}
 .dock-session-choices button:hover:not(:disabled),.dock-session-choices button:focus-visible{border-color:#9cd7d3a1;background:#96cbd216}
 .dock-session-choices button:focus-visible,.dock-session-actions button:focus-visible{outline:2px solid #a8e6e8;outline-offset:3px}
+.dock-session[data-input="controller"] button:focus{outline:3px solid #a8e6e8;outline-offset:4px;border-color:#a8e6e8;background:#96cbd222}
 .dock-session-note{font-size:12px;line-height:1.7;color:#8da8b7;margin:20px 0 0;max-width:800px}
 .dock-session-error{font-size:13px;color:#edc3aa;line-height:1.7;padding:13px 16px;margin:20px 0 0;border-left:2px solid #e5b18b;background:#e0a6750a;overflow-wrap:anywhere}
 .dock-session-progress{margin-top:28px;padding:20px;border:1px solid #91bdc92b;border-radius:7px;background:#a2c5ca05}
@@ -295,7 +298,7 @@ body{background:#03141c;overflow:hidden}
 .xmb-hid.storage i{background:#ffcf7a;box-shadow:0 0 .6cqw #ffcf7a}
 .xmb-busy{font-size:1cqw;opacity:.85;animation:xmb-pulse 1.4s ease-in-out infinite}
 @keyframes xmb-pulse{50%{opacity:.35}}
-.xmb-cats{position:absolute;inset:0;transition:transform .28s cubic-bezier(.2,.7,.2,1),opacity .25s}
+.xmb-cats{position:absolute;inset:0;transition:opacity .25s}
 .xmb-cats.faded{opacity:.35}
 .xmb-cat{position:absolute;top:11cqw;width:10cqw;margin-left:-5cqw;display:grid;justify-items:center;gap:.6cqw;opacity:.55;background:none;padding:0;transition:opacity .25s,transform .25s}
 .xmb-cat svg{width:4.4cqw;height:4.4cqw;stroke:#fff;fill:none;stroke-width:1.05;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 .35cqw #ffffffaa) drop-shadow(0 0 1.2cqw #ffffff44)}
@@ -304,7 +307,7 @@ body{background:#03141c;overflow:hidden}
 .xmb-cat.on span{opacity:1}
 .xmb-badge{position:absolute;top:-.4cqw;right:2.2cqw;min-width:1.5cqw;height:1.5cqw;padding:0 .3cqw;border-radius:1cqw;background:#ffcf7a;color:#2a1b00;font-size:.95cqw;font-style:normal;font-weight:700;display:grid;place-items:center}
 .xmb-list{position:absolute;inset:0}
-.xmb-item{position:absolute;display:flex;align-items:center;gap:1.4cqw;cursor:pointer;white-space:nowrap;max-width:70cqw;transition:top .22s cubic-bezier(.2,.7,.2,1),left .28s,opacity .22s}
+.xmb-item{position:absolute;display:flex;align-items:center;gap:1.4cqw;cursor:pointer;white-space:nowrap;max-width:70cqw;transition:opacity .24s ease;will-change:transform,opacity}
 .xmb-ic{flex:none;width:7.2cqw;height:4cqw;border-radius:.3cqw;position:relative;overflow:hidden;display:grid;place-items:center;background:linear-gradient(135deg,#ffffff30,#ffffff08);box-shadow:0 .3cqw 1cqw #0006;transition:transform .2s,box-shadow .2s}
 .xmb-ic:before{content:attr(data-fallback);font-size:.75cqw;font-weight:700;letter-spacing:.06em;text-align:center;line-height:1.15;padding:0 .4cqw;white-space:normal;opacity:.85}
 .xmb-ic img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .3s}
@@ -312,8 +315,11 @@ body{background:#03141c;overflow:hidden}
 .xmb-ic.round{width:3.6cqw;height:3.6cqw;background:none;box-shadow:none;overflow:visible}
 .xmb-ic.round:before{content:none}
 .xmb-ic.round svg{width:2.1cqw;height:2.1cqw;stroke:#fff;fill:none;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;filter:drop-shadow(0 0 .3cqw #ffffff99)}
+.xmb-ic.xmb-installing{isolation:isolate}
+.xmb-install-ring{position:absolute;inset:-.38cqw;border:.26cqw solid #ffffff4d;border-top-color:#9debf5;border-right-color:#9debf5;border-radius:50%;pointer-events:none;animation:xmb-install-spin 1.1s linear infinite}
+@keyframes xmb-install-spin{to{transform:rotate(360deg)}}
 .xmb-tx{display:grid;gap:.25cqw;min-width:0}
-.xmb-tx b{font-weight:500;font-size:1.55cqw;text-shadow:0 0 .5cqw #0007;overflow:hidden;text-overflow:ellipsis}
+.xmb-tx b{font-weight:500;font-size:1.55cqw;text-shadow:0 0 .5cqw #0007;overflow:hidden;text-overflow:ellipsis;transition:font-size .2s ease}
 .xmb-tx small{font-size:1.05cqw;color:#d6e8ee;opacity:0;transition:opacity .2s;overflow:hidden;text-overflow:ellipsis;max-width:60cqw}
 .xmb-item.on .xmb-tx b{font-size:1.85cqw}
 .xmb-item.on .xmb-tx small{opacity:.9}
@@ -357,3 +363,17 @@ dialog{background:#000000d0;border:0;border-block:1px solid #ffffff8c;border-rad
 dialog::backdrop{background:#0008;backdrop-filter:none}
 .toast{background:#000a;color:#fff;border:0;border-radius:24px;box-shadow:none;bottom:9vh}
 @media(prefers-reduced-motion:reduce){.xmb-cats,.xmb-item,.xmb-side,.xmb-cat,.xmb{transition:none}.xmb-busy{animation:none}}
+@media(prefers-reduced-motion:reduce){.xmb-install-ring{animation:none;border-color:#9debf5}}
+/* The XMB owns an explicit motion preference. On overrides the OS
+   media query; Off (and System+Reduce) suppresses every XMB menu movement. */
+.xmb.xmb-motion-on{transition:background 1.2s!important}
+.xmb.xmb-motion-on .xmb-cats{transition:opacity .25s!important}
+.xmb.xmb-motion-on .xmb-item{transition:opacity .24s ease!important}
+.xmb.xmb-motion-on .xmb-cat{transition:opacity .25s,transform .25s!important}
+.xmb.xmb-motion-on .xmb-ic{transition:transform .2s,box-shadow .2s!important}
+.xmb.xmb-motion-on .xmb-ic img{transition:opacity .3s!important}
+.xmb.xmb-motion-on .xmb-tx small{transition:opacity .2s!important}
+.xmb.xmb-motion-on .xmb-tx b{transition:font-size .2s ease!important}
+.xmb.xmb-motion-on .xmb-game-background{transition:opacity .25s!important}
+.xmb.xmb-motion-on .xmb-side{transition:transform .24s cubic-bezier(.2,.7,.2,1)!important}
+.xmb.xmb-motion-off,.xmb.xmb-motion-off *,.xmb.xmb-motion-off *::before,.xmb.xmb-motion-off *::after{transition:none!important;animation:none!important}

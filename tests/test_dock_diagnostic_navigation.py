@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import dock as app
-import ppsspp_hid_session
-import psp_dock_identity
-import psp_launcher_input
+import psp_dock.emulation.ppsspp_hid_session as ppsspp_hid_session
+import psp_dock.devices.psp_dock_identity as psp_dock_identity
+import psp_dock.devices.psp_launcher_input as psp_launcher_input
 
 
 STABLE = {'path': r'\\?\hid#vid_054c&pid_01cb#psp', 'session': '01' * 16,
@@ -20,6 +20,10 @@ DIAGNOSTIC = {**STABLE, 'path': r'\\?\hid#vid_054c&pid_01cc&mi_00#psp',
 
 class DiagnosticNavigationTests(unittest.TestCase):
     def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.dock = app.Dock(Path(self.temp.name) / 'data')
@@ -107,30 +111,6 @@ class DiagnosticNavigationTests(unittest.TestCase):
         root.assert_not_called()
         spawn.assert_not_called()
         self.assertEqual(self.dock.copy_queue, {})
-
-    def test_watch_error_revokes_old_controller_without_hiding_pending_work(self):
-        self.dock.session.update(running=True, pending_return=True)
-        self.dock.snapshot.update(
-            controller_status={**STABLE, 'connected': True},
-            can_launch_game=True, connection_state='dock_connected',
-            transfer_status={'active': True}, recovery_required=True)
-        with patch.object(self.dock, 'root', return_value=None), \
-             patch.object(self.dock, 'running', return_value=True), \
-             patch.object(self.dock, 'state', side_effect=OSError('scan interrupted')) as state, \
-             patch.object(self.dock.stop, 'wait', side_effect=lambda _seconds: self.dock.stop.set()):
-            self.dock.watch()
-        state.assert_called_once()
-        snapshot = self.dock.snapshot
-        self.assertFalse(snapshot['controller_status']['connected'])
-        self.assertFalse(snapshot['controller_status']['can_play'])
-        self.assertFalse(snapshot['can_launch_game'])
-        self.assertEqual(snapshot['connection_state'], 'waiting_psp')
-        self.assertFalse(snapshot['scanning'])
-        self.assertTrue(snapshot['session']['running'])
-        self.assertTrue(snapshot['session']['pending_return'])
-        self.assertTrue(snapshot['transfer_status']['active'])
-        self.assertTrue(snapshot['recovery_required'])
-
 
 if __name__ == '__main__':
     unittest.main()

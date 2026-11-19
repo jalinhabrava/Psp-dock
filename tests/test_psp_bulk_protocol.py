@@ -5,7 +5,7 @@ import struct
 import tempfile
 import unittest
 
-from psp_bulk_protocol import (
+from psp_dock.devices.psp_bulk_protocol import (
     BulkProtocolError,Frame,Op,MAX_PAYLOAD,
     InProcessPSPFileServer,SimulatedHost,validated_path,
 )

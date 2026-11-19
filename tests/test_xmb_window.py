@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch
-import xmb_window as xmb
+import psp_dock.core.xmb_window as xmb
 from dock import launch_xmb_window
 
 TITLE=xmb.TITLE
@@ -9,6 +9,12 @@ GOOD={'handle': 333, 'title':TITLE,
 
 
 class XmbWindowTests(unittest.TestCase):
+    def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
+
     def test_only_unique_exact_app_window_is_selected(self):
         self.assertEqual(xmb.unique_target([GOOD]),333)
         self.assertIsNone(xmb.unique_target([]))

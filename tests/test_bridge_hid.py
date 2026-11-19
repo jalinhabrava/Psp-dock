@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import bridge_hid as hid
+import psp_dock.devices.bridge_hid as hid
 
 SESSION = bytes(range(1, 17))
 PATH = r"\\?\hid#vid_054c&pid_01cb#test#{00000000-0000-0000-0000-000000000000}"
@@ -161,8 +161,10 @@ class BridgeHidTests(unittest.TestCase):
             self.assertFalse(outcome["storage_confirmed"])
             self.assertEqual(api.sent, [])
 
-    def test_feature_extension_keeps_fusa_input_and_output_widths(self):
-        source = (Path(__file__).parents[1] / "homebrew/bridge-hid/report_descriptor.h").read_text()
+    def test_final_0308_descriptor_keeps_fusa_pad_and_native_feature_widths(self):
+        # Compare against the shipping PSP 0308 controller descriptor, not a
+        # retired diagnostic homebrew implementation.
+        source = (Path(__file__).parents[1] / "homebrew/native-dock/native_report_descriptor.h").read_text()
         descriptor = bytes(int(v, 16) for v in re.findall(r"0x([0-9a-f]{2})", source))
         report_size = report_count = 0
         bits = {0x80: 0, 0x90: 0, 0xB0: 0}
@@ -181,7 +183,7 @@ class BridgeHidTests(unittest.TestCase):
             elif tag & 0xFC in bits:
                 bits[tag & 0xFC] += report_size * report_count
             i += n + 1
-        self.assertEqual(bits, {0x80: 64, 0x90: 32, 0xB0: 256})
+        self.assertEqual(bits, {0x80: 64, 0x90: 32, 0xB0: 512})
         self.assertEqual(report_ids, [])
 
 

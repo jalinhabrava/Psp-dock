@@ -43,7 +43,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         self.change_pc_after_game()
         self.authorize_exit_from_hid()
         self.assertEqual(self.save.read_bytes(), b'INITIAL')
-        with patch('bridge_hid.probe', return_value=HID_ABSENT) as hid:
+        with patch('psp_dock.devices.bridge_hid.probe', return_value=HID_ABSENT) as hid:
             final = self.dock.complete_authorized_return()
         hid.assert_called_once()
         self.assertFalse(final['actions'])
@@ -63,7 +63,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
             self.dock.request_exit()
             self.assertTrue(self.dock.session['exit_requested'])
             self.assertTrue(self.dock.session['return_sync_authorized'])
-        with patch('bridge_hid.probe',return_value=HID_ABSENT):
+        with patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT):
             final=self.dock.complete_authorized_return()
         self.assertFalse(final['actions'])
         self.assertFalse(self.dock.session['pending_return'])
@@ -72,14 +72,14 @@ class ExplicitDockReturnTests(unittest.TestCase):
 
     def test_never_synchronize_just_because_storage_reappears(self):
         self.change_pc_after_game()
-        with patch('bridge_hid.probe', side_effect=AssertionError('Not authorized')):
+        with patch('psp_dock.devices.bridge_hid.probe', side_effect=AssertionError('Not authorized')):
             self.assertIsNone(self.dock.complete_authorized_return())
         self.assertEqual(self.save.read_bytes(),b'INITIAL')
 
     def test_hid_still_present_blocks_return(self):
         self.change_pc_after_game()
         self.authorize_exit_from_hid()
-        with patch('bridge_hid.probe', return_value=HID_PRESENT):
+        with patch('psp_dock.devices.bridge_hid.probe', return_value=HID_PRESENT):
             with self.assertRaisesRegex(ValueError,'HID'):
                 self.dock.complete_authorized_return()
         self.assertEqual(self.save.read_bytes(),b'INITIAL')
@@ -97,7 +97,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         self.change_pc_after_game()
         self.authorize_exit_from_hid()
         self.save.write_bytes(b'CHANGED_IN_PSP_TOO')
-        with patch('bridge_hid.probe', return_value=HID_ABSENT):
+        with patch('psp_dock.devices.bridge_hid.probe', return_value=HID_ABSENT):
             final = self.dock.complete_authorized_return()
         self.assertTrue(final['conflicts'])
         self.assertEqual(self.save.read_bytes(),b'CHANGED_IN_PSP_TOO')
@@ -111,7 +111,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         def fails(*args, **kwargs):
             assert self.dock.session['return_sync_attempted']
             raise OSError('Simulated PC copy interruption')
-        with patch('bridge_hid.probe',return_value=HID_ABSENT),\
+        with patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT),\
              patch('dock.copy_slot',side_effect=fails):
             with self.assertRaisesRegex(OSError,'interruption'):
                 self.dock.complete_authorized_return()
@@ -120,7 +120,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         durable=read_json(self.dock.data/'session.json',{})
         self.assertTrue(durable['return_sync_attempted'])
         self.assertFalse(durable['return_sync_authorized'])
-        with patch('bridge_hid.probe',side_effect=AssertionError('No blind retry')):
+        with patch('psp_dock.devices.bridge_hid.probe',side_effect=AssertionError('No blind retry')):
             self.assertIsNone(self.dock.complete_authorized_return())
 
     def test_watch_restores_saves_only_after_explicit_exit(self):
@@ -129,7 +129,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         def finish(_delay):
             self.dock.stop.set()
         with patch.object(self.dock.stop,'wait',side_effect=finish),\
-             patch('bridge_hid.probe',return_value=HID_ABSENT):
+             patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT):
             self.dock.watch()
         self.assertEqual(self.save.read_bytes(),b'GAME_CHANGED_ON_PC')
         self.assertEqual(self.dock.snapshot['session']['return_result'],'verified')
@@ -142,7 +142,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         def one_cycle(_delay):
             self.dock.stop.set()
         with patch.object(self.dock.stop,'wait',side_effect=one_cycle), \
-             patch('bridge_hid.probe',return_value=HID_ABSENT):
+             patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT):
             self.dock.watch()
         self.assertEqual(callbacks,['close'])
         self.assertEqual(self.dock.session['return_result'],'verified')
@@ -157,7 +157,7 @@ class ExplicitDockReturnTests(unittest.TestCase):
         def one_cycle(_delay):
             self.dock.stop.set()
         with patch.object(self.dock.stop,'wait',side_effect=one_cycle), \
-             patch('bridge_hid.probe',return_value=HID_ABSENT):
+             patch('psp_dock.devices.bridge_hid.probe',return_value=HID_ABSENT):
             self.dock.watch()
         self.assertEqual(callbacks,[])
         self.assertEqual(self.dock.session['return_result'],'conflicts')

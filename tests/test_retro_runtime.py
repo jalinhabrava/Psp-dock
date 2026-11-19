@@ -3,8 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from bridge_hid import VID, PID
-from retro_runtime import (joypad_autoconfig, prepare_joypad_profile,
+from psp_dock.devices.bridge_hid import VID, PID
+from psp_dock.emulation.retro_runtime import (joypad_autoconfig, prepare_joypad_profile,
                            private_save_paths, retroarch_arguments)
 
 

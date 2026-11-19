@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from dock import Dock
-from retro_runtime import private_save_paths
+from psp_dock.emulation.retro_runtime import private_save_paths
 
 
 class PSPRetroSRAMFlow(unittest.TestCase):
@@ -26,7 +26,8 @@ class PSPRetroSRAMFlow(unittest.TestCase):
         self.usb.start()
         self.addCleanup(self.usb.stop)
         self.dock=Dock(self.base/'data')
-        self.dock.settings({'psp_root':str(self.psp)})
+        # Isolate SRAM regression tests from the real PC-only downloader.
+        self.dock.settings({'psp_root':str(self.psp),'retro_install_policy':'off'})
         self.rom=self.dock.retro_catalog()['roms'][0]
 
     def rows(self):
@@ -53,7 +54,7 @@ class PSPRetroSRAMFlow(unittest.TestCase):
              close_after_verified_return=True)
 
     def check_return(self):
-        with patch('bridge_hid.probe',return_value={'supported':True,'errors':[], 'devices':[]}):
+        with patch('psp_dock.devices.bridge_hid.probe',return_value={'supported':True,'errors':[], 'devices':[]}):
             return self.dock.complete_authorized_return()
 
     def test_import_requires_explicit_consent_and_is_bidirectional(self):

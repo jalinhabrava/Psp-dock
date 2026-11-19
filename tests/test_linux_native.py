@@ -8,11 +8,12 @@ import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
+import sys
 from unittest.mock import patch
 
-import linux_native as linux
-import native_dock as native
-from linux_input import decode_input, PSPLinuxReader
+from psp_dock.devices import linux_native as linux
+from psp_dock.devices import native_dock as native
+from psp_dock.devices.linux_input import decode_input, PSPLinuxReader
 
 SESSION = '12' * 16
 
@@ -80,6 +81,7 @@ class LinuxFixture:
                 'revision': int((self.usb / 'bcdDevice').read_text(), 16), 'status': asdict(current)}
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class StorageAndTransportTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -94,7 +96,7 @@ class StorageAndTransportTests(unittest.TestCase):
         self.assertEqual(self.system.devices()[0]['root'], str(self.fixture.card))
 
     def test_revision_and_descriptor_gate_fail_before_any_device_open(self):
-        for value in ('0300', '0301', '0303', '0207'):
+        for value in ('0300', '0301', '0302', '0207'):
             (self.fixture.usb / 'bcdDevice').write_text(value)
             self.assertEqual(self.system.paths(), [])
             self.assertEqual(self.system.devices(), [])
@@ -144,14 +146,16 @@ class StorageAndTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'mismo padre USB'):
             transport.observe(self.system.devices())
 
-    def test_complete_phase_flow_unmounts_only_after_safe_ack(self):
+    def test_legacy_0303_flow_unmounts_only_after_safe_ack(self):
         transport = linux.create_transport(self.system)
-        current = [status()]
+        def old_status(phase=native.STORAGE):
+            return status(phase, firmware_revision=0x0303, capabilities=7, build_id=0x03030001)
+        current = [old_status()]
         transport._probe = lambda: self.fixture.device(current[0])
         def phase(path, session, target):
             self.assertEqual(path, self.fixture.path)
             self.assertEqual(session, SESSION)
-            current[0] = status(target)
+            current[0] = old_status(target)
             return {'accepted': True}
         transport._change_phase = phase
         transport.observe(self.system.devices())
@@ -199,8 +203,8 @@ class StorageAndTransportTests(unittest.TestCase):
         api = linux.LinuxHid(self.system)
         api.handles[17] = self.fixture.path
         self.assertEqual(api.attributes(17)['revision'], 0x0100)
-        (self.fixture.usb / 'bcdDevice').write_text('0302')
-        self.assertEqual(api.attributes(17)['revision'], 0x0302)
+        (self.fixture.usb / 'bcdDevice').write_text('0308')
+        self.assertEqual(api.attributes(17)['revision'], 0x0308)
         # A retired 32-byte feature descriptor is rejected even if Sony
         # still publishes the otherwise admissible bcdDevice 0100.
         (self.fixture.usb / 'bcdDevice').write_text('0100')
@@ -232,11 +236,11 @@ class StorageAndTransportTests(unittest.TestCase):
                 current[0] = status(phase, sequence=seq, result=2,
                     activity=activity if op == native.HOST_PROGRESS else native.PHASE_ACTIVITIES[phase][0],
                     unit=unit, completed=done, total=total)
-        with patch('linux_native.LinuxHid', return_value=Api()):
+        with patch('psp_dock.devices.linux_native.LinuxHid', return_value=Api()):
             transport = linux.create_transport(self.system)
             observation = transport.observe(self.system.devices())
             self.assertEqual(observation['usb_revision'], 0x0100)
-            self.assertEqual(observation['firmware_revision'], 0x0302)
+            self.assertEqual(observation['firmware_revision'], 0x0308)
             with self.assertRaises(ValueError):
                 transport.assert_storage(self.fixture.card)
             with self.assertRaises(ValueError):
@@ -270,6 +274,7 @@ class StorageAndTransportTests(unittest.TestCase):
             self.assertIsNone(linux.create_transport().observe([]))
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class InputAndIoctlTests(unittest.TestCase):
     def test_wire_layout_controls_and_diagonal(self):
         # X + TRIANGLE + SELECT + HOME, with NE hat.
@@ -284,26 +289,46 @@ class InputAndIoctlTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 decode_input(bad)
 
-    def test_feature_ioctl_includes_zero_report_id_and_requires_full_transfer(self):
+    def test_feature_get_and_fragmented_output_preserve_the_current_wire_contract(self):
+        import binascii
         import fcntl
         api = linux.LinuxHid()
         current = status()
         payload = report(current)
+        command = native.encode_phase(SESSION, 1, native.CONTROLLER)
+        packets = []
         def ioctl(fd, request, buffer, mutate):
-            self.assertEqual(len(buffer), 65)
             self.assertEqual(buffer[0], 0)
             self.assertTrue(mutate)
             if request == linux.feature_ioctl(7):
+                self.assertEqual(len(buffer), 65)
                 buffer[:] = payload
-            return 65
+                return 65
+            self.assertEqual(request, linux.feature_ioctl(0x0b, 5))
+            self.assertEqual(len(buffer), 5)
+            packets.append(bytes(buffer))
+            return 5
         with patch.object(fcntl, 'ioctl', side_effect=ioctl):
             self.assertEqual(api.get(10), current)
-            api.set(10, native.encode_phase(SESSION, 1, native.CONTROLLER))
+            api.set(10, command)
+        self.assertEqual(len(packets), 33)
+        self.assertEqual([p[1] for p in packets[:-1]], list(range(0xc0, 0xe0)))
+        self.assertEqual(len({p[2] for p in packets}), 1)
+        assembled = b''.join(p[3:] for p in packets[:-1])
+        self.assertEqual(assembled, command[1:])
+        self.assertEqual(packets[-1][1], 0xe0)
+        self.assertEqual(int.from_bytes(packets[-1][3:], 'little'), binascii.crc_hqx(assembled, 0xffff))
+        with patch.object(fcntl, 'ioctl', return_value=4) as short:
+            with self.assertRaises(ValueError):
+                api.set(10, command)
+            self.assertEqual(short.call_count, 1)
         with patch.object(fcntl, 'ioctl', return_value=64):
             with self.assertRaises(ValueError):
                 api.get(10)
+        with patch.object(fcntl, 'ioctl') as io:
             with self.assertRaises(ValueError):
-                api.set(10, native.encode_phase(SESSION, 1, native.CONTROLLER))
+                api.set(10, command[:-1] + b'X')
+            io.assert_not_called()
 
     def test_reader_preserves_held_input_but_releases_on_phase_change(self):
         current = [status(activity=native.CHOOSING)]
@@ -328,7 +353,11 @@ class InputAndIoctlTests(unittest.TestCase):
         self.addCleanup(reader.close)
         observed = {'path': '/dev/hidraw3', 'session_id': SESSION, 'usb_parent': '/sys/fake'}
         self.assertTrue(reader.read(observed)['accept'])
-        self.assertTrue(reader.read(observed)['accept'])
+        # 0308 may use SET_IDLE=0: an unchanged held button emits no more
+        # INPUT reports. The independently fresh PDK2 response authorizes
+        # retaining that state, regardless of elapsed input-report time.
+        for _ in range(100):
+            self.assertTrue(reader.read(observed)['accept'])
         current[0] = status(native.COPYING)
         with self.assertRaises(ValueError):
             reader.read(observed)
@@ -336,13 +365,22 @@ class InputAndIoctlTests(unittest.TestCase):
         current[0] = status(activity=native.CHOOSING)
         self.assertFalse(reader.read(observed)['accept'])
         for value in (status(host_confirmed=False, activity=native.WAITING),
-                      status(activity=native.INVENTORY), status(activity=native.SYNC_IN)):
+                      status(activity=native.INVENTORY), status(activity=native.SYNC_IN),
+                      status(connected=False), status(session='34'*16), status(pending=True),
+                      status(exit_requested=True), status(shutdown_requested=True)):
             current[0] = value
             with self.assertRaises(ValueError):
                 reader.read(observed)
+        current[0] = status(activity=native.CHOOSING)
+        reports.append(bytes([127, 127, 127, 127, 16, 0, 0, 0]))
+        self.assertTrue(reader.read(observed)['accept'])
+        with patch.object(Api, 'get', side_effect=OSError('unplugged')):
+            with self.assertRaises(OSError):
+                reader.read(observed)
+        self.assertFalse(reader.read(observed)['accept'])
 
     def test_extended_feature_rejects_retired_firmware_wrong_build_and_capabilities(self):
-        for invalid in (status(firmware_revision=0x0300), status(firmware_revision=0x0301),
+        for invalid in (status(firmware_revision=0x0300), status(firmware_revision=0x0301), status(firmware_revision=0x0302),
                         status(build_id=native.BUILD_ID + 1), status(capabilities=1),
                         status(protocol_version=2)):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):

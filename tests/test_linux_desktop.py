@@ -3,11 +3,13 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 from unittest.mock import Mock, patch
 
-import linux_desktop as desktop
+from psp_dock.core import linux_desktop as desktop
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class DataAndWindowTests(unittest.TestCase):
     def test_xdg_location_is_private_and_demo_is_separate(self):
         env = {'XDG_DATA_HOME': '/home/player/custom-data'}
@@ -42,6 +44,7 @@ class DataAndWindowTests(unittest.TestCase):
                 desktop.launch_xmb_window(url, open_url=Mock(side_effect=AssertionError('Opened')))
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class ProcessRecoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -89,6 +92,7 @@ class ProcessRecoveryTests(unittest.TestCase):
         self.assertEqual(desktop.running_emulators(proc_root=self.root,uid=os.getuid()+1), [])
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class ManualLauncherTests(unittest.TestCase):
     def test_explicit_linux_path_requires_existing_dock_and_rejects_symlink(self):
         import start_dock

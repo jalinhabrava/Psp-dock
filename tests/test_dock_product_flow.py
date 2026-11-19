@@ -10,7 +10,7 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from dock_product_flow import (FlowCallbacks, ProductFlow, ProductFlowError,
+from psp_dock.core.dock_product_flow import (FlowCallbacks, ProductFlow, ProductFlowError,
                                ProductFlowCancelled, plan_session_return)
 
 
@@ -109,6 +109,84 @@ class ProductFlowTests(unittest.TestCase):
         self.assertEqual(self.flow.snapshot()["phase"], "ready")
         self.assertFalse(self.flow.snapshot()["blocking"])
 
+    def test_orphan_native_close_only_offers_explicit_finalization_without_inventory(self):
+        closing = {**storage(), 'storage_ready':False, 'phase':1,
+                   'shutdown_pending':True, 'shutdown_cancel':True, 'exit_requested':True}
+        self.flow.observe(closing)
+        offer = self.flow.snapshot()
+        self.assertEqual(offer['phase'], 'attention')
+        self.assertTrue(offer['can_retry'])
+        self.assertFalse(self.flow.advance())
+        self.assertEqual(self.adapter.names(), [])
+        self.flow.retry(offer['offer_id'])
+        self.assertTrue(self.flow.advance())
+        self.assertEqual(self.adapter.names(), ['finalize_exit'])
+        self.assertEqual(self.adapter.calls[0][1]['purpose'], 'cancel')
+
+    def test_restart_presents_welcome_without_erasing_recovery_or_repeating_work(self):
+        self.offer()
+        self.flow.request_cancel()
+        self.adapter.handlers['finalize_exit'] = lambda ctx: (_ for _ in ()).throw(
+            ProductFlowError('USB terminal not acknowledged'))
+        self.flow.advance()
+        before = self.path.read_bytes()
+        self.flow = self.new_flow()
+        self.assertTrue(self.flow.snapshot()['startup_recovery'])
+        self.assertEqual(self.flow.snapshot()['resume_phase'], 'finalizing')
+        self.assertEqual(self.path.read_bytes(), before)
+        closing = {**storage(), 'storage_ready':False, 'phase':1,
+                   'shutdown_pending':True, 'shutdown_cancel':True, 'exit_requested':True}
+        self.flow.observe(closing)
+        state = self.flow.snapshot()
+        self.assertTrue(state['startup_recovery'] and state['can_retry'])
+        self.assertFalse(self.flow.advance())
+        self.assertEqual(self.adapter.names(), ['inventory','finalize_exit'])
+        # This exact snapshot is what the browser must receive to expose
+        # the finalization Retry; previously resume_phase was omitted.
+        self.assertEqual(json.loads(json.dumps(state))['resume_phase'], 'finalizing')
+        del self.adapter.handlers['finalize_exit']
+        self.flow.retry(state['offer_id'])
+        self.assertFalse(self.flow.snapshot()['startup_recovery'])
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory','finalize_exit','finalize_exit'])
+
+    def test_fresh_start_and_current_failure_are_not_mislabelled_as_old_recovery(self):
+        self.assertFalse(self.flow.snapshot()['startup_recovery'])
+        self.flow.observe(storage())
+        self.flow.halt('current connection failed')
+        self.assertFalse(self.flow.snapshot()['startup_recovery'])
+        restarted = self.new_flow()
+        self.assertTrue(restarted.snapshot()['startup_recovery'])
+        self.assertFalse(restarted.advance())
+
+    def test_native_close_recovery_requires_exact_nonce_and_never_repeats_sync(self):
+        self.offer()
+        self.flow.request_cancel()
+        def blocked(context):
+            raise ProductFlowError('Synthetic pending terminal close')
+        self.adapter.handlers['finalize_exit'] = blocked
+        self.flow.advance()
+        self.flow = self.new_flow()
+        closing = {**storage(), 'storage_ready':False, 'phase':1,
+                   'shutdown_pending':True, 'shutdown_cancel':True, 'exit_requested':True}
+        self.flow.observe({**closing, 'session_id':'another-session'})
+        self.assertFalse(self.flow.snapshot()['can_retry'])
+        self.flow.observe(closing)
+        offer = self.flow.snapshot()
+        self.assertTrue(offer['can_retry'])
+        del self.adapter.handlers['finalize_exit']
+        self.flow.retry(offer['offer_id'])
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory', 'finalize_exit', 'finalize_exit'])
+        self.assertEqual(self.flow.snapshot()['phase'], 'safe_to_disconnect')
+
+    def test_native_close_observation_never_grants_storage_or_controller_permission(self):
+        closing = {**storage(), 'storage_ready':False, 'shutdown_pending':True}
+        for changes in ({'storage_ready':True}, {'controller_ready':True},
+                        {'safe_ready':True}, {'shutdown_cancel':'true'}):
+            with self.subTest(changes=changes), self.assertRaises(ProductFlowError):
+                self.flow.observe({**closing, **changes})
+
     def test_early_psp_exit_skips_inventory_choice_and_all_sync_callbacks(self):
         self.flow.observe({**storage(), 'exit_requested':True})
         self.assertEqual(self.flow.snapshot()['phase'], 'finalizing')
@@ -181,6 +259,41 @@ class ProductFlowTests(unittest.TestCase):
         self.flow.set_game_running(False)
         with self.assertRaises(ProductFlowError):
             self.flow.request_cancel()
+
+    def test_failed_read_only_inventory_can_cancel_without_retrying_handshake(self):
+        def fail(context):
+            raise ValueError('HOST_BEGIN confirmation missing')
+        self.adapter.handlers['inventory'] = fail
+        self.flow.observe(storage())
+        self.flow.advance()
+        self.assertEqual(self.flow.snapshot()['phase'], 'attention')
+        self.assertTrue(self.flow.snapshot()['can_cancel'])
+        self.assertTrue(self.flow.snapshot()['can_close_app'])
+        self.flow.request_cancel()
+        self.assertEqual(self.flow.snapshot()['phase'], 'finalizing')
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory', 'finalize_exit'])
+        self.assertEqual(self.flow.snapshot()['phase'], 'safe_to_disconnect')
+
+    def test_failed_write_is_not_offered_as_unreviewed_cancel(self):
+        self.flow.choose('saves', self.offer())
+        self.adapter.handlers['sync_initial'] = lambda context: (_ for _ in ()).throw(OSError('write interrupted'))
+        self.flow.advance()
+        self.assertFalse(self.flow.snapshot()['can_cancel'])
+        self.assertTrue(self.flow.snapshot()['can_close_app'])
+        self.flow.request_cancel()
+        self.assertEqual(self.flow.snapshot()['phase'], 'attention')
+        self.assertFalse(self.flow.advance())
+        self.assertNotIn('finalize_exit', self.adapter.names())
+
+    def test_failed_entry_disconnected_can_close_app_without_claiming_safe_or_retry(self):
+        self.flow.observe(storage())
+        self.flow.halt('HOST_BEGIN confirmation missing')
+        self.flow.observe(None)
+        state = self.flow.snapshot()
+        self.assertTrue(state['can_close_app'])
+        self.assertFalse(state['can_close'] or state['can_cancel'] or state['can_retry'])
+        self.assertEqual(self.adapter.names(), [])
 
     def test_choice_selects_exact_initial_callback_policy(self):
         for choice in ("saves", "games", "all"):
@@ -383,7 +496,7 @@ class ProductFlowTests(unittest.TestCase):
     def test_persistence_failure_before_intent_never_calls_adapter(self):
         offer_id = self.offer()
         self.flow.choose("all", offer_id)
-        with patch("dock_product_flow._atomic_json", side_effect=OSError("disk full")):
+        with patch("psp_dock.core.dock_product_flow._atomic_json", side_effect=OSError("disk full")):
             with self.assertRaises(OSError):
                 self.flow.advance()
         self.assertEqual(self.adapter.names(), ["inventory"])
@@ -393,7 +506,7 @@ class ProductFlowTests(unittest.TestCase):
         self.ready()
         self.flow.request_copy(GAME)
         self.flow.observe(storage())
-        import dock_product_flow as module
+        import psp_dock.core.dock_product_flow as module
         real_save = module._atomic_json
         attempts = 0
         def save(path, value):
@@ -402,7 +515,7 @@ class ProductFlowTests(unittest.TestCase):
             if attempts >= 2:
                 raise OSError("disk full after committed copy")
             return real_save(path, value)
-        with patch("dock_product_flow._atomic_json", side_effect=save):
+        with patch("psp_dock.core.dock_product_flow._atomic_json", side_effect=save):
             self.flow.advance()
         self.assertEqual(self.flow.snapshot()["phase"], "attention")
         self.assertTrue(self.flow.snapshot()["recovery_required"])

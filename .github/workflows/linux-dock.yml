@@ -6,9 +6,12 @@ on:
   pull_request:
     paths:
       - "*.py"
+      - "psp_dock/**"
+      - "start-linux.sh"
       - "tests/**"
       - "web/**"
       - "linux/**"
+      - "docs/LINUX.md"
       - ".github/workflows/linux-dock.yml"
   workflow_dispatch:
 
@@ -16,7 +19,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: linux-dock-${{ github.ref }}
+  group: linux-dock-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -27,11 +30,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            python: "3.10"
+            python: "3.12"
           - os: windows-2022
             python: "3.12"
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     env:
       PSP_DOCK_TEST_NO_REAL_USB: "1"
     steps:
@@ -39,51 +42,77 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
       - name: Import application without accessing USB
-        run: python -c "import dock, native_dock, dock_product_flow, dock_product_session, retro_runtime, storage_layout"
-      - name: Protocol, product session, emulator and storage regression
+        run: python -c "import dock; from psp_dock.devices import native_dock, native_shutdown, linux_native, linux_shutdown; from psp_dock.core import dock_product_flow, dock_product_session, storage_layout; from psp_dock.emulation import retro_runtime, linux_runtime"
+      - name: Full Python regression without physical USB
         shell: python
         run: |
           import sys
           import unittest
 
-          patterns = [
-              "test_native_dock.py",
-              "test_dock_product_flow.py",
-              "test_dock_product_session.py",
-              "test_retro_runtime.py",
-              "test_storage_layout.py",
-              "test_start_dock.py",
-          ]
-          suite = unittest.TestSuite()
-          for pattern in patterns:
-              found = unittest.defaultTestLoader.discover("tests", pattern=pattern)
-              if found.countTestCases() == 0:
-                  raise SystemExit("No tests found for " + pattern)
-              suite.addTests(found)
+          suite = unittest.defaultTestLoader.discover("tests", pattern="test_*.py")
+          if suite.countTestCases() == 0:
+              raise SystemExit("Python tests are missing")
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           sys.exit(0 if result.wasSuccessful() else 1)
       - name: Browser menu and controller regression
         shell: python
         run: |
           from pathlib import Path
+          import os
+          import shutil
           import subprocess
+          import sys
 
-          tests = sorted(Path("tests").glob("xmb_*.test.js"))
+          tests = sorted(Path("tests").glob("*.test.js"))
           if not tests:
               raise SystemExit("XMB tests are missing")
+          child_env = dict(os.environ, PSP_DOCK_PYTHON=sys.executable)
+          if sys.platform.startswith("linux"):
+              browser = shutil.which("google-chrome") or shutil.which("chromium")
+              if not browser:
+                  raise SystemExit("Chrome/Chromium is required for browser acceptance")
+              child_env["PSP_DOCK_CHROME"] = browser
           for test in tests:
               print(test, flush=True)
-              subprocess.run(["node", str(test)], check=True)
-      - name: Linux adapters with synthetic devices
+              subprocess.run(["node", str(test)], env=child_env, check=True)
+      - name: Package the Linux preview
         if: runner.os == 'Linux'
         shell: python
         run: |
+          import hashlib
+          from pathlib import Path
+          import subprocess
           import sys
-          import unittest
+          import tarfile
+          import tempfile
 
-          suite = unittest.defaultTestLoader.discover("tests", pattern="test_linux*.py")
-          if suite.countTestCases() == 0:
-              raise SystemExit("Linux adapter tests are missing")
-          result = unittest.TextTestRunner(verbosity=2).run(suite)
-          sys.exit(0 if result.wasSuccessful() else 1)
+          archive = Path("PSP-Dock-Linux-preview.tar.gz")
+          subprocess.run([
+              "git", "archive", "--format=tar.gz", "--prefix=PSP-Dock-Linux/",
+              "--output=" + str(archive), "HEAD", "dock.py", "start_dock.py",
+              "start-linux.sh", "psp_dock", "web", "linux", "docs/LINUX.md",
+              "texture_catalog_sources.json",
+              "LICENSE.md", "NOTICE.md", "THIRD_PARTY_NOTICES.md",
+          ], check=True)
+          with tempfile.TemporaryDirectory() as directory:
+              with tarfile.open(archive) as package:
+                  package.extractall(directory, filter="data")
+              root = Path(directory) / "PSP-Dock-Linux"
+              if not root.joinpath("start-linux.sh").stat().st_mode & 0o111:
+                  raise SystemExit("The Linux launcher must be executable")
+              subprocess.run([sys.executable, "-c", "import dock, start_dock; assert dock.linux_host()"],
+                             cwd=root, check=True)
+          checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+          Path(str(archive) + ".sha256").write_text(checksum + "  " + archive.name + "\n")
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: runner.os == 'Linux'
+        with:
+          name: PSP-Dock-Linux-preview
+          path: |
+            PSP-Dock-Linux-preview.tar.gz
+            PSP-Dock-Linux-preview.tar.gz.sha256
+          if-no-files-found: error

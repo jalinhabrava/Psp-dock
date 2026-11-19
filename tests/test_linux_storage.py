@@ -1,11 +1,13 @@
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 
-from linux_storage import fixed_local_directory
-from storage_layout import fixed_local_folder
+from psp_dock.core.linux_storage import fixed_local_directory
+from psp_dock.core.storage_layout import fixed_local_folder
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class LinuxStorageTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -84,6 +86,15 @@ class LinuxStorageTests(unittest.TestCase):
         (members / 'sdz').symlink_to(removable, target_is_directory=True)
         with self.assertRaises(ValueError):
             self.check()
+
+    def test_bind_mount_aliases_cannot_bypass_directory_overlap_guards(self):
+        self.target.parent.mkdir()
+        for extra in (
+                f'31 30 259:1 /other {self.target.parent} rw - ext4 /dev/nvme0n1p1 rw\n',
+                '31 30 259:1 / /alias rw - ext4 /dev/nvme0n1p1 rw\n'):
+            self.mounts.write_text('30 1 259:1 / / rw - ext4 /dev/nvme0n1p1 rw\n' + extra)
+            with self.assertRaisesRegex(ValueError, 'bind'):
+                self.check()
 
 
 if __name__ == '__main__':

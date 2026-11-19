@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from psp_artwork import SECTOR
-from psp_xmb_media import (
+from psp_dock.media.psp_artwork import SECTOR
+from psp_dock.media.psp_xmb_media import (
     XMBAssetCache, convert_at3_to_mp3, media_key, read_resource, valid_at3,
 )
 from tests.test_psp_artwork import PNG, rec, write_fixture_iso, write_fixture_cso
@@ -86,7 +86,7 @@ class XMBMediaTests(unittest.TestCase):
         write_fixture_iso(iso)
         self.assertEqual(c.ensure(k,'icon',iso),PNG)
         self.assertEqual(c.cached(k,'icon'),PNG)
-        with patch('psp_xmb_media.read_resource',side_effect=AssertionError('no duplicate USB reads')):
+        with patch('psp_dock.media.psp_xmb_media.read_resource',side_effect=AssertionError('no duplicate USB reads')):
             self.assertEqual(c.ensure(k,'icon',iso),PNG)
         self.assertIsNone(c.cached(media_key(volume='SONY-002',game=g),'icon'))
         with self.assertRaises(ValueError):

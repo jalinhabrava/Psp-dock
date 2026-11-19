@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from unittest.mock import patch,MagicMock
 
-import ppsspp_windows_flow as flow
+import psp_dock.emulation.ppsspp_windows_flow as flow
 
 
 BASE = """[ControlMapping]
@@ -68,7 +68,7 @@ class HomePauseAndFocusTests(unittest.TestCase):
             self.assertFalse(flow.focus_process_window(400))
 
     def test_after_ppsspp_closes_we_restore_only_our_xmb(self):
-        with patch("xmb_window.maximize_existing_xmb",return_value=True) as target:
+        with patch("psp_dock.core.xmb_window.maximize_existing_xmb",return_value=True) as target:
             self.assertTrue(flow.return_to_xmb())
             target.assert_called_once()
 

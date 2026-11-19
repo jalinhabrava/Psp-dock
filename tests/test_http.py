@@ -61,12 +61,56 @@ class HTTPContract(unittest.TestCase):
         self.assertTrue(all(g['availability']=='ready' for g in state['games']))
     def test_post_without_token_rejected(self):
         self.assertEqual(self.request('/api/sync',{},token=False)[0],403)
+        self.assertEqual(self.request('/api/ui-sound',{'sound':'cursor','at_ms':time.time()*1000},token=False)[0],403)
+
+    def test_bilingual_ui_catalog_is_served_from_fixed_allowlist(self):
+        # A self-contained Windows executable must ship the local dictionary.
+        # It is static UI data, never a PSP or local-PC filesystem proxy.
+        for route, text in (('/', b'/i18n.js'), ('/i18n.js', b'DockI18n'),
+                            ('/app.js', b'function'), ('/style.css', b'{')):
+            with urllib.request.urlopen(self.url + route, timeout=10) as response:
+                self.assertEqual(response.status, 200)
+                self.assertIn(text, response.read())
+        with self.assertRaises(urllib.error.HTTPError) as missing:
+            urllib.request.urlopen(self.url + '/../../settings.json', timeout=10)
+        self.assertNotEqual(missing.exception.code, 200)
+
+    def test_ui_sound_is_bounded_and_missing_original_is_silent(self):
+        status, result = self.request('/api/ui-sound', {'sound':'cursor','at_ms':time.time()*1000})
+        self.assertEqual(status, 200)
+        self.assertFalse(result['played'])
+        for sound in ('../snd_cursor', 'SystemAsterisk', 12):
+            self.assertEqual(self.request('/api/ui-sound', {'sound':sound,'at_ms':time.time()*1000})[0],409)
+        self.assertFalse(self.request('/api/ui-sound', {'sound':'cursor','at_ms':0})[1]['played'])
+
+    def test_background_hd_does_not_read_a_game_or_start_a_usb_scan(self):
+        before = self.artwork_iso.read_bytes()
+        self.assertEqual(self.request('/api/media-hd/'+'0'*24)[0],202)
+        self.assertEqual(self.request('/api/media-hd/../outside')[0],409)
+        self.assertEqual(self.artwork_iso.read_bytes(),before)
     def test_foreign_origin_rejected(self):
         self.assertEqual(self.request('/api/sync',{},origin='https://example.com')[0],403)
     def test_demo_cannot_launch_synthetic_games(self):
         status,body=self.request('/api/launch',{'id':'anything'})
         self.assertEqual(status,409)
         self.assertIn('sintéticos',body['error'])
+
+    def test_demo_cannot_touch_retro_sram_or_launch_retro(self):
+        status,body=self.request('/api/retro-save-sync',{
+            'id':'a'*24,'choice':'pc','revision':'b'*64})
+        self.assertEqual(status,409)
+        status,_=self.request('/api/retro-launch',{'id':'a'*24})
+        self.assertEqual(status,409)
+        self.assertFalse((Path(self.temp.name)/'retro-save-baselines.json').exists())
+
+    def test_demo_cannot_install_windows_emulators(self):
+        status,body=self.request('/api/install-retro',{})
+        self.assertEqual(status,409)
+        self.assertIn('sesión',body['error'])
+        status,progress=self.request('/api/retro-install-status')
+        self.assertEqual(status,200)
+        self.assertFalse(progress['active'])
+        self.assertFalse((Path(self.temp.name)/'emulators').exists())
 
     def test_demo_cannot_request_fake_usb_return(self):
         status,body=self.request('/api/exit-dock',{})

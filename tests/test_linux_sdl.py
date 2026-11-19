@@ -4,13 +4,15 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import sys
 from unittest.mock import patch
 
-import linux_sdl as sdl
+from psp_dock.emulation import linux_sdl as sdl
 
 GUID = "030000004c050000cd01000001030000"
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class MappingTests(unittest.TestCase):
     def test_sdl_layout_maps_physical_psp_buttons_and_hat(self):
         mapping = sdl.controller_mapping(GUID)
@@ -46,6 +48,7 @@ class MappingTests(unittest.TestCase):
             load.assert_not_called()
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class PhysicalBindingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -98,11 +101,11 @@ class PhysicalBindingTests(unittest.TestCase):
         with self.assertRaises(sdl.LinuxControllerError):
             self.choose()
 
-    def test_usb_revision_0302_also_requires_matching_kernel_and_sdl_metadata(self):
-        (self.parent/"bcdDevice").write_text("0302\n")
+    def test_usb_revision_0308_also_requires_matching_kernel_and_sdl_metadata(self):
+        (self.parent/"bcdDevice").write_text("0308\n")
         with self.assertRaises(sdl.LinuxControllerError):
             self.choose()
-        pad = replace(self.pad, revision=0x0302)
+        pad = replace(self.pad, revision=0x0308)
         self.assertEqual(self.choose([pad]), pad)
 
     def test_unlinked_input_and_path_traversal_are_rejected(self):
@@ -131,6 +134,14 @@ class PhysicalBindingTests(unittest.TestCase):
         self.assertEqual(env["SDL_GAMECONTROLLERCONFIG"].count(GUID), 1)
         self.assertEqual(controls, sdl.ppsspp_controls(0))
         self.assertEqual(pad, self.pad)
+
+    def test_final_launch_check_rejects_changed_index_guid_or_missing_pad(self):
+        self.assertEqual(sdl.verify_psp_pad(self.pad, self.parent, pads=[self.pad], sysfs_root=self.sys), self.pad)
+        for pads in ([], [replace(self.pad, index=1)], [replace(self.pad, guid='ab'*16)]):
+            with self.subTest(pads=pads), self.assertRaises(sdl.LinuxControllerError):
+                sdl.verify_psp_pad(self.pad, self.parent, pads=pads, sysfs_root=self.sys)
+        with self.assertRaises(sdl.LinuxControllerError):
+            sdl.verify_psp_pad(None, self.parent, pads=[self.pad], sysfs_root=self.sys)
 
 
 if __name__ == "__main__":

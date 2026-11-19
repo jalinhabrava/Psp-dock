@@ -1,7 +1,8 @@
-"""Verified replacement and interruption recovery on real temporary files.
+"""Current 0307-to-0308 upgrade, interruption and rollback safety tests.
 
-No hardware discovery: only the four fixture hashes replace the reviewed
-0300/0301 constants, and every identity callback is an explicit test double.
+No hardware discovery: only four synthetic file hashes replace the reviewed
+0307 constants, and every device identity callback is an explicit test double.
+Older firmware's large test matrix remains available from Git history.
 """
 import hashlib
 import json
@@ -12,9 +13,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-import psp_backup
-import psp_native_upgrade as upgrade
-from psp_native_package import FILES, REMOTE_FOLDER, digest
+import tools.psp.psp_backup as psp_backup
+import tools.psp.psp_native_upgrade as upgrade
+from tools.psp.psp_native_package import FILES, REMOTE_FOLDER, digest
 from tests.test_psp_native_package import fixture_native_package
 
 
@@ -23,7 +24,7 @@ USB = r'USB\VID_054C&PID_02D2\NATIVE-UPGRADE-TEST'
 
 
 class NativeUpgradeTests(unittest.TestCase):
-    previous_revision = '0300'
+    previous_revision = '0307'
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -42,12 +43,13 @@ class NativeUpgradeTests(unittest.TestCase):
         self.kept = {}
         for relative in ('PSP/GAME/PSPDock/EBOOT.PBP', 'PSP/GAME/PSPDockStorageTest/EBOOT.PBP',
                          'PSP/SAVEDATA/SLOT/DATA.BIN', 'PSP/GAME/gpSP/SAVES/Game.sav',
-                         'PSP/GAME/gpSP/STATES/Game.svs'):
+                         'PSP/GAME/gpSP/STATES/Game.svs',
+                         'PSP/SYSTEM/PSPDock/xmb/system_plugin.rco'):
             path = self.psp / relative
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(('KEEP ' + relative).encode())
             self.kept[path] = path.read_bytes()
-        self.package = fixture_native_package(self.home / 'package0302')
+        self.package = fixture_native_package(self.home / 'package0308')
         self.new_records = json.loads((self.package / 'manifest.json').read_text())['files']
         snapshot = psp_backup.backup(self.psp, self.home / 'critical', 'critical', SERIAL, USB,
                                      verify_identity=lambda: True, reserve_bytes=0)
@@ -83,7 +85,7 @@ class NativeUpgradeTests(unittest.TestCase):
     def test_plan_is_read_only(self):
         before = {p: p.read_bytes() for p in self.psp.rglob('*') if p.is_file()}
         result = self.plan()
-        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0302'))
+        self.assertEqual((result['from_revision'], result['to_revision']), (self.previous_revision, '0308'))
         self.assertEqual(result['reference_installation_receipt_sha256'],
                          upgrade._reference_receipt(self.previous_revision))
         self.assertFalse(result['installed']);self.assertFalse(result['autorun'])
@@ -354,35 +356,8 @@ class NativeUpgradeTests(unittest.TestCase):
             self.assertEqual(upgrade.main(back + ['--restore', '--receipt', str(self.restore_receipt)]), 0)
             restore.assert_called_once()
 
-
-class Native0301UpgradeTests(NativeUpgradeTests):
-    """Repeat interruption and identity gates for the exact current source version."""
-    previous_revision = '0301'
-
-
-class Historical0301RollbackTests(unittest.TestCase):
-    # Reuse fixture/helpers, without inheriting the modern-upgrade tests.
-    previous_revision = '0300'
-    setUp = NativeUpgradeTests.setUp
-    install = NativeUpgradeTests.install
-    restore = NativeUpgradeTests.restore
-    assert_files = NativeUpgradeTests.assert_files
-    assert_kept = NativeUpgradeTests.assert_kept
-
-    def test_old_receipt_0300_to_0301_remains_recoverable(self):
-        self.install()
-        record = json.loads(self.receipt.read_text())
-        record['to_revision'] = '0301'
-        self.receipt.write_text(json.dumps(record))
-        with patch.object(upgrade, 'KNOWN_0301_FILES', self.new_records):
-            plan = upgrade.plan_rollback(self.receipt, self.psp, SERIAL, USB)
-            self.assertEqual(plan['revision'], '0300')
-            restored = self.restore()
-        self.assertTrue(restored['restored'])
-        self.assert_files(self.target, self.old_records)
-        self.assert_files(Path(restored['parked']), self.new_records)
-        self.assert_kept()
-
+# Tests exercise the final 0308 upgrade from the last 0307 release.
+# Older historical upgrade matrices remain available in Git history.
 
 if __name__ == '__main__':
     unittest.main()

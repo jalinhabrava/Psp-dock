@@ -6,10 +6,11 @@ import platform
 import tempfile
 from types import SimpleNamespace
 import unittest
+import sys
 from unittest.mock import MagicMock, patch
 
 import dock
-import linux_runtime as runtime
+from psp_dock.emulation import linux_runtime as runtime
 
 
 def executable(path):
@@ -22,6 +23,7 @@ def executable(path):
     return path
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -37,13 +39,13 @@ class RuntimeTests(unittest.TestCase):
         global_config = self.home / 'unrelated-global.ini'
         global_config.write_text('unchanged')
         original_env = dict(os.environ)
-        with patch('subprocess.Popen', side_effect=AssertionError('must not run emulator while preparing')), patch('subprocess.run', side_effect=AssertionError('unsupported --version probe')):
+        with patch('subprocess.Popen', side_effect=AssertionError('must not run emulator while preparing')), patch('subprocess.run', side_effect=AssertionError('preparation must not execute a user-supplied binary')):
             self.assertEqual(runtime.prepare(self.data, self.config), self.exe)
         self.assertEqual(runtime.prepared_runtime(self.data, self.config, verify_digest=True), self.exe)
         env = {'HOME': str(self.home), 'XDG_CONFIG_HOME': '/untouched/config', 'SDL_GAMECONTROLLERCONFIG': 'fake'}
         profile = lambda parent: (dict(env), b'[ControlMapping]\nCross = 10-189\n', SimpleNamespace(index=0))
         game = self.data / 'game.iso'
-        args, child = runtime.ppsspp_launch(self.data, self.config, '/synthetic/usb', game, profile=profile)
+        args, child, pad = runtime.ppsspp_launch(self.data, self.config, '/synthetic/usb', game, profile=profile)
         self.assertEqual(args, [str(self.exe), '--fullscreen', '--pause-menu-exit', str(game)])
         self.assertEqual(child['HOME'], env['HOME'])
         self.assertEqual(child['XDG_CONFIG_HOME'], str(self.data / 'linux-xdg'))
@@ -120,7 +122,7 @@ class RuntimeTests(unittest.TestCase):
         core = executable(self.home / 'cores/mesen_libretro.so')
         self.assertEqual(runtime.retroarch_core(str(exe), 'nes', str(core.parent)), (exe, core))
         profile = lambda _: ({'HOME': str(self.home)}, b'', SimpleNamespace(index=3))
-        config, env = runtime.retro_profile(self.data, '/usb', profile=profile)
+        config, env, pad = runtime.retro_profile(self.data, '/usb', profile=profile)
         text = config.read_text()
         self.assertIn('input_player1_joypad_index = "3"', text)
         self.assertIn('input_player1_start_btn = "6"', text)
@@ -138,6 +140,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIsNone(runtime.retroarch_core(str(exe), 'nes', str(core.parent)))
 
 
+@unittest.skipUnless(sys.platform.startswith('linux'), 'Linux adapter requires a Linux host')
 class DockLinuxIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -150,6 +153,10 @@ class DockLinuxIntegrationTests(unittest.TestCase):
         self.dock.native_transport = MagicMock(spec=['assert_controller', 'current'])
         self.dock.native_transport.assert_controller.return_value = dict(self.before)
         self.dock.product_flow = MagicMock(enabled=True)
+        self.pad = object()
+        controller = patch('psp_dock.emulation.linux_sdl.verify_psp_pad')
+        self.verify_controller = controller.start()
+        self.addCleanup(controller.stop)
 
     def test_constructor_and_platform_defaults_do_not_probe_usb(self):
         self.assertEqual(self.dock.config['backend'], 'gles')
@@ -161,14 +168,14 @@ class DockLinuxIntegrationTests(unittest.TestCase):
 
     def test_real_linux_writes_cannot_fall_back_to_legacy_sysfs_identity_only(self):
         with patch.dict(os.environ, {'PSP_DOCK_TEST_NO_REAL_USB': '0'}), \
-                patch('linux_native.LinuxSystem.identify', side_effect=AssertionError('must require PDK2 first')):
+                patch('psp_dock.devices.linux_native.LinuxSystem.identify', side_effect=AssertionError('must require PDK2 first')):
             with self.assertRaisesRegex(ValueError, 'fase de almacenamiento'):
                 dock.require_psp_identity_before_writing('/synthetic/psp')
 
     def test_changed_session_prevents_child_and_session_write(self):
         self.dock.native_transport.assert_controller.return_value = {**self.before, 'volume_serial': '999'}
         with patch('subprocess.Popen') as spawn, self.assertRaises(ValueError):
-            self.dock._spawn_linux(['/fake'], {}, 'game', 'ppsspp', self.before)
+            self.dock._spawn_linux(['/fake'], {}, 'game', 'ppsspp', self.before, controller=self.pad)
         spawn.assert_not_called()
         self.assertFalse(self.dock.session['running'])
 
@@ -176,7 +183,7 @@ class DockLinuxIntegrationTests(unittest.TestCase):
         child = MagicMock()
         child.poll.return_value = None
         with patch('subprocess.Popen', return_value=child) as spawn:
-            self.dock._spawn_linux(['/fake', '/game'], {'HOME': '/home/fake'}, 'game', 'ppsspp', self.before)
+            self.dock._spawn_linux(['/fake', '/game'], {'HOME': '/home/fake'}, 'game', 'ppsspp', self.before, controller=self.pad)
         spawn.assert_called_once_with(['/fake', '/game'], cwd=self.dock.data, env={'HOME': '/home/fake'})
         record = json.loads((self.dock.data / 'session.json').read_text())
         self.assertTrue(record['running'])
@@ -192,16 +199,28 @@ class DockLinuxIntegrationTests(unittest.TestCase):
 
     def test_spawn_failure_releases_running_phase_and_keeps_return_pending(self):
         with patch('subprocess.Popen', side_effect=OSError('not executable')), self.assertRaises(OSError):
-            self.dock._spawn_linux(['/fake'], {}, 'game', 'ppsspp', self.before)
+            self.dock._spawn_linux(['/fake'], {}, 'game', 'ppsspp', self.before, controller=self.pad)
         self.assertFalse(self.dock.session['running'])
+        self.dock.product_flow.set_game_running.assert_called_with(False)
+
+    def test_sdl_hotplug_before_spawn_cancels_launch_and_keeps_return_pending(self):
+        self.verify_controller.side_effect = ValueError('controller index changed')
+        with patch('subprocess.Popen') as spawn, self.assertRaisesRegex(ValueError, 'index changed'):
+            self.dock._spawn_linux(['/fake'], {}, 'game', 'ppsspp', self.before, controller=self.pad)
+        spawn.assert_not_called()
+        self.verify_controller.assert_called_once_with(self.pad, self.before['usb_parent'])
+        self.assertFalse(self.dock.session['running'])
+        self.assertTrue(self.dock.session['pending_return'])
+        self.assertFalse(json.loads((self.dock.data / 'session.json').read_text())['running'])
         self.dock.product_flow.set_game_running.assert_called_with(False)
 
     def test_linux_input_dispatch_rejects_retired_revision_before_reader(self):
         self.dock.snapshot['controller_status'] = {'connected': True, 'mode': 'native_dock',
             'product_id': 0x01cd, 'revision': 0x0100, 'protocol_version': 3,
-            'firmware_revision': 0x0302, 'host_confirmed': True}
+            'firmware_revision': 0x0308, 'host_confirmed': True,
+            'capabilities': 15, 'build_id': 0x03080001, 'synthetic_storage': False}
         self.dock.product_flow.snapshot.return_value = {'phase': 'ready'}
-        with patch('linux_input.PSPLinuxReader') as reader:
+        with patch('psp_dock.devices.linux_input.PSPLinuxReader') as reader:
             reader.return_value.read.return_value = {'connected': True}
             self.assertTrue(self.dock.psp_launcher_input()['connected'])
             for bad in ({'firmware_revision': 0x0300}, {'firmware_revision': 0x0301},

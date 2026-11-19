@@ -5,19 +5,26 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-from dock import Dock
+from dock import Dock, ROOT
 
 
 @unittest.skipUnless(os.name == "nt", "Windows-only official PPSSPP runtime")
 class RuntimePrewarmingTests(unittest.TestCase):
     def setUp(self):
+        # This integration test uses the independent physical HID mapping
+        # recorded on the developer's PC, which is intentionally excluded
+        # from the public repository. Do not invent a replacement profile or
+        # weaken prepare_psp_controls() just to make a clean clone pass.
+        reference = ROOT / 'data/ppsspp-hid-lab/memstick/PSP/SYSTEM/controls.ini'
+        if not reference.is_file():
+            self.skipTest('Requires private, physically verified PSP controller profile')
         # The launcher now classifies the Dock before its second PDK1 check.
         # This fixture is deliberately independent of any connected PSP.
         identity = {'session': 'a' * 32, 'path': 'FAKE_ONLY',
                     'mode': 'hid_manual', 'can_play': True,
                     'product_id': 0x01CB, 'revision': 0x0104,
                     'synthetic_storage': False}
-        self.identity_patch = patch('psp_dock_identity.probe_dock', return_value=identity)
+        self.identity_patch = patch('psp_dock.devices.psp_dock_identity.probe_dock', return_value=identity)
         self.identity_patch.start()
         self.addCleanup(self.identity_patch.stop)
         self.temp = tempfile.TemporaryDirectory()
@@ -85,7 +92,7 @@ class RuntimePrewarmingTests(unittest.TestCase):
         self.prepare()
         fake = {"session": "a" * 32, "path": "FAKE_ONLY"}
         with patch.object(self.dock, "root", return_value=None), \
-             patch("ppsspp_hid_session.validate_hid_only", return_value=fake) as check, \
+             patch("psp_dock.emulation.ppsspp_hid_session.validate_hid_only", return_value=fake) as check, \
              patch("dock.subprocess.Popen") as popen, \
              patch("dock.prepare_emulator", side_effect=AssertionError("No hash during HID")):
             popen.return_value.poll.return_value = None
@@ -103,7 +110,7 @@ class RuntimePrewarmingTests(unittest.TestCase):
         fake1 = {"session": "a"*32, "path": "FAKE_ONLY"}
         fake2 = {"session": "b"*32, "path": "FAKE_ONLY"}
         with patch.object(self.dock, "root", return_value=None), \
-             patch("ppsspp_hid_session.validate_hid_only",
+             patch("psp_dock.emulation.ppsspp_hid_session.validate_hid_only",
                    side_effect=[fake1, fake2]), \
              patch("dock.subprocess.Popen") as popen:
             with self.assertRaisesRegex(ValueError, "HID cambió"):
@@ -113,7 +120,7 @@ class RuntimePrewarmingTests(unittest.TestCase):
 
     def test_uncached_runtime_blocks_late_heavy_work_during_hid(self):
         with patch.object(self.dock, "root", return_value=None), \
-             patch("ppsspp_hid_session.validate_hid_only",
+             patch("psp_dock.emulation.ppsspp_hid_session.validate_hid_only",
                    return_value={"session": "a"*32, "path": "FAKE_ONLY"}), \
              patch("dock.prepare_emulator", side_effect=AssertionError("No prep in HID")):
             with self.assertRaisesRegex(ValueError, "MIENTRAS USBSTOR"):

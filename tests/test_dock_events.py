@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from dock_events import EventJournal
+from psp_dock.core.dock_events import EventJournal
 
 
 class EventsTests(unittest.TestCase):

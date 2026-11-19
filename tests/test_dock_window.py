@@ -7,6 +7,12 @@ import dock
 
 
 class AppWindowTests(unittest.TestCase):
+    def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
+
     def test_invalid_or_external_urls_do_not_open_browsers(self):
         for url in ('https://evil.invalid','http://localhost:1',
                     'http://127.0.0.1:3333/a/../b','file:///C:/'):
@@ -25,7 +31,7 @@ class AppWindowTests(unittest.TestCase):
             with patch.dict('dock.os.environ',{'PROGRAMFILES':str(root),
                                                'PROGRAMFILES(X86)':str(root)}), \
              patch('dock.subprocess.Popen') as popen, \
-             patch('xmb_window.maximize_existing_xmb',return_value=False), \
+             patch('psp_dock.core.xmb_window.maximize_existing_xmb',return_value=False), \
              patch('dock.threading.Thread') as thread:
                 dock.launch_xmb_window('http://127.0.0.1:59336',
                                        app_window=True)
@@ -38,7 +44,7 @@ class AppWindowTests(unittest.TestCase):
             thread.return_value.start.assert_called_once()
 
     def test_open_same_xmb_reuses_window_instead_of_starting_chrome(self):
-        with patch('xmb_window.maximize_existing_xmb',return_value=True), \
+        with patch('psp_dock.core.xmb_window.maximize_existing_xmb',return_value=True), \
              patch('dock.subprocess.Popen') as popen:
             self.assertTrue(dock.launch_xmb_window('http://127.0.0.1:59336',
                                                    app_window=True))

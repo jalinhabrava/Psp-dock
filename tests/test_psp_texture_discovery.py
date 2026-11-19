@@ -2,8 +2,8 @@ import json
 import unittest
 from io import BytesIO
 
-import psp_texture_discovery as discovery
-from psp_texture_packs import TexturePackError
+import psp_dock.emulation.psp_texture_discovery as discovery
+from psp_dock.emulation.psp_texture_packs import TexturePackError
 
 
 class _Response:

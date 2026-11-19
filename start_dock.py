@@ -19,7 +19,7 @@ from dock import (
     Dock, default_data_path, launch_xmb_window,
     service_fingerprint, serve, read_json,
 )
-from setup_startup import choose_live_dir
+from psp_dock.core.setup_startup import choose_live_dir
 
 
 def _checked_server(data: Path, *, opener=None) -> dict | None:
@@ -56,9 +56,9 @@ def existing_server(data: Path, *, opener=None) -> str | None:
 
 def launch(data: Path | None = None) -> str:
     if sys.platform == 'linux':
-        from linux_desktop import default_data_dir
+        from psp_dock.core.linux_desktop import default_data_dir
         if data is not None:
-            from storage_layout import fixed_local_folder
+            from psp_dock.core.storage_layout import fixed_local_folder
             fixed_local_folder(Path(data).absolute())
         data=(choose_live_dir(default_data_dir().parent, explicit=data)
               if data is not None else default_data_dir())
@@ -75,7 +75,7 @@ def launch(data: Path | None = None) -> str:
             # must not create another window before its first heartbeat.
             return 'starting'
         if sys.platform == 'linux':
-            from linux_desktop import has_connected_ui
+            from psp_dock.core.linux_desktop import has_connected_ui
             if has_connected_ui(health):
                 # A second manual click must not open a second XMB. The
                 # compositor controls focus; do not inject global hotkeys.

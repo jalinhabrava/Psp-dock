@@ -2,12 +2,17 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from dock import default_data_path
 
 
 class DefaultDataSelectionTests(unittest.TestCase):
     def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.local = Path(self.temp.name)
 
