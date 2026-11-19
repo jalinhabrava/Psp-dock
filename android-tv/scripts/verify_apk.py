@@ -23,6 +23,9 @@ ARCHITECTURES = {"arm64-v8a": (2, 183), "armeabi-v7a": (1, 40), "x86_64": (2, 62
 ANDROID = "{http://schemas.android.com/apk/res/android}"
 PACKAGE = "app.pspdock.tv"
 ENGINE = "org.ppsspp.ppsspp.PpssppActivity"
+# PPSSPP 1.20.4 builds its emulation lifecycle/run loop from Core/System.cpp.
+# These paths are also checked against the pinned source tree and CMake list.
+NATIVE_OPTIMIZATION_SOURCES = ("UI/EmuScreen.cpp", "Core/System.cpp")
 
 
 def verify_elf(data: bytes, abi: str) -> dict:
@@ -132,7 +135,7 @@ def verify_native(apk: Path, abis: set[str]) -> list[dict]:
 
 def verify_optimization(directory: Path, abis: set[str]) -> list[dict]:
     evidence = {}
-    required_sources = ("/UI/EmuScreen.cpp", "/Core/PSP.cpp")
+    required_sources = tuple("/" + source for source in NATIVE_OPTIMIZATION_SOURCES)
     for cache in sorted(directory.rglob("CMakeCache.txt")):
         values = {}
         for line in cache.read_text().splitlines():
@@ -154,8 +157,9 @@ def verify_optimization(directory: Path, abis: set[str]) -> list[dict]:
                 raise ValueError("Engine compilation is not optimized: " + source)
             checked.append({"source": next(s.lstrip("/") for s in required_sources if source.endswith(s)),
                             "optimization": optimizations[-1], "ndebug": True})
-        if {item["source"] for item in checked} != {s.lstrip("/") for s in required_sources}:
-            raise ValueError("Missing core/UI native compile commands for " + abi)
+        missing = set(NATIVE_OPTIMIZATION_SOURCES) - {item["source"] for item in checked}
+        if missing:
+            raise ValueError("Missing core/UI native compile commands for " + abi + ": " + ", ".join(sorted(missing)))
         evidence[abi] = {"abi": abi, "configuration": "RelWithDebInfo", "sources": checked}
     if set(evidence) != abis:
         raise ValueError("Missing optimized native build evidence: " + str(abis - set(evidence)))

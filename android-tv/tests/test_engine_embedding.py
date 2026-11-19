@@ -24,6 +24,7 @@ def load_script(name):
 
 PATCH = load_script("patch_engine_java")
 PREPARE = load_script("prepare_engine")
+APK = load_script("verify_apk")
 
 
 class EngineEmbeddingTest(unittest.TestCase):
@@ -37,6 +38,13 @@ class EngineEmbeddingTest(unittest.TestCase):
     def test_unreviewed_source_is_rejected(self):
         with self.assertRaises(ValueError):
             PATCH.patch_activity(self.original + b"\n// changed lifecycle\n")
+
+    def test_native_optimization_sources_exist_in_pinned_cmake(self):
+        cmake_sources = {line.strip() for line in (SOURCE / "CMakeLists.txt").read_text().splitlines()}
+        for relative in APK.NATIVE_OPTIMIZATION_SOURCES:
+            with self.subTest(source=relative):
+                self.assertTrue((SOURCE / relative).is_file(), relative)
+                self.assertIn(relative, cmake_sources)
 
     def test_generation_preserves_upstream_and_omits_extra_launcher(self):
         before = hashlib.sha256(self.original).hexdigest()

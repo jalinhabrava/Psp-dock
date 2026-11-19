@@ -97,13 +97,40 @@ class ApkValidationTest(unittest.TestCase):
             target = Path(directory)
             (target / "CMakeCache.txt").write_text("ANDROID_ABI:STRING=arm64-v8a\nCMAKE_BUILD_TYPE:STRING=RelWithDebInfo\n")
             commands = [{"file": "/source" + file, "arguments": ["clang++", "-O2", "-DNDEBUG"]}
-                        for file in ("/UI/EmuScreen.cpp", "/Core/PSP.cpp")]
+                        for file in ("/UI/EmuScreen.cpp", "/Core/System.cpp")]
             (target / "compile_commands.json").write_text(json.dumps(commands))
             self.assertEqual(APK.verify_optimization(target, {"arm64-v8a"})[0]["configuration"], "RelWithDebInfo")
-            commands[0]["arguments"].append("-O0")
-            (target / "compile_commands.json").write_text(json.dumps(commands))
-            with self.assertRaises(ValueError):
-                APK.verify_optimization(target, {"arm64-v8a"})
+            for flags in (["-O2", "-DNDEBUG", "-O0"], ["-O2", "-DNDEBUG", "-Og"], ["-O2"]):
+                with self.subTest(flags=flags):
+                    commands[0]["arguments"] = ["clang++", *flags]
+                    (target / "compile_commands.json").write_text(json.dumps(commands))
+                    with self.assertRaisesRegex(ValueError, "Engine compilation is not optimized"):
+                        APK.verify_optimization(target, {"arm64-v8a"})
+
+    def test_cmake_commands_require_real_core_and_ui_for_both_abis(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            abis = {"arm64-v8a", "armeabi-v7a"}
+            for abi in abis:
+                build = target / "Debug" / "cmake-hash" / abi
+                build.mkdir(parents=True)
+                (build / "CMakeCache.txt").write_text(
+                    "ANDROID_ABI:STRING=" + abi + "\nCMAKE_BUILD_TYPE:STRING=RelWithDebInfo\n")
+                # CMake's compile_commands.json uses a shell command string.
+                commands = [{"directory": str(build), "file": "/source/" + source,
+                             "command": "/ndk/bin/clang++ -O2 -g -DNDEBUG -fPIC -c /source/" + source}
+                            for source in ("UI/EmuScreen.cpp", "Core/System.cpp")]
+                (build / "compile_commands.json").write_text(json.dumps(commands))
+            evidence = APK.verify_optimization(target, abis)
+            self.assertEqual({item["abi"] for item in evidence}, abis)
+            for item in evidence:
+                self.assertEqual({s["source"] for s in item["sources"]}, {"UI/EmuScreen.cpp", "Core/System.cpp"})
+            database = target / "Debug" / "cmake-hash" / "arm64-v8a" / "compile_commands.json"
+            commands = json.loads(database.read_text())
+            commands[1]["file"] = "/source/Core/PSP.cpp"
+            database.write_text(json.dumps(commands))
+            with self.assertRaisesRegex(ValueError, "arm64-v8a: Core/System.cpp"):
+                APK.verify_optimization(target, abis)
 
 
 if __name__ == "__main__":
