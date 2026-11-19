@@ -28,6 +28,42 @@ ENGINE = "org.ppsspp.ppsspp.PpssppActivity"
 NATIVE_OPTIMIZATION_SOURCES = ("UI/EmuScreen.cpp", "Core/System.cpp")
 
 
+def verify_no_debug_info(data: bytes, elf_class: int) -> None:
+    """Reject AGP's copy-without-stripping fallback in the packaged libraries."""
+    if elf_class == 2:
+        offset = struct.unpack_from("<Q", data, 40)[0]
+        entry_size, count, names_index = struct.unpack_from("<HHH", data, 58)
+        layout = struct.Struct("<IIQQQQIIQQ")
+    else:
+        offset = struct.unpack_from("<I", data, 32)[0]
+        entry_size, count, names_index = struct.unpack_from("<HHH", data, 46)
+        layout = struct.Struct("<IIIIIIIIII")
+    if offset == 0 and count == 0 and names_index == 0:
+        return  # ELF permits completely omitted section headers after stripping.
+    if offset == 0 or entry_size < layout.size or offset + entry_size > len(data):
+        raise ValueError("Invalid ELF section headers")
+    first = layout.unpack_from(data, offset)
+    if count == 0:  # ELF extended section count.
+        count = first[5]
+    if names_index == 0xffff:
+        names_index = first[6]
+    if not count or not 0 < names_index < count or offset + count * entry_size > len(data):
+        raise ValueError("Missing or truncated ELF section name table")
+    names_header = layout.unpack_from(data, offset + names_index * entry_size)
+    names_offset, names_size = names_header[4:6]
+    if names_header[1] != 3 or not names_size or names_offset + names_size > len(data):
+        raise ValueError("Invalid ELF section name string table")
+    names = data[names_offset:names_offset + names_size]
+    for index in range(count):
+        name_offset = layout.unpack_from(data, offset + index * entry_size)[0]
+        end = names.find(b"\0", name_offset)
+        if name_offset >= len(names) or end < 0:
+            raise ValueError("Invalid ELF section name")
+        name = names[name_offset:end]
+        if name in (b".debug_info", b".zdebug_info"):
+            raise ValueError("Packaged native library retains " + name.decode("ascii") + "; NDK stripping failed")
+
+
 def verify_elf(data: bytes, abi: str) -> dict:
     expected_class, expected_machine = ARCHITECTURES[abi]
     if len(data) < 52 or data[:4] != b"\x7fELF" or data[4] != expected_class or data[5:7] != b"\x01\x01":
@@ -64,9 +100,10 @@ def verify_elf(data: bytes, abi: str) -> dict:
         alignments.append(alignment)
     if not alignments:
         raise ValueError("ELF has no loadable segments")
+    verify_no_debug_info(data, expected_class)
     return {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest(),
             "elf_class": expected_class * 32, "machine": machine,
-            "minimum_load_alignment": min(alignments)}
+            "minimum_load_alignment": min(alignments), "debug_info_present": False}
 
 
 def verify_manifest(xml: str) -> dict:

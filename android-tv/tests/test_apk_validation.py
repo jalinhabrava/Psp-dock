@@ -28,6 +28,27 @@ def elf(abi="arm64-v8a", alignment=16384):
     return bytes(data)
 
 
+def elf_with_section(abi, name):
+    """An ELF section table with a named non-loadable section after PT_LOAD."""
+    data = bytearray(elf(abi))
+    klass = APK.ARCHITECTURES[abi][0]
+    layout = struct.Struct("<IIQQQQIIQQ" if klass == 2 else "<IIIIIIIIII")
+    offset = len(data)
+    names = b"\0.shstrtab\0" + name.encode("ascii") + b"\0"
+    names_offset = offset + 3 * layout.size
+    if klass == 2:
+        struct.pack_into("<Q", data, 40, offset)
+        struct.pack_into("<HHH", data, 58, layout.size, 3, 1)
+    else:
+        struct.pack_into("<I", data, 32, offset)
+        struct.pack_into("<HHH", data, 46, layout.size, 3, 1)
+    data.extend(layout.pack(0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    data.extend(layout.pack(1, 3, 0, 0, names_offset, len(names), 0, 0, 1, 0))
+    data.extend(layout.pack(11, 1, 0, 0, names_offset + len(names), 0, 0, 0, 1, 0))
+    data.extend(names)
+    return bytes(data)
+
+
 MANIFEST = '''<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.pspdock.tv">
 <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
 <application android:enableOnBackInvokedCallback="false">
@@ -56,6 +77,18 @@ class ApkValidationTest(unittest.TestCase):
         struct.pack_into("<Q", data, 64 + 40, 128)  # memsz < filesz
         with self.assertRaises(ValueError):
             APK.verify_elf(bytes(data), "arm64-v8a")
+
+    def test_packaged_elf_rejects_unstripped_debug_info_in_both_abis(self):
+        for abi in ("arm64-v8a", "armeabi-v7a"):
+            with self.subTest(abi=abi):
+                self.assertFalse(APK.verify_elf(elf_with_section(abi, ".dynsym"), abi)["debug_info_present"])
+                for name in (".debug_info", ".zdebug_info"):
+                    with self.subTest(section=name), self.assertRaisesRegex(ValueError, "NDK stripping failed"):
+                        APK.verify_elf(elf_with_section(abi, name), abi)
+
+    def test_truncated_section_names_cannot_pass_stripping_check(self):
+        with self.assertRaisesRegex(ValueError, "section name string table"):
+            APK.verify_elf(elf_with_section("arm64-v8a", ".debug_info")[:-1], "arm64-v8a")
 
     def test_single_tv_app_and_private_engine_manifest(self):
         self.assertEqual(APK.verify_manifest(MANIFEST)["engine_process"], ":emulation")

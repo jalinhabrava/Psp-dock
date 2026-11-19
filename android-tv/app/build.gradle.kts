@@ -6,6 +6,8 @@ plugins {
 android {
     namespace = "app.pspdock.tv"
     compileSdk = 36
+    // APK packaging needs the same installed NDK to strip copied engine libraries.
+    ndkVersion = "29.0.14206865"
 
     defaultConfig {
         applicationId = "app.pspdock.tv"

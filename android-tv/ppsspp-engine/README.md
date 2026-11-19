@@ -33,8 +33,9 @@ a 32-bit userspace. `-PdockAbis=x86_64` selects an emulator build. A faster sing
 ARM build can use `-PdockAbis=arm64-v8a`. CMake compiles `ppsspp_jni` and its source
 dependencies; FFmpeg uses the platform-specific static archives supplied in the
 fixed official PPSSPP FFmpeg submodule, as the upstream Android build does.
-The debug APK retains native symbols but compiles the engine as
-`RelWithDebInfo`; the release engine uses `Release` optimization.
+The debug engine uses `RelWithDebInfo`, retaining development symbols in `.cxx`
+objects and `build/intermediates/cxx` native libraries. APK packaging strips
+native debug information; the release engine uses `Release` optimization.
 
 ## Lifecycle contract
 

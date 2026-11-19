@@ -56,7 +56,8 @@ android {
         }
     }
     buildTypes {
-        // The installable debug APK still runs an optimized emulator, with symbols.
+        // Keep optimization and development symbols in native build outputs.
+        // APK packaging strips DWARF; .cxx objects and native intermediates stay intact.
         debug {
             isMinifyEnabled = false
             externalNativeBuild.cmake.arguments += "-DCMAKE_BUILD_TYPE=RelWithDebInfo"
