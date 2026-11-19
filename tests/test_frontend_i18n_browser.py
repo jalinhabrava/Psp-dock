@@ -26,9 +26,18 @@ CHROME_PATHS = [
 
 
 def find_browser():
-    return next((str(p) for p in CHROME_PATHS if Path(p).exists()), None) or (
-        shutil.which('chromium') or shutil.which('google-chrome') or shutil.which('microsoft-edge')
-    )
+    configured = os.environ.get('PSP_DOCK_CHROME')
+    if configured:
+        browser = shutil.which(configured)
+        if browser is None:
+            raise RuntimeError('PSP_DOCK_CHROME is not an executable: ' + configured)
+        return browser
+    # Use the same installed browser as the compositor suite. Some Linux
+    # runners also expose a Chromium wrapper with a different runtime setup.
+    return next((str(p) for p in CHROME_PATHS if Path(p).is_file()), None) or next(
+        (browser for name in ('google-chrome', 'google-chrome-stable', 'microsoft-edge',
+                              'chromium', 'chromium-browser')
+         if (browser := shutil.which(name))), None)
 
 
 FAKE_STATE = {
@@ -148,12 +157,14 @@ class BrowserLocaleTest(unittest.TestCase):
     def browser_dom(self, profile, locale='en-US', action=''):
         url = self.base + ('?action=' + action if action else '')
         command = [find_browser(), '--headless=new', '--disable-gpu', '--no-first-run',
-                   '--no-default-browser-check', '--disable-extensions',
-                   '--user-data-dir=' + str(profile), '--lang=' + locale,
+                   '--no-default-browser-check', '--disable-extensions', '--disable-background-networking',
+                   # UI language alone does not set navigator.language on Linux.
+                   '--user-data-dir=' + str(profile), '--lang=' + locale, '--accept-lang=' + locale,
                    '--virtual-time-budget=2600', '--dump-dom', url]
         result = subprocess.run(command, capture_output=True, encoding='utf-8',
                                 errors='replace', timeout=35, check=False)
-        self.assertEqual(result.returncode, 0, result.stderr[-600:])
+        self.assertEqual(result.returncode, 0,
+                         'Browser: ' + command[0] + '\n' + result.stderr)
         self.assertIn('id="dock-connect-intro"', result.stdout)
         return result.stdout
 

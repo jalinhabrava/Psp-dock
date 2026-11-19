@@ -238,7 +238,7 @@ class DockProductSessionTests(unittest.TestCase):
     def test_choosing_uses_confirmed_transport_even_if_ui_snapshot_is_from_inventory(self):
         self.offer()
         self.dock.snapshot['controller_status']={'connected':False,'mode':'await_native'}
-        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
+        with patch.object(app, 'linux_host', return_value=False), patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value={'connected':True,'source':'psp_winmm','button_mask':1,'accept':True}
             frame=self.dock.psp_launcher_input()
         self.assertTrue(frame['connected'])
@@ -658,7 +658,7 @@ class DockProductSessionTests(unittest.TestCase):
 
     def test_launcher_input_requires_firmware_and_handshake_independent_of_sony_usb_revision(self):
         self.ready('none')
-        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
+        with patch.object(app, 'linux_host', return_value=False), patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
             original = dict(self.dock.snapshot['controller_status'])
             for firmware, build in ((0x0303, 0x03030001), (0x0304, 0x03040001)):
@@ -703,10 +703,10 @@ class DockProductSessionTests(unittest.TestCase):
         checked_names={str(call.args[1]) for call in checked.call_args_list}
         self.assertIn('ISO/Game.iso',checked_names)
         self.assertIn('PSP/GAME/Collection/MyHomebrew/EBOOT.PBP',checked_names)
-        self.assertIn(homebrew,visited)
-        self.assertIn(self.psp/'ISO/Game.iso',visited)
+        self.assertIn(homebrew.resolve(),visited)
+        self.assertIn((self.psp/'ISO/Game.iso').resolve(),visited)
         for path in ignored:
-            self.assertNotIn(path,visited)
+            self.assertNotIn(path.resolve(),visited)
             self.assertNotIn(path.relative_to(self.psp).as_posix(),checked_names)
         self.assertEqual({game['title'] for game in games},{'Game','MyHomebrew'})
 

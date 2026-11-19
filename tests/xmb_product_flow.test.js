@@ -567,6 +567,10 @@ async function inputs() {
     frame: { connected: true, source: 'psp_winmm', accept: true },
   };
   vm.createContext(pad);
+  const hostStart = source.indexOf('function linuxHost()');
+  const hostEnd = source.indexOf('const bytes =', hostStart);
+  assert(hostStart >= 0 && hostEnd > hostStart);
+  vm.runInContext(source.slice(hostStart, hostEnd), pad);
   vm.runInContext(source.slice(inputStart, inputEnd), pad);
   await pad.pollNativePspInput();
   equal(pad.pressed.length, 0, 'Initial held Cross only primes the connected controller');
@@ -582,6 +586,24 @@ async function inputs() {
   pad.frame = { ...pad.frame, accept: true };
   await pad.pollNativePspInput();
   assert.deepEqual(pad.pressed, ['accept']); ++assertions;
+  assert.deepEqual(normalize(pad.hostBackends()).map(row => row[0]), ['directx11','vulkan','gles']); ++assertions;
+  pad.ui.state.host_platform = 'linux';
+  pad.ui.nativePadConnected = false;
+  pad.frame = { connected:true, source:'psp_linux_hidraw', accept:true };
+  await pad.pollNativePspInput();
+  equal(pad.pressed.length, 1, 'Linux initial held Cross primes without triggering an action');
+  await pad.pollNativePspInput();
+  equal(pad.pressed.length, 1, 'Linux held Cross does not repeat');
+  pad.frame = { ...pad.frame, accept:false };
+  await pad.pollNativePspInput();
+  pad.frame = { ...pad.frame, accept:true };
+  await pad.pollNativePspInput();
+  assert.deepEqual(pad.pressed, ['accept','accept']); ++assertions;
+  assert.deepEqual(normalize(pad.hostBackends()).map(row => row[0]), ['gles','vulkan']); ++assertions;
+  pad.frame = { connected:true, source:'psp_winmm', accept:false };
+  await pad.pollNativePspInput();
+  equal(pad.ui.nativePadConnected, false, 'A different host adapter cannot keep native input authorized');
+  equal(pad.pressed.length, 2, 'Unknown/wrong-platform input cannot dispatch menu actions');
   console.log('PSP Dock product session model and input routes: OK (' + assertions + ' assertions)');
 }
 inputs().catch((error) => { console.error(error); process.exitCode = 1; });

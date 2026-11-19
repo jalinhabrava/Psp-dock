@@ -61,6 +61,9 @@ test('translates prominent screens while preserving arbitrary game titles and UR
   assert.equal(i18n.translate('Sincronizar partidas'), 'Sync saves');
   assert.equal(i18n.translate('Mejoras gráficas'), 'Graphics enhancements');
   assert.equal(i18n.translate('Idioma / Language'), 'Language / Idioma');
+  assert.equal(i18n.translate('Jugar en Linux'), 'Play on Linux');
+  assert.equal(i18n.translate('Carpeta de núcleos RetroArch'), 'RetroArch cores folder');
+  assert.equal(i18n.translate('Emuladores retro de Linux'), 'Linux retro emulators');
   assert.equal(i18n.translate('Dariusburst'), 'Dariusburst');
   assert.equal(i18n.translate('https://example.com/Conecta tu PSP'), 'https://example.com/Conecta tu PSP');
 });

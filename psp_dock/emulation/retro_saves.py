@@ -40,15 +40,20 @@ SNES_SIZES = frozenset(2**i for i in range(6,18))  # 64..131072 bytes
 
 def _safe(root: Path, path: Path) -> Path:
     root, path = Path(root).absolute(), Path(path).absolute()
+    # Inspect the supplied spelling before resolve() can hide a link or
+    # reparse point, including ancestors above the allowed root.
+    for candidate in {root, *root.parents, path, *path.parents}:
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue  # New save/backup/journal destinations are permitted.
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+            raise ValueError('No se aceptan enlaces ni junctions para SRAM.')
+    # A Windows short path and its long spelling identify the same folder.
+    # Compare only after both have passed the original-path checks above.
+    root, path = root.resolve(), path.resolve()
     if not path.is_relative_to(root):
         raise ValueError('Guardado retro fuera de la carpeta permitida.')
-    cursor = path
-    while True:
-        if cursor.is_symlink() or (hasattr(cursor,'is_junction') and cursor.is_junction()):
-            raise ValueError('No se aceptan enlaces ni junctions para SRAM.')
-        if cursor == root:
-            break
-        cursor = cursor.parent
     return path
 
 
@@ -149,7 +154,8 @@ def plan_retro_saves(*, root: Path, storage_root: Path, volume: str,
                      roms: list[dict], emulators: list[dict],
                      baselines: dict) -> list[dict]:
     """Small, bounded read-only plan, suitable for XMB status presentation."""
-    root = Path(root).absolute()
+    root = _safe(root, root)
+    storage_root = _safe(storage_root, storage_root)
     psp_tree, pc_tree = ReadOnlyTree(root), ReadOnlyTree(storage_root)
     index = {e['id']:e for e in emulators}
     by_emulator = {}

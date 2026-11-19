@@ -1,5 +1,6 @@
 """PC-only hybrid texture tests: PPSSPP integration, ISO inventory and safety."""
 from pathlib import Path
+import os
 import tempfile
 import time
 import unittest
@@ -56,6 +57,10 @@ class HybridPackTests(unittest.TestCase):
         captured.mkdir()
         source = captured / (HASH + ".png")
         Image.new("RGBA", (14, 12), (30, 100, 210, 110)).save(source)
+        # NTFS timestamps can briefly lead time.time(); this fixture is
+        # intentionally complete, unlike the active-capture test below.
+        stable_time = time.time() - 10
+        os.utime(source, (stable_time, stable_time))
         self.assertEqual(
             hd.generate_one(self.memstick, DISC, source, hd.TextureSettings(scale=4),
                             stable_seconds=0),
@@ -80,8 +85,11 @@ class HybridPackTests(unittest.TestCase):
         folder = hd.prepare_pack(self.memstick, DISC)
         raw = folder / "new"
         raw.mkdir()
+        stable_time = time.time() - 10
         for suffix in ("11", "22", "33"):
-            Image.new("RGB", (9, 7)).save(raw / (suffix * 12 + ".png"))
+            source = raw / (suffix * 12 + ".png")
+            Image.new("RGB", (9, 7)).save(source)
+            os.utime(source, (stable_time, stable_time))
         (raw / "somefile.png").write_bytes(b"not a hash")
         for _ in range(2):
             result = hd.process_dump_batch(self.memstick, DISC, hd.TextureSettings(),
@@ -114,12 +122,12 @@ class HybridPackTests(unittest.TestCase):
         raw.mkdir()
         Image.new("RGBA", (12, 12)).save(raw / (HASH + ".png"))
         worker = hd.TextureWorker(self.memstick)
+        self.addCleanup(worker.stop)
         worker.start(DISC, hd.TextureSettings(), until_idle=True)
-        for _ in range(45):
-            if (folder / (HASH + ".png")).is_file() and not worker.status()["active"]:
-                break
-            time.sleep(.12)
-        worker.stop()
+        # Stable input needs two seconds, followed by two quiet two-second
+        # cycles. Calling stop() at 5.4s races the worker and does not prove
+        # that until_idle terminated it automatically.
+        worker._thread.join(timeout=10)
         self.assertTrue((folder / (HASH + ".png")).is_file())
         self.assertFalse(worker.status()["active"])
         self.assertEqual(worker.status()["generated"], 1)

@@ -3,6 +3,19 @@
 (() => {
   const STORAGE_KEY = 'psp-dock-language';
   const translations = {
+    'Jugar en Linux':'Play on Linux',
+    'Emuladores retro de Linux':'Linux retro emulators',
+    'Instalación gestionada por tu distribución':'Installation managed by your distribution',
+    'RetroArch nativo · configura sus núcleos en Ajustes':'Native RetroArch · configure its cores in Settings',
+    'Carpeta de núcleos RetroArch':'RetroArch cores folder',
+    'Déjala vacía para buscar en las rutas habituales de tu distribución.':'Leave blank to search your distribution’s usual locations.',
+    'Instala RetroArch y sus núcleos con tu distribución. Selecciona el ejecutable y, si hace falta, la carpeta de núcleos.':'Install RetroArch and its cores through your distribution. Select the executable and, if needed, the cores folder.',
+    'En Linux el Dock utiliza los emuladores que hayas instalado.':'On Linux, Dock uses the emulators you have installed.',
+    'En Linux instala RetroArch y sus núcleos nativos y selecciona sus rutas en Ajustes.':'On Linux, install RetroArch and its native cores, then select their paths in Settings.',
+    'Navegación con la PSP por USB. Usa «Salir del Dock» antes de desconectarla.':'Navigate with your PSP over USB. Use “Exit Dock” before disconnecting it.',
+    'Espera un momento. Si no se recupera, cierra esta ventana y vuelve a abrir PSP Dock.':'Wait a moment. If it does not recover, close this window and reopen PSP Dock.',
+    'RetroArch y sus núcleos se instalarán dentro de la carpeta elegida; nunca se descargan ROMs ni BIOS.':'RetroArch and its cores will be installed inside the selected folder. ROMs and BIOS files are never downloaded.',
+    'CONFIGURAR':'CONFIGURE',
     'TU PSP, EN ESTE PC':'YOUR PSP, ON THIS PC',
     'Conecta tu PSP':'Connect your PSP',
     'Abre Dock en la consola para preparar tu sesión.':'Open Dock on your console to prepare your session.',

@@ -6,7 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
-const chrome = [process.env.PSP_DOCK_CHROME,
+const configuredChrome = process.env.PSP_DOCK_CHROME;
+if (configuredChrome) assert(fs.existsSync(configuredChrome), 'PSP_DOCK_CHROME does not exist: ' + configuredChrome);
+const chrome = [configuredChrome,
   'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
   'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
 ].find(p => p && fs.existsSync(p));
@@ -57,7 +59,7 @@ async function main() {
   const server = spawn(process.env.PSP_DOCK_PYTHON || 'python', ['-u', 'dock.py', '--demo', '--no-browser', '--port', '0', '--data', path.join(temp, 'demo')],
     { cwd:path.resolve(__dirname, '..'), windowsHide:true, stdio:['ignore', 'pipe', 'pipe'] });
   const profile = path.join(temp, 'profile');
-  let browser, socket, stderr = '';
+  let browser, socket, stderr = '', browserStderr = '', browserError;
   try {
     server.stderr.on('data', chunk => { stderr = (stderr + chunk.toString()).slice(-3000); });
     let output = '';
@@ -73,7 +75,17 @@ async function main() {
     const browserFlags = ['--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check',
       '--disable-background-networking','--disable-extensions','--remote-debugging-port=0',
       '--user-data-dir=' + profile, url];
-    browser = spawn(chrome, browserFlags, { windowsHide:true, stdio:'ignore' });
+    browser = spawn(chrome, browserFlags, { windowsHide:true, stdio:['ignore', 'ignore', 'pipe'] });
+    browser.on('error', error => { browserError = error; });
+    // Startup failures must retain the initial error, not just the register
+    // dump at the end of a Chromium crash. Profiles contain fixture data only.
+    browser.stderr.on('data', chunk => {
+      const combined = browserStderr + chunk.toString();
+      browserStderr = combined.length <= 32000 ? combined :
+        combined.slice(0, 24000) + '\n[stderr truncated]\n' + combined.slice(-8000);
+    });
+    const browserDiagnostic = () => `Browser: ${chrome}; exit=${browser.exitCode}; signal=${browser.signalCode}\n` +
+      (browserError ? String(browserError) + '\n' : '') + browserStderr;
     let port;
     for (let i = 0; i < 120; i++) {
       const file = path.join(profile, 'DevToolsActivePort');
@@ -86,9 +98,11 @@ async function main() {
           if (!['EBUSY', 'EPERM', 'ENOENT'].includes(error.code)) throw error;
         }
       }
+      assert(!browserError && browser.exitCode === null && browser.signalCode === null,
+        'Chrome exited before its debugging endpoint started.\n' + browserDiagnostic());
       await sleep(50);
     }
-    assert(port, 'Chrome debugging endpoint did not start');
+    assert(port, 'Chrome debugging endpoint did not start.\n' + browserDiagnostic());
     let page;
     for (let i = 0; i < 100; i++) {
       const pages = await fetch(`http://127.0.0.1:${port}/json/list`).then(r => r.json());

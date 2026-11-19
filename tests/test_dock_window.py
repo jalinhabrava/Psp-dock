@@ -7,6 +7,12 @@ import dock
 
 
 class AppWindowTests(unittest.TestCase):
+    def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
+
     def test_invalid_or_external_urls_do_not_open_browsers(self):
         for url in ('https://evil.invalid','http://localhost:1',
                     'http://127.0.0.1:3333/a/../b','file:///C:/'):

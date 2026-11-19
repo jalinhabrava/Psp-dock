@@ -42,7 +42,9 @@ class JOYCAPSW(C.Structure):
 
 
 class JOYINFOEX(C.Structure):
-    _fields_ = [(name, W.DWORD) for name in (
+    # DWORD is always 32 bits in the Windows ABI, including LLP64. Using
+    # c_uint32 also keeps this importable layout identical on LP64 hosts.
+    _fields_ = [(name, C.c_uint32) for name in (
         "dwSize", "dwFlags", "dwXpos", "dwYpos", "dwZpos",
         "dwRpos", "dwUpos", "dwVpos", "dwButtons",
         "dwButtonNumber", "dwPOV", "dwReserved1", "dwReserved2",

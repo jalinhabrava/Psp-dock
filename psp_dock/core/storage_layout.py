@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import uuid
 
 
@@ -76,6 +77,10 @@ def fixed_local_folder(path: Path) -> Path:
     p=Path(path)
     if not p.is_absolute() or not str(p).strip() or str(p).startswith('\\\\'):
         raise StorageLocationError('Selecciona una ruta absoluta en un disco local.')
+    # Inspect the supplied path before resolve() erases a symlink.
+    for parent in (p, *p.parents):
+        if parent.is_symlink() or (hasattr(parent, 'is_junction') and parent.is_junction()):
+            raise StorageLocationError('No se admiten carpetas enlazadas.')
     p=p.resolve()
     if str(p)==p.anchor or len(p.parts)<2:
         raise StorageLocationError('Selecciona una carpeta, no la raíz del disco.')
@@ -86,6 +91,12 @@ def fixed_local_folder(path: Path) -> Path:
         # DRIVE_FIXED=3; no removable USB, network, CD or unknown devices.
         if kernel.GetDriveTypeW(p.anchor)!=3:
             raise StorageLocationError('Se requiere un disco fijo local, no la PSP.')
+    elif sys.platform.startswith('linux') and os.environ.get('PSP_DOCK_TEST_NO_REAL_USB') != '1':
+        from psp_dock.core.linux_storage import fixed_local_directory
+        try:
+            fixed_local_directory(p)
+        except (OSError, ValueError) as exc:
+            raise StorageLocationError(str(exc)) from exc
     for parent in (p, *p.parents):
         if parent.exists() and parent.is_symlink():
             raise StorageLocationError('No se admiten carpetas enlazadas.')

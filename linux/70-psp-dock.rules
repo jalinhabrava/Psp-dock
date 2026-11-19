@@ -1,0 +1,7 @@
+# Sony may publish bcdDevice 0100; it is not a firmware-version assertion.
+# Host admission additionally requires the exact PDK2/v3 descriptor and NAT3 identity.
+# uaccess grants the active local seat; no world-writable devices or root app.
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="01cd", ATTRS{bcdDevice}=="0100", TAG+="uaccess"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="01cd", ATTRS{bcdDevice}=="030[3-8]", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="01cd", ATTRS{bcdDevice}=="0100", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="054c", ATTRS{idProduct}=="01cd", ATTRS{bcdDevice}=="030[3-8]", TAG+="uaccess"

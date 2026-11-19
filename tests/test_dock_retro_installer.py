@@ -12,6 +12,10 @@ from psp_dock.emulation.psp_retro import SYSTEMS
 
 class InstallerIntegrationTests(unittest.TestCase):
     def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
         self.tmp=tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)

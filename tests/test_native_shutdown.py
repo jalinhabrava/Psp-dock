@@ -251,7 +251,7 @@ class NativeShutdownTests(unittest.TestCase):
         for available, code in ((True, 0), (None, 5)):
             with self.subTest(available=available):
                 self.available, self.media_error = available, code
-                with self.assertRaisesRegex(native.NativeDockError, 'siga expulsada'):
+                with self.assertRaisesRegex(native.NativeDockError, 'no confirma que la tarjeta siga liberada'):
                     self.finish()
                 self.assertEqual(self.api.commands, [])
         self.assertEqual(self.release_count, 1)

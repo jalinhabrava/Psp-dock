@@ -69,7 +69,7 @@ class PCStorageMigrationTests(unittest.TestCase):
             seen.append((args,kwargs))
             return SimpleNamespace(returncode=0,stdout='PSPDOCK-FOLDER:'+str(self.root)+'\n',stderr='')
         selected=choose_pc_storage_parent(run=fake_run)
-        self.assertEqual(selected,str(self.root/'PSP Dock'))
+        self.assertEqual(selected,str((self.root/'PSP Dock').resolve()))
         self.assertFalse((self.root/'PSP Dock').exists())
         self.assertIn('-STA',seen[0][0])
         self.assertIn('FolderBrowserDialog',seen[0][0][-1])

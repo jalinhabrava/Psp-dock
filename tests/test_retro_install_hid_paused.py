@@ -17,6 +17,10 @@ from psp_dock.emulation.retro_installer import managed_retroarch
 
 class RetroInstallDuringHid(unittest.TestCase):
     def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)

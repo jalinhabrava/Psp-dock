@@ -20,6 +20,10 @@ DIAGNOSTIC = {**STABLE, 'path': r'\\?\hid#vid_054c&pid_01cc&mi_00#psp',
 
 class DiagnosticNavigationTests(unittest.TestCase):
     def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.dock = app.Dock(Path(self.temp.name) / 'data')

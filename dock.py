@@ -1,4 +1,4 @@
-"""PSP Dock: local Windows prototype. Python 3.12+, standard library only."""
+"""PSP Dock: Windows host and Linux preview. Python 3.12+, standard library."""
 from __future__ import annotations
 import argparse
 import ctypes
@@ -11,6 +11,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -31,6 +32,17 @@ from psp_dock.emulation.retro_saves import (plan_retro_saves, copy_sram_verified
                          _sha as retro_sha, RAW_PROFILES)
 
 ROOT = Path(__file__).resolve().parent
+
+def linux_host():
+    return sys.platform.startswith('linux') and os.name != 'nt'
+
+
+def host_retroarch_core(config, system):
+    if linux_host():
+        from psp_dock.emulation.linux_runtime import retroarch_core as linux_core
+        return linux_core(config.get('retroarch', ''), system, config.get('retroarch_cores', ''))
+    return retroarch_core(config.get('retroarch', ''), system)
+
 
 def digest(path):
     h = hashlib.sha256()
@@ -73,7 +85,9 @@ def read_json(path, default):
     return json.loads(path.read_text(encoding='utf-8')) if path.exists() else default
 
 def tree_signature(path):
-    path = Path(path)
+    # inside() canonicalizes existing Windows 8.3 aliases. Use the same
+    # checked spelling for the root and children before relative_to().
+    path = inside(path, '')
     if not path.exists():
         return None
     rows = []
@@ -163,7 +177,7 @@ def copy_slot(source, target, backups, expected_source, expected_target):
             shutil.rmtree(stage)
 
 def game_inventory(root):
-    root = Path(root)
+    root = inside(root, '')
     found = []
     for folder in ('ISO', 'PSP/GAME'):
         base = inside(root, folder)
@@ -286,6 +300,9 @@ def windows_devices():
     # unrelated unit test.
     if os.environ.get('PSP_DOCK_TEST_NO_REAL_USB') == '1':
         return []
+    if linux_host():
+        from psp_dock.devices.linux_native import LinuxSystem
+        return LinuxSystem().devices()
     if os.name != 'nt':
         return []
     mask = ctypes.windll.kernel32.GetLogicalDrives()
@@ -299,6 +316,11 @@ def windows_devices():
     return result
 
 def volume_identity(root):
+    if linux_host() and os.environ.get('PSP_DOCK_TEST_NO_REAL_USB') != '1':
+        from psp_dock.devices.linux_native import LinuxSystem
+        system = LinuxSystem()
+        if any(m.point == str(Path(root).absolute()) for m in system.mounts()):
+            return system.serial_of(root)
     if os.name == 'nt':
         serial = ctypes.c_ulong()
         if not ctypes.windll.kernel32.GetVolumeInformationW(str(Path(root).anchor), None, 0, ctypes.byref(serial), None, None, None, 0):
@@ -319,6 +341,11 @@ def require_psp_identity_before_writing(root):
     parent, its exact USBSTOR VID/PID and matching Memory Stick volume serial.
     This is ONLY an identity check; it is not a FAT-lock or role-switch ACK.
     """
+    if linux_host() and os.environ.get('PSP_DOCK_TEST_NO_REAL_USB') != '1':
+        # Linux ships only the session-bound PDK2 path. Sysfs identity on
+        # its own cannot authorize an old/manual action while the device is
+        # in CONTROLLER, unprobed, or missing hidraw permissions.
+        raise ValueError('Las escrituras Linux requieren una sesión PSP Dock y una fase de almacenamiento confirmadas.')
     if os.name != 'nt':
         return
     root = Path(root).absolute()
@@ -430,6 +457,9 @@ def prepare_psp_controls(memstick, backups):
 
 class Dock:
     def __init__(self, data, demo=False):
+        if linux_host():
+            from psp_dock.core.storage_layout import fixed_local_folder
+            fixed_local_folder(Path(data).absolute())
         self.data = Path(data).resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         self.events = EventJournal(self.data / 'events.jsonl')
@@ -442,11 +472,20 @@ class Dock:
                     'retro_button_layout':'nintendo', 'library': str(self.data / 'library'),
                     'memstick': str(self.data / 'memstick'), 'psp_root': '', 'scale': 3,
                     'backend': 'directx11','storage_root':str(self.data)}
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import default_ppsspp
+            defaults.update(emulator=default_ppsspp(), backend='gles', scale=2,
+                            retro_install_policy='off', retroarch=shutil.which('retroarch') or '',
+                            retroarch_cores='')
         self.config = read_json(self.config_path, defaults)
         self.config.setdefault('storage_root',str(self.data))
         self.config.setdefault('retroarch', '')
         self.config.setdefault('retro_install_policy', 'auto')
         self.config.setdefault('retro_button_layout','nintendo')
+        if linux_host():
+            self.config.setdefault('retroarch_cores', '')
+            self.config['retro_install_policy'] = 'off'
+        self.linux_input = None
         # Opt-in, per-DISC_ID PC texture capture/generation. The worker never
         # accesses PSP USB, game saves or an existing community texture pack.
         from psp_dock.emulation.psp_hd_textures import TextureWorker
@@ -597,7 +636,7 @@ class Dock:
             }
             for g in self.last_games
         ]
-        self.snapshot = {'demo':demo,'devices':[],'selected_device':None,'games':[],
+        self.snapshot = {'host_platform':'linux' if linux_host() else 'windows', 'demo':demo,'devices':[],'selected_device':None,'games':[],
                          'connection_state':'waiting_psp',
                          'retro': {'emulators': list(self.last_emulators),
                                    'roms': [{**{k:v for k,v in rom.items() if k!='signature'},
@@ -609,9 +648,15 @@ class Dock:
                          'library_source':'cached_manifest' if self.last_games else 'empty'}
         self.snapshot['games']=provisional
         from psp_dock.core.dock_product_session import DockProductSession
-        self.product_session = DockProductSession(self)
+        transport = None
+        if linux_host():
+            from psp_dock.devices.linux_native import create_transport
+            transport = create_transport(shutdown_path=self.data/'native-close-linux.json')
+        self.product_session = DockProductSession(self, transport=transport)
         self.product_flow = self.product_session.flow
         self.native_transport = self.product_session.transport
+        if linux_host():
+            self.native_transport.diagnostics = self.product_session.diagnostics
         self._native_observation = None
         from psp_dock.core.dock_window_close import NativeWindowClose
         self.window_close = NativeWindowClose(
@@ -690,6 +735,10 @@ class Dock:
 
     def validate_layout(self, psp=None, config=None):
         config = config or self.config
+        if linux_host():
+            from psp_dock.core.storage_layout import fixed_local_folder
+            for key in ('library', 'memstick', 'storage_root'):
+                fixed_local_folder(Path(config[key]))
         paths = [inside(Path(config[k]), '') for k in ('library','memstick')]
         if psp is not None:
             paths.append(inside(psp, ''))
@@ -844,7 +893,7 @@ class Dock:
             self.retro_volume = serial
             self.last_emulators, self.last_roms = found['emulators'], found['roms']
         roms = []
-        cores = {system:retroarch_core(self.config['retroarch'],system) for system in SYSTEMS}
+        cores = {system:host_retroarch_core(self.config,system) for system in SYSTEMS}
         for index, rom in enumerate(self.last_roms, 1):
             local, local_info = local_tree.entry(rom['relative'])
             status = 'missing'
@@ -861,7 +910,7 @@ class Dock:
                          'windows_emulator':'RetroArch · ' + SYSTEMS[rom['system']][1].replace('_libretro.dll',''),
                          'core_available':core is not None})
         self.cached_retro_results = {'emulators':list(self.last_emulators),'roms':roms,
-                                     'retroarch_available':any(retroarch_core(self.config['retroarch'], system)
+                                     'retroarch_available':any(host_retroarch_core(self.config, system)
                                            for system in SYSTEMS)}
         # The remembered, validated emulator inventory remains useful when
         # the PSP switches from USB storage to HID. All installer I/O is PC-only.
@@ -870,6 +919,16 @@ class Dock:
         return self.cached_retro_results
 
     def retro_install_state(self):
+        if linux_host():
+            systems = sorted({s for emu in self.last_emulators for s in emu.get('systems', []) if s in SYSTEMS})
+            missing = [SYSTEMS[s][1].replace('.dll', '.so') for s in systems
+                       if host_retroarch_core(self.config, s) is None]
+            return {'managed_path': '', 'requested_cores': [SYSTEMS[s][1].replace('.dll', '.so') for s in systems],
+                    'auto_cores': [], 'requires_license_review': [], 'missing_cores': missing,
+                    'retroarch_installed': bool(self.config.get('retroarch')),
+                    'external': True, 'needed': False, 'status': 'external',
+                    'source': 'Instalación nativa de Linux', 'policy': 'off',
+                    'progress': dict(self.retro_install_progress), 'volume_present': bool(self.root())}
         plan=pc_retro_install_plan(self.config['storage_root'],self.last_emulators,
                                    self.config.get('retroarch',''))
         with self.retro_installer_lock:
@@ -886,6 +945,10 @@ class Dock:
         if self.demo or self.recovery_required or self.running() or self.session.get('pending_return'):
             if automatic:return False
             raise ValueError('Termina o recupera la sesión antes de instalar emuladores.')
+        if linux_host():
+            if automatic:
+                return False
+            raise ValueError('En Linux instala RetroArch y sus núcleos nativos y selecciona sus rutas en Ajustes.')
         # The USB scanner is deliberately paused throughout native HID mode.
         # That is NOT a reason to block a PC-only RetroArch download: the
         # verified emulator catalog was remembered before the mode change.
@@ -1110,7 +1173,7 @@ class Dock:
             # A game ended: restore the SAME XMB window automatically,
             # instead of leaving the player on another desktop window.
             # Never run Alt+Tab or focus an arbitrary process by title.
-            if not self.stop.is_set():
+            if not self.stop.is_set() and os.name == 'nt':
                 from psp_dock.emulation.ppsspp_windows_flow import return_to_xmb
                 restored = return_to_xmb()
                 self.events.record('xmb_focus_return', evidence='pc_observed',
@@ -1536,6 +1599,9 @@ class Dock:
 
     def emulator_spec(self):
         """Cheap PC-only fingerprint for an explicitly selected emulator."""
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import emulator_spec
+            return emulator_spec(self.config)
         path = Path(self.config['emulator'])
         if not path.is_file() or path.name.lower() not in (
                 'ppssppwindows64.exe', 'ppssppwindows.exe'):
@@ -1550,6 +1616,9 @@ class Dock:
 
     def prepared_runtime_path(self, *, verify_digest=False):
         """Read-only quick check of prewarmed, isolated Windows PPSSPP."""
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import prepared_runtime
+            return prepared_runtime(self.data, self.config, verify_digest=verify_digest)
         try:
             spec = self.emulator_spec()
             record = read_json(self.data / 'runtime-prepared.json', {})
@@ -1711,6 +1780,12 @@ class Dock:
             self.runtime_error = ''
             return {'ready': True, 'exe': str(existing), 'cached': True}
         exe = Path(spec['source'])
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import prepare
+            private = prepare(self.data, self.config)
+            self.apply_game_graphics(None)
+            self.runtime_error = ''
+            return {'ready': True, 'exe': str(private), 'cached': False}
         if os.name != 'nt':
             raise ValueError('Esta versión del launcher prepara PPSSPP en Windows.')
         env = {**os.environ, 'PSP_DOCK_EXE': str(exe)}
@@ -1793,6 +1868,14 @@ class Dock:
         game = next((g for g in self.games() if g['id'] == game_id), None)
         if not game or game['availability'] != 'ready':
             raise ValueError('El juego debe estar transferido y coincidir con la PSP.')
+        if linux_host():
+            if native_before is None:
+                raise ValueError('Linux requiere una sesión nativa PSP Dock verificada.')
+            from psp_dock.emulation.linux_runtime import ppsspp_launch
+            self.apply_game_graphics(game_id)
+            args, env, controller = ppsspp_launch(self.data, self.config, native_before['usb_parent'],
+                inside(Path(self.config['library']), game['local_relative']))
+            return self._spawn_linux(args, env, game_id, 'ppsspp', native_before, controller=controller)
         exe = Path(self.config['emulator'])
         if not exe.is_file() or exe.name.lower() not in ('ppssppwindows64.exe', 'ppssppwindows.exe'):
             raise ValueError('Selecciona el ejecutable oficial de PPSSPP en los ajustes.')
@@ -1914,10 +1997,12 @@ class Dock:
         if save_row and (save_row['status']=='blocked' or
                          save_row['status'] in ('psp_to_pc','conflict') and not product.get('use_pc_saves')) and not save_row['skipped']:
             raise ValueError('Revisa la partida retro en PSP antes de abrir otra versión en Windows.')
-        selected = retroarch_core(self.config['retroarch'],rom['system'])
+        selected = host_retroarch_core(self.config,rom['system'])
         if selected is None:
-            raise ValueError('Configura RetroArch con el núcleo ' + SYSTEMS[rom['system']][1] + ' instalado en Windows.')
-        if os.name != 'nt':
+            raise ValueError('Configura RetroArch con el núcleo nativo ' + SYSTEMS[rom['system']][1].replace('.dll', '.so' if linux_host() else '.dll') + ' instalado.')
+        if linux_host() and native_before is None:
+            raise ValueError('Linux requiere una sesión nativa PSP Dock verificada.')
+        if os.name != 'nt' and not linux_host():
             raise ValueError('El Dock inicia juegos retro únicamente en Windows.')
         from psp_dock.emulation.ppsspp_windows_flow import focus_async
         if not native:
@@ -1931,13 +2016,21 @@ class Dock:
                 digest(local) != mirror['signature']):
             raise ValueError('La ROM local ya no coincide con el catálogo.')
         storage=Path(self.config['storage_root'])
-        profile=prepare_joypad_profile(storage,layout=self.config['retro_button_layout'],
-                                      product_id=0x01CD if native else 0x01CB)
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import retro_profile
+            profile, child_env, controller = retro_profile(storage, native_before['usb_parent'], layout=self.config['retro_button_layout'])
+        else:
+            profile=prepare_joypad_profile(storage,layout=self.config['retro_button_layout'],
+                                          product_id=0x01CD if native else 0x01CB)
         save,state=private_save_paths(storage,self.retro_volume,rom_id)
         save.parent.mkdir(parents=True,exist_ok=True)
         # A savestate belongs to its core; never recycle it after a core swap.
         state=state.with_name(state.stem+'-'+hashlib.sha256(core.name.encode()).hexdigest()[:12]+state.suffix)
         state.parent.mkdir(parents=True,exist_ok=True)
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import retro_arguments
+            return self._spawn_linux(retro_arguments(exe, core, local, profile, save, state),
+                                     child_env, rom_id, 'retroarch', native_before, controller=controller)
         if native:
             after = self.native_transport.assert_controller(native_before['session_id'])
             if any(after[key] != native_before[key] for key in ('path','session_id','volume_serial','usb_parent')) or after.get('exit_requested'):
@@ -1967,6 +2060,26 @@ class Dock:
             self.events.record('retro_launch_failed',evidence='pc_observed',
                                game_id=rom_id,result='popen_error')
             raise
+
+    def _spawn_linux(self, args, env, game_id, launcher, before, *, controller):
+        """Persist the existing session contract before starting a native child."""
+        after = self.native_transport.assert_controller(before['session_id'])
+        if any(after.get(key) != before.get(key) for key in ('path', 'session_id', 'volume_serial', 'usb_parent')) or after.get('exit_requested'):
+            raise ValueError('El Dock cambió durante la preparación del emulador Linux.')
+        self.session.update(running=True, pending_return=True, launcher=launcher, last_game_id=game_id)
+        self.product_flow.set_game_running(True)
+        atomic_json(self.data / 'session.json', self.session)
+        try:
+            from psp_dock.emulation.linux_sdl import verify_psp_pad
+            verify_psp_pad(controller, after['usb_parent'])
+            self.process = subprocess.Popen(args, cwd=self.data, env=env)
+        except (OSError, ValueError):
+            self.session['running'] = False
+            self.product_flow.set_game_running(False)
+            atomic_json(self.data / 'session.json', self.session)
+            raise
+        self.events.record('game_launched', evidence='pc_observed', game_id=game_id,
+                           launcher=launcher, result='linux_process_started')
 
     def request_exit(self):
         """User explicitly authorizes save return, not a USB role command.
@@ -2088,8 +2201,16 @@ class Dock:
         if (not isinstance(config.get('retroarch'),str) or
                 config['retroarch'] and
                 (not Path(config['retroarch']).is_absolute() or
-                 Path(config['retroarch']).name.casefold() != 'retroarch.exe')):
-            raise ValueError('Selecciona un ejecutable retroarch.exe de Windows o deja la opción vacía.')
+                 Path(config['retroarch']).name.casefold() != ('retroarch' if linux_host() else 'retroarch.exe'))):
+            raise ValueError('Selecciona el ejecutable nativo de RetroArch o deja la opción vacía.')
+        if linux_host():
+            if config['backend'] not in ('vulkan', 'gles'):
+                raise ValueError('En Linux selecciona OpenGL o Vulkan.')
+            if config.get('retro_install_policy') != 'off':
+                raise ValueError('La instalación de emuladores Linux se gestiona con tu distribución.')
+            cores = config.get('retroarch_cores', '')
+            if not isinstance(cores, str) or cores and not Path(cores).is_absolute():
+                raise ValueError('La carpeta de núcleos Linux debe ser absoluta.')
         if type(config['scale']) is not int or not 1 <= config['scale'] <= 6 or config['backend'] not in ('directx11','vulkan','gles'):
             raise ValueError('Perfil gráfico inválido.')
         for key in ('library','memstick'):
@@ -2097,6 +2218,9 @@ class Dock:
                 raise ValueError('Usa rutas absolutas para la biblioteca y las partidas.')
         effective = Path(config['psp_root']) if config['psp_root'] else self.root()
         self.validate_layout(effective, config)
+        if linux_host() and config['memstick'] != self.config['memstick']:
+            from psp_dock.emulation.linux_runtime import forget_xdg
+            forget_xdg(self.data, self.config['memstick'])
         if any(config[k] != self.config[k] for k in ('library','memstick','psp_root')):
             self.session.pop('prepared_volume', None)
             atomic_json(self.data / 'session.json', self.session)
@@ -2149,6 +2273,9 @@ class Dock:
         if self.config.get('retroarch') and Path(self.config['retroarch'])==old_managed:
             updated['retroarch']=str(managed_retroarch(report['path']))
         self.validate_layout(self.root(),updated)
+        if linux_host():
+            from psp_dock.emulation.linux_runtime import forget_xdg
+            forget_xdg(self.data, self.config['memstick'])
         atomic_json(self.config_path,updated)
         self.config=updated
         self.hd_worker.memstick=Path(updated['memstick'])
@@ -2557,6 +2684,13 @@ class Dock:
         if expected is None:
             return idle("La identidad del mando no corresponde a un modo Dock admitido.")
         try:
+            if linux_host():
+                if seen.get('mode') != 'native_dock':
+                    return idle('Linux requiere una sesión nativa PSP Dock verificada.')
+                from psp_dock.devices.linux_input import PSPLinuxReader
+                if self.linux_input is None:
+                    self.linux_input = PSPLinuxReader()
+                return self.linux_input.read(self.native_transport.current or {})
             return PSPWinMMReader(expected_product=expected[0]).read()
         except (OSError, ValueError, RuntimeError) as exc:
             return idle(str(exc))
@@ -2661,7 +2795,9 @@ class Dock:
                 'session': {**self.session, 'running': running},
                 'emulator': {'path': self.config['emulator'], 'available': bool(self.config['emulator']) and Path(self.config['emulator']).is_file()},
                 'error': self.error, 'recovery_required': self.recovery_required,
-                'controller': 'PSP Dock HID probado en hardware: botones, cruceta y joystick operativos. Cambio USB automático pendiente.'}
+                'host_platform': 'linux' if linux_host() else 'windows',
+                'controller': ('Linux: pendiente de validación con la PSP física.' if linux_host() else
+                    'PSP Dock HID probado en hardware: botones, cruceta y joystick operativos. Cambio USB automático pendiente.')}
 
     def icon(self, game_id):
         """Serve only ICON0.PNG from a game in the known catalog.
@@ -3059,6 +3195,9 @@ class Dock:
             self.stop.wait(self.watch_interval())
 
 def make_demo(data):
+    if linux_host():
+        from psp_dock.core.storage_layout import fixed_local_folder
+        fixed_local_folder(Path(data).absolute())
     psp = Path(data) / 'sample-psp'
     (psp / 'PSP/SAVEDATA/DEMO0001').mkdir(parents=True, exist_ok=True)
     (psp / 'PSP/SAVEDATA/DEMO0001/DATA.BIN').write_bytes(b'Synthetic save; not a PSP save.')
@@ -3078,6 +3217,9 @@ def default_data_path(localappdata, *, demo=False):
     misleading blank library or silently replace a known configuration.
     This resolver only inspects the PC; it never searches removable disks.
     """
+    if linux_host():
+        from psp_dock.core.linux_desktop import default_data_dir
+        return default_data_dir(demo=demo)
     local = Path(localappdata)
     if demo:
         return local / 'PSP-Dock/demo'
@@ -3114,16 +3256,26 @@ def acquire_instance_lock(data):
 
 def recover_session(data):
     data = Path(data)
+    if linux_host():
+        from psp_dock.core.storage_layout import fixed_local_folder
+        fixed_local_folder(data.absolute())
+        if not (data / 'session.json').is_file():
+            raise ValueError('La carpeta no contiene una sesión PSP Dock que recuperar.')
     data.mkdir(parents=True,exist_ok=True)
     lock = acquire_instance_lock(data)
     try:
-        if os.name != 'nt':
+        if linux_host():
+            from psp_dock.core.linux_desktop import assert_emulators_stopped
+            config = read_json(data / 'settings.json', {})
+            assert_emulators_stopped(executables=[config.get('emulator', ''), config.get('retroarch', '')])
+        elif os.name != 'nt':
             raise ValueError('La comprobación de procesos de recuperación requiere Windows.')
-        result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',
-            '$ErrorActionPreference="Stop"; @(Get-CimInstance Win32_Process -Filter "Name=\'PPSSPPWindows64.exe\' OR Name=\'PPSSPPWindows.exe\' OR Name=\'retroarch.exe\'").Count'],
-            capture_output=True,text=True,timeout=30,creationflags=0x08000000)
-        if result.returncode != 0 or result.stdout.strip() != '0':
-            raise ValueError('No se puede recuperar mientras PPSSPP o RetroArch sigan abiertos o no se pueda comprobar su cierre.')
+        else:
+            result = subprocess.run(['powershell.exe','-NoProfile','-NonInteractive','-Command',
+                '$ErrorActionPreference="Stop"; @(Get-CimInstance Win32_Process -Filter "Name=\'PPSSPPWindows64.exe\' OR Name=\'PPSSPPWindows.exe\' OR Name=\'retroarch.exe\'").Count'],
+                capture_output=True,text=True,timeout=30,creationflags=0x08000000)
+            if result.returncode != 0 or result.stdout.strip() != '0':
+                raise ValueError('No se puede recuperar mientras PPSSPP o RetroArch sigan abiertos o no se pueda comprobar su cierre.')
         session_file=data/'session.json'
         session=read_json(session_file,{'running':False,'pending_return':False})
         session['running']=False
@@ -3139,6 +3291,10 @@ def launch_xmb_window(url, *, app_window=False, reuse_existing=True, include_han
     allowed. An installed Chrome or Edge uses --app (no browser chrome).
     This never touches a device, driver, browser profile or game save.
     """
+    if linux_host():
+        from psp_dock.core.linux_desktop import launch_xmb_window as linux_window
+        return linux_window(url, app_window=app_window, reuse_existing=reuse_existing,
+                            include_handles=include_handles)
     if not re.fullmatch(r'http://127[.]0[.]0[.]1:[0-9]{1,5}/?',url):
         raise ValueError('La ventana XMB solo admite la URL local del Dock.')
     if not app_window:
@@ -3704,6 +3860,8 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
             if dock._background_cache is not None:
                 dock._background_cache.close(wait=False)
         server.server_close()
+        if dock.linux_input is not None:
+            dock.linux_input.close()
         # No daemon performing an existing copy may outlive our instance
         # lock. Both workers check stop before beginning another item.
         if watcher is not None:
@@ -3720,7 +3878,7 @@ def serve(dock, port, open_browser, open_on_connect=False, app_window=False,
         instance_lock.close()
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='PSP Dock · prototipo local para Windows')
+    parser = argparse.ArgumentParser(description='PSP Dock · host local para Windows y Linux')
     parser.add_argument('--demo',action='store_true')
     parser.add_argument('--no-browser',action='store_true')
     parser.add_argument('--app-window',action='store_true',

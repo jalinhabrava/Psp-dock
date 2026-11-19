@@ -20,6 +20,14 @@ const ui = {
   storageSetupRequested: false,
   productFlowKey: '', productRequestError: '', connectionRequestError: '', refreshPending: false,
 };
+function linuxHost() { return ui.state?.host_platform === 'linux'; }
+function hostBackends() {
+  return linuxHost() ? [['gles', 'OpenGL'], ['vulkan', 'Vulkan']] :
+    [['directx11', 'Direct3D 11'], ['vulkan', 'Vulkan'], ['gles', 'OpenGL']];
+}
+function nativePspSource(frame) {
+  return frame.connected === true && frame.source === (linuxHost() ? 'psp_linux_hidraw' : 'psp_winmm');
+}
 const bytes = (value) => {
   const n = Number(value) || 0;
   if (n < 1024) return `${n} B`;
@@ -265,6 +273,8 @@ function renderDevices() {
 }
 function render() {
   const state = ui.state;
+  if (linuxHost()) document.querySelector('.hardware-note').textContent =
+    'Navegación con la PSP por USB. Usa «Salir del Dock» antes de desconectarla.';
   const connection = xmbConnectionView();
   if (connection.waiting || connection.product?.visible) {
     if ($('saves-dialog').open) renderSaves();
@@ -1150,9 +1160,29 @@ async function openSettings() {
   $('settings-save').disabled = true;
   try {
     const settings = await request('/api/settings');
-    for (const key of ['emulator', 'retroarch', 'retro_install_policy', 'library', 'memstick', 'psp_root', 'scale', 'backend']) {
+    const form = $('settings-form');
+    const linux = linuxHost();
+    $('linux-cores-field').hidden = !linux;
+    form.elements.namedItem('retroarch_cores').disabled = !linux;
+    form.elements.namedItem('emulator').placeholder = linux ? '/usr/bin/PPSSPPSDL' : 'Ruta al ejecutable de PPSSPP';
+    form.elements.namedItem('retroarch').placeholder = linux ? '/usr/bin/retroarch' : 'Ruta absoluta a retroarch.exe';
+    $('retro-install-help').textContent = linux ?
+      'Instala RetroArch y sus núcleos con tu distribución. Selecciona el ejecutable y, si hace falta, la carpeta de núcleos.' :
+      'Si se activa la instalación automática, PSP Dock descarga RetroArch portable y los núcleos correspondientes en tu carpeta del PC. No descarga ROMs ni BIOS.';
+    $('retro-policy-help').textContent = linux ?
+      'En Linux el Dock utiliza los emuladores que hayas instalado.' :
+      'RetroArch y sus núcleos se instalarán dentro de la carpeta elegida; nunca se descargan ROMs ni BIOS.';
+    for (const option of form.elements.namedItem('retro_install_policy').options)
+      option.hidden = option.disabled = linux && option.value !== 'off';
+    for (const option of form.elements.namedItem('backend').options)
+      option.hidden = option.disabled = linux && option.value === 'directx11';
+    for (const key of ['emulator', 'retroarch', 'retro_install_policy', 'library', 'memstick', 'psp_root', 'scale', 'backend', ...(linux ? ['retroarch_cores'] : [])]) {
       const field = $('settings-form').elements.namedItem(key);
-      field.value = settings[key] ?? (key === 'scale' ? '3' : key === 'backend' ? 'directx11' : '');
+      field.value = settings[key] ?? (key === 'scale' ? '3' : key === 'backend' ? (linux ? 'gles' : 'directx11') : '');
+    }
+    if (linux) {
+      form.elements.namedItem('retro_install_policy').value = 'off';
+      if (form.elements.namedItem('backend').value === 'directx11') form.elements.namedItem('backend').value = 'gles';
     }
     $('settings-save').disabled = !!ui.state?.recovery_required || !!ui.state?.session?.running || !!ui.state?.session?.pending_return;
     if ($('settings-save').disabled) {
@@ -1343,8 +1373,8 @@ function controllerInput(pad) {
 }
 function gamepadLoop(time) {
   if (ui.appClosed) return;
-  // On PSP HID prefer the Windows-native WinMM source to the browser:
-  // otherwise one physical CROSS can fire twice (WinMM + Gamepad API).
+  // Prefer the host's native PSP input to the browser, so one physical
+  // CROSS cannot fire twice (native HID input + Gamepad API).
   if (ui.nativePadConnected && Date.now() - ui.nativePadLastAt < 600) {
     requestAnimationFrame(gamepadLoop);
     return;
@@ -1403,7 +1433,7 @@ function gamepadLoop(time) {
   requestAnimationFrame(gamepadLoop);
 }
 function processNativePspFrame(input, now) {
-  // The physical PSP buttons are mapped explicitly by Windows WinMM,
+  // The physical PSP buttons are mapped explicitly by the host adapter,
   // independent of Chromium's nonstandard Gamepad API mapping.
   const edge = (name) => !!input[name] && !ui.nativePadHeld[name];
   const direction = input.left ? 'left' : input.right ? 'right' :
@@ -1449,7 +1479,7 @@ async function pollNativePspInput() {
             'Mando conectado · cruceta para elegir · ✕ para confirmar') :
           `Mando pendiente: ${frame.reason || 'comprobando la entrada'}`;
       }
-      if (frame.connected === true && frame.source === 'psp_winmm') {
+      if (nativePspSource(frame)) {
         const flowKey = ui.state?.product_flow?.enabled === true ?
           `${ui.state.product_flow.offer_id}:${ui.state.product_flow.phase}:${ui.state.controller_status?.phase}` : '';
         if (!ui.nativePadConnected || ui.nativePadFlowKey !== flowKey) {
@@ -1700,7 +1730,7 @@ function dockConnectionView(state, options = {}) {
     storage: ['PSP conectada en almacenamiento USB', storage ?
       'Puedes preparar la biblioteca aquí, o salir del modo USB de Sony y abrir PSP Dock en la consola.' :
       'Sal del modo USB de Sony y abre PSP Dock en la consola para entrar al menú.'],
-    offline: ['La app no puede actualizar la conexión', 'Espera un momento. Si no se recupera, cierra esta ventana y vuelve a abrir PSP Dock en Windows.'],
+    offline: ['La app no puede actualizar la conexión', 'Espera un momento. Si no se recupera, cierra esta ventana y vuelve a abrir PSP Dock.'],
     closed: ['Esta ventana ya está desconectada', 'Puedes cerrar esta ventana.'],
     searching: [link.status, link.message],
     identifying: [link.status, link.message],
@@ -2222,6 +2252,8 @@ async function xmbStorageLocation() {
   if (!xmb.settings) return;
   $('storage-location-current').textContent = 'Actualmente: ' + (xmb.settings.storage_root || xmb.settings.library);
   $('storage-location-path').value = '';
+  $('storage-location-path').placeholder = linuxHost() ? '/home/usuario/Juegos/PSP-Dock' : 'D:\\Juegos\\PSP Dock';
+  $('storage-location-browse').hidden = linuxHost();
   $('storage-location-error').hidden = true;
   $('storage-location-dialog').showModal();
 }
@@ -2231,7 +2263,8 @@ async function xmbSaveSetting(key, value, label) {
   if (!xmb.settings) await xmbLoadSettings();
   if (!xmb.settings) { toast('No se pudieron leer los ajustes actuales.'); return; }
   const fields = {};
-  for (const name of ['emulator', 'retroarch', 'retro_install_policy', 'retro_button_layout', 'library', 'memstick', 'psp_root', 'scale', 'backend']) fields[name] = xmb.settings[name] ?? '';
+  for (const name of ['emulator', 'retroarch', 'retro_install_policy', 'retro_button_layout', 'library', 'memstick', 'psp_root', 'scale', 'backend', ...(linuxHost() ? ['retroarch_cores'] : [])]) fields[name] = xmb.settings[name] ?? '';
+  if (linuxHost()) fields.retro_install_policy = 'off';
   fields[key] = value;
   fields.scale = Number(fields.scale) || 3;
   if (await mutate('/api/settings', fields, `${label}: guardado.`)) await xmbLoadSettings();
@@ -2249,6 +2282,7 @@ function xmbRetroInstallState(state = ui.state || {}) {
   const ready = installer.status === 'ready' && !active;
   const detail = active ? `${progress.item || 'Preparando RetroArch'} · ${percent === null ? 'Conectando…' : percent + '%'}` :
     failed ? `Instalación pendiente: ${progress.error || 'error de descarga'}` :
+    state.host_platform === 'linux' ? 'RetroArch nativo · configura sus núcleos en Ajustes' :
     installer.external ? 'RetroArch externo · gestionar núcleos en su instalación' :
     policy === 'off' ? 'Descarga automática desactivada en Ajustes' :
     ready ? 'RetroArch y núcleos preparados en Windows' :
@@ -2302,15 +2336,15 @@ function xmbBuildSections() {
         [['nintendo','Nintendo: ✕ = B / ○ = A (predeterminada)'],['psp','PSP: ✕ = A / ○ = B']],
         settingsValue('retro_button_layout','nintendo'),
         value => xmbSaveSetting('retro_button_layout',value,'Controles RetroArch')) },
-    { key:'retro-auto',t:'Instalación de emuladores retro',icon:'retro',
-      s:() => ({auto:'Automática al detectar homebrew PSP',ask:'Preguntar antes de descargar',off:'Desactivada'})[settingsValue('retro_install_policy','ask')],
-      activate:()=>xmbValues('Instalación de emuladores oficiales',
+    { key:'retro-auto',t:linuxHost() ? 'Emuladores retro de Linux' : 'Instalación de emuladores retro',icon:'retro',
+      s:() => linuxHost() ? 'Instalación gestionada por tu distribución' : ({auto:'Automática al detectar homebrew PSP',ask:'Preguntar antes de descargar',off:'Desactivada'})[settingsValue('retro_install_policy','ask')],
+      activate:()=>linuxHost() ? openSettings() : xmbValues('Instalación de emuladores oficiales',
         [['auto','Automática · solo núcleos detectados'],
          ['ask','Preguntar antes de descargar'],['off','No descargar emuladores']],
          settingsValue('retro_install_policy','ask'),
          value=>xmbSaveSetting('retro_install_policy',value,'Instalación retro')) },
-    { key: 'backend', t: 'Motor gráfico', s: () => ({ directx11: 'Direct3D 11', vulkan: 'Vulkan', gles: 'OpenGL' })[settingsValue('backend', 'directx11')] || settingsValue('backend', ''), icon: 'hd',
-      activate: () => xmbValues('Motor gráfico', [['directx11', 'Direct3D 11'], ['vulkan', 'Vulkan'], ['gles', 'OpenGL']], settingsValue('backend', 'directx11'),
+    { key: 'backend', t: 'Motor gráfico', s: () => ({ directx11: 'Direct3D 11', vulkan: 'Vulkan', gles: 'OpenGL' })[settingsValue('backend', linuxHost() ? 'gles' : 'directx11')] || settingsValue('backend', ''), icon: 'hd',
+      activate: () => xmbValues('Motor gráfico', hostBackends(), settingsValue('backend', linuxHost() ? 'gles' : 'directx11'),
         (value) => xmbSaveSetting('backend', value, 'Motor gráfico')) },
     { key: 'scale', t: 'Escala manual de respaldo', s: () => `${settingsValue('scale', 3)}×`, icon: 'hd',
       activate: () => xmbValues('Escala manual de respaldo', [1, 2, 3, 4, 5, 6].map((n) => [String(n), n === 1 ? '1× · Original' : `${n}×`]),
@@ -2367,7 +2401,7 @@ function xmbBuildSections() {
     { key: 'storage', t: 'Carpeta principal de datos',
       s: () => settingsValue('storage_root',settingsValue('library','')),
       icon: 'folder', activate: () => xmbStorageLocation() },
-    ...[['emulator', 'Emulador PPSSPP'], ['retroarch', 'RetroArch (consolas clásicas)'], ['library', 'Biblioteca del PC'], ['memstick', 'Memory Stick de PPSSPP'], ['psp_root', 'Raíz de la PSP']].map(([key, t]) => ({
+    ...[['emulator', 'Emulador PPSSPP'], ['retroarch', 'RetroArch (consolas clásicas)'], ...(linuxHost() ? [['retroarch_cores', 'Carpeta de núcleos RetroArch']] : []), ['library', 'Biblioteca del PC'], ['memstick', 'Memory Stick de PPSSPP'], ['psp_root', 'Raíz de la PSP']].map(([key, t]) => ({
       key: 'path-' + key, t, s: () => settingsValue(key, '') || (key === 'psp_root' ? 'Detección automática' : 'Sin configurar'), icon: 'folder',
       activate: () => { openSettings(); toast('Las carpetas se escriben con el teclado. ○ cierra sin guardar.'); },
     })),
@@ -2431,6 +2465,7 @@ function xmbBuildSections() {
         (missingCore ? ` · ${install.detail}` : ''),
       chip: downloading ? ['inh', install.percent === null ? 'INSTALANDO' : `${install.percent}%`] :
         ready && !missingCore ? ['pc', `${ready} EN PC`] :
+        missingCore && state.host_platform === 'linux' ? ['conf', 'CONFIGURAR'] :
         missingCore && install.policy === 'off' ? ['inh', 'DESACTIVADO'] :
         missingCore ? ['copy', install.failed ? 'ERROR' : 'PREPARAR'] :
         roms.length ? ['copy', 'COPIAR'] : ['inh', 'VACÍO'],
@@ -2865,7 +2900,7 @@ function xmbRetroRomMenu(rom) {
   if (connection.waiting || connection.product?.blocking) return;
   const save = (ui.state?.retro_saves?.rows || []).find(row => row.rom_id === rom.id);
   const items = [
-    { t:'Jugar en Windows', s:rom.windows_emulator + (rom.core_available ? ' · núcleo instalado' : ` · ${xmbRetroInstallState().detail}`) },
+    { t:ui.state?.host_platform === 'linux' ? 'Jugar en Linux' : 'Jugar en Windows', s:rom.windows_emulator + (rom.core_available ? ' · núcleo instalado' : ` · ${xmbRetroInstallState().detail}`) },
     { t:'Copiar ROM al PC', s:rom.availability === 'missing' ? bytes(rom.size) + ' · transferencia verificada' : 'No se sobrescribe el archivo local' },
     { t:'Partida retro (SRAM)', s:save ? (save.status === 'unsupported' ? save.reason :
       save.status === 'none' ? 'Aún no existe una SRAM guardada' :

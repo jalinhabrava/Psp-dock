@@ -87,7 +87,8 @@ PSP Dock is a community-minded passion project and a little love letter to one o
 - **PSP:** Install the entire PSP ZIP. `EBOOT.PBP` needs `docknative.prx` alongside it. No PSP flash modification or ARK plugin installation is required.
 - **PPSSPP:** Set up your own copy separately. PSP Dock does not redistribute PPSSPP executables or game content.
 - **Saves:** Always back up precious progress and review conflicts before copying; keep the cable connected throughout verification.
-- **Other platforms:** Linux and Android TV are still experimental and not validated release downloads.
+- **Linux preview:** This branch includes a Linux host based on Windows v0.1.3 and native firmware 0308. See the [Linux guide](docs/LINUX.md) for requirements, `./start-linux.sh`, the CI preview archive, and hardware validation still required.
+- **Android TV:** Development continues in its own branch; it is not included in this Linux preview.
 
 ### Building and testing
 

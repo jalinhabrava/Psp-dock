@@ -64,10 +64,15 @@ def native_device_removed(parent, path, *, api_factory=NativeHid):
 
 
 class NativeShutdown:
+    schema = SCHEMA
+    eject_kind = 'media'
     def __init__(self, path, *, api_factory=NativeHid,
                  release=release_native_storage, verify_release=verify_media_released,
                  removed=native_device_removed, persist=_atomic_json,
-                 clock=time.monotonic, pause=time.sleep):
+                 clock=time.monotonic, pause=time.sleep, hid_identity=hid_instance,
+                 release_verified=None):
+        self.hid_identity = hid_identity
+        self.release_verified = release_verified or (lambda check: check.get('media_absent') is True)
         self.path = Path(path) if path is not None else None
         self.api_factory, self.release, self.verify_release = api_factory, release, verify_release
         self.removed, self.persist = removed, persist
@@ -145,7 +150,7 @@ class NativeShutdown:
         sequence = current['sequence'] + 1
         report = encode_command(current['session_id'], sequence, SAFE, HOST_SHUTDOWN,
                                 firmware_revision=current['firmware_revision'], build_id=current['build_id'])
-        record = {'schema':SCHEMA, 'stage':'release_pending', 'observation':deepcopy(current),
+        record = {'schema':self.schema, 'stage':'release_pending', 'observation':deepcopy(current),
                   'storage':asdict(storage), 'sequence':sequence, 'command_hex':report.hex(),
                   'attempts':0, 'release':None, 'cancel':bool(cancel)}
         self._validate_record(record)
@@ -158,7 +163,7 @@ class NativeShutdown:
                 expected['protocol_version'], expected['firmware_revision'],
                 expected['capabilities'], expected['build_id']) or
                 status.session != expected['session_id'] or
-                parent_of(hid_instance(expected['path']))[1] != expected['usb_parent']):
+                parent_of(self.hid_identity(expected['path']))[1] != expected['usb_parent']):
             raise NativeDockError('La PSP cambió durante el cierre; no se envía una orden a la nueva sesión.')
 
     def _removed(self):
@@ -234,7 +239,7 @@ class NativeShutdown:
     def _complete(self):
         self._save(stage='complete')
         return {'verified':True, 'host_eject_accepted':True, 'storage_released':True,
-                'device_removed':True, 'eject_kind':'media',
+                'device_removed':True, 'eject_kind':self.eject_kind,
                 'session':self.record['observation']['session_id'],
                 'volume_serial':self.record['observation']['volume_serial']}
 
@@ -272,7 +277,7 @@ class NativeShutdown:
                 if receipt.get('status') in ('volume_dismounted', 'eject_requested'):
                     raise NativeDockError('La expulsión quedó sin confirmar. Se conserva la sesión; no se repite automáticamente.')
                 storage = PspStorage(**self.record['storage'])
-                parent = parent_of(hid_instance(current['path']))
+                parent = parent_of(self.hid_identity(current['path']))
                 try:
                     receipt = self.release(storage, parent, checkpoint=self._checkpoint)
                 except StorageReleaseError as exc:
@@ -284,8 +289,8 @@ class NativeShutdown:
                     raise NativeDockError(str(exc)) from exc
                 self.record['release'] = deepcopy(receipt)
             check = self.verify_release(self.record['release'])
-            if check.get('media_absent') is not True:
-                raise NativeDockError('Windows no confirma que la tarjeta siga expulsada; no se corta USB.')
+            if not self.release_verified(check):
+                raise NativeDockError('El sistema no confirma que la tarjeta siga liberada; no se corta USB.')
             receipt = deepcopy(self.record['release'])
             receipt.update(storage_released=True, release_check=check)
             self._save(stage='media_released', release=receipt)
@@ -323,7 +328,7 @@ class NativeShutdown:
                     transport_diagnostic = {'available':False, 'error':str(exc)}
                 if transport_diagnostic:
                     self._save(transport_diagnostic=transport_diagnostic)
-        detail = 'Windows ya liberó la tarjeta, pero la PSP no confirmó el cierre de USB. Reintentar comprobará sólo el cierre.'
+        detail = 'El sistema ya liberó la tarjeta, pero la PSP no confirmó el cierre de USB. Reintentar comprobará sólo el cierre.'
         if transport_diagnostic.get('available'):
             detail += (f" USB: recibidos {transport_diagnostic['received_bytes']}, "
                 f"resultado {transport_diagnostic['completion_result']}, descarte {transport_diagnostic['drop_reason']}.")

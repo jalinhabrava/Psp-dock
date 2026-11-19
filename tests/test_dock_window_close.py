@@ -23,6 +23,10 @@ class Clock:
 
 class NativeWindowCloseTests(unittest.TestCase):
     def setUp(self):
+        # This fixture exercises the Windows contract on every CI host.
+        windows = patch('dock.linux_host', return_value=False)
+        windows.start()
+        self.addCleanup(windows.stop)
         self.no_usb = patch.dict(app.os.environ, {'PSP_DOCK_TEST_NO_REAL_USB':'1'})
         self.no_usb.start()
         self.addCleanup(self.no_usb.stop)

@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import sys
 from pathlib import Path
 import threading
 import time
@@ -55,6 +56,11 @@ class UiSoundPlayer:
                 str(path) if path is not None else None,
                 winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT
                 if path is not None else 0)
+        elif play is None and sys.platform.startswith('linux'):
+            from psp_dock.media.linux_sounds import LinuxSoundOutput
+            output = LinuxSoundOutput()
+            if output.executable is not None:
+                self._play = output.play
 
     def asset(self, name: str) -> tuple[Path, bytes] | None:
         if not isinstance(name, str) or name not in SOUNDS:
