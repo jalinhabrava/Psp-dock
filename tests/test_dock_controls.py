@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from dock import Dock, prepare_psp_controls
-from ppsspp_psp_button_map import remap_controls
+from psp_dock.emulation.ppsspp_psp_button_map import remap_controls
 from tests.test_ppsspp_psp_button_map import DEFAULT_PROFILE
 
 
@@ -21,11 +21,15 @@ class LauncherControlsTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_first_launch_seeds_only_pc_with_physically_verified_controls(self):
+        from dock import ROOT
+        verified = ROOT / 'data/ppsspp-hid-lab/memstick/PSP/SYSTEM/controls.ini'
+        if not verified.is_file():
+            self.skipTest('requires independently physically verified local PPSSPP controls.ini')
         report = prepare_psp_controls(self.memstick, self.backups)
         self.assertEqual(report["status"], "PSP-CORRECT")
         self.assertTrue(self.profile.is_file())
         self.assertFalse(remap_controls(self.profile.read_bytes())[1])
-        with patch("ppsspp_psp_button_map.ppsspp_open", return_value=False):
+        with patch("psp_dock.emulation.ppsspp_psp_button_map.ppsspp_open", return_value=False):
             again = prepare_psp_controls(self.memstick, self.backups)
         self.assertFalse(again["changed"])
         self.assertFalse(self.backups.exists())
@@ -33,7 +37,7 @@ class LauncherControlsTests(unittest.TestCase):
     def test_known_stock_profile_corrects_only_with_pc_backup(self):
         self.profile.parent.mkdir(parents=True)
         self.profile.write_bytes(DEFAULT_PROFILE)
-        with patch("ppsspp_psp_button_map.ppsspp_open", return_value=False):
+        with patch("psp_dock.emulation.ppsspp_psp_button_map.ppsspp_open", return_value=False):
             result = prepare_psp_controls(self.memstick, self.backups)
         self.assertTrue(result["changed"])
         self.assertEqual(Path(result["backup"]).read_bytes(), DEFAULT_PROFILE)
@@ -43,7 +47,7 @@ class LauncherControlsTests(unittest.TestCase):
         self.profile.parent.mkdir(parents=True)
         custom = DEFAULT_PROFILE.replace(b"10-189", b"10-207")
         self.profile.write_bytes(custom)
-        with patch("ppsspp_psp_button_map.ppsspp_open", return_value=False):
+        with patch("psp_dock.emulation.ppsspp_psp_button_map.ppsspp_open", return_value=False):
             with self.assertRaisesRegex(ValueError, "No se modificó"):
                 prepare_psp_controls(self.memstick, self.backups)
         self.assertEqual(self.profile.read_bytes(), custom)
@@ -57,15 +61,15 @@ class LauncherControlsTests(unittest.TestCase):
                         'mode': 'hid_manual', 'can_play': True,
                         'product_id': 0x01CB, 'revision': 0x0104,
                         'synthetic_storage': False}
-            with patch('psp_dock_identity.probe_dock', return_value=identity), \
-                 patch("ppsspp_hid_session.validate_hid_only",
+            with patch('psp_dock.devices.psp_dock_identity.probe_dock', return_value=identity), \
+                 patch("psp_dock.emulation.ppsspp_hid_session.validate_hid_only",
                        return_value={"session": "ab" * 16, "path": "synthetic"}):
                 report = dock.controller_status(False)
                 self.assertEqual(report["mode"], "hid_manual")
                 self.assertTrue(report["connected"])
                 self.assertIn("no es prueba", report["reason"])
-            with patch('psp_dock_identity.probe_dock', return_value=identity), \
-                 patch("ppsspp_hid_session.validate_hid_only",
+            with patch('psp_dock.devices.psp_dock_identity.probe_dock', return_value=identity), \
+                 patch("psp_dock.emulation.ppsspp_hid_session.validate_hid_only",
                        side_effect=ValueError("HID not present")):
                 self.assertEqual(dock.controller_status(False)["mode"], "await_hid")
 

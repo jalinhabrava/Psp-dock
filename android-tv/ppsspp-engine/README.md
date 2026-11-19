@@ -59,6 +59,41 @@ from clean-close acknowledgment; it recreates the Activity under the same token.
 Resuming a live session does not replace its launch intent or send a new game to
 the existing runtime. A second simultaneous Activity is rejected.
 
+The pinned C++ parser recognizes `--pause-menu-exit`. Both exit paths in
+`GamePauseScreen::OnExit` then call `System_ExitApp`; the Android platform turns
+that request into the Java `finish` command above. The adapter tests check this
+complete source path. `--escape-exit` is deliberately absent so opening the pause
+menu does not immediately terminate a game. Actual rendering and return to the
+Dock still require a device run.
+
+## PSP controller inside the same app
+
+The app-owned `UsbControllerService` holds the optional direct USB connection.
+The engine binds to this non-exported service only while its accepted Activity
+is resumed, with flags zero. It never starts the service or requests USB access;
+the Dock starts the controller from a visible user action.
+
+The Messenger contract is register (1), unregister (2), input (10) and status
+(11). Inputs carry protocol 1, a strictly increasing sequence, the monotonic USB
+sample time, active state, decoded PSP buttons, hat (0 neutral, 1..8 clockwise)
+and X/Y bytes centered at 127. The engine rejects samples older than 250 ms,
+future times, replayed sequences and invalid values. It requires a fresh neutral
+frame after every hand-off, pause or interruption. A 50 ms watchdog releases
+held buttons and axes if input goes stale; it does not invent fresh samples.
+
+The pinned PPSSPP Android input API receives ordinary Android gamepad keys and
+X/Y/hat axes on PAD0, matching upstream's handling of Android controllers. The
+PSP Home button maps to L2, the default pause action. The bridge neutralizes and
+unbinds before the renderer is paused, and before native shutdown or graphics
+recreation. An explicit fresh firmware exit request takes the same `finish`
+path as Exit in the pause menu; ordinary USB disconnects only neutralize input.
+No input or exit message permits synchronization to the PSP.
+
+The pure JVM `PspControllerState` tests cover held input at launch, all button
+and hat mappings, analog endpoints, stale/replayed/malformed frames, disconnect
+and rebinding. The Messenger transport, actual USB host behavior and controller
+latency still require Android TV hardware acceptance.
+
 ## Private storage boundary
 
 Before initialization, an atomic `files/ppsspp/memstick_dir.txt` points at
@@ -94,7 +129,28 @@ graphics recreation, Home/resume, normal exit, crash recovery, and opening a
 second game still require a TV/emulator device run; source checks do not prove
 those runtime behaviors.
 
+After building, inspect the complete APK with the official SDK tools:
+
+```sh
+python3 scripts/verify_apk.py \
+  --apk app/build/outputs/apk/debug/app-debug.apk \
+  --sdk "$ANDROID_HOME" \
+  --native-build-dir ppsspp-engine/.cxx \
+  --report app/build/reports/dock-apk.json
+```
+
+This checks the merged manifest, single TV launcher and private engine, exact
+ABIs, every packaged ELF (16 KiB load alignment for 64-bit libraries), ZIP page
+alignment, and optimized core/UI compile commands. The report records the APK
+and library hashes. For an emulator build add `--abis x86_64`. These artifact
+checks do not install the APK or establish device compatibility.
+
 ## License and source availability
+
+See [the Android licensing decision](../LICENSING.md) before distributing an APK.
+The surrounding host's current license and the combined Android application's
+distribution terms require resolution; this technical integration does not
+change that license or supply a new grant.
 
 PPSSPP is distributed under GNU GPL version 2 or later, with additional notices
 for bundled components in its `LICENSE.TXT` and dependency trees. The upstream

@@ -7,25 +7,25 @@ import android.hardware.usb.UsbManager
 import android.view.InputDevice
 import app.pspdock.tv.core.Pdk2
 
-class UsbDiagnostics(context: Context) {
+/** This diagnostic remains read-only; the explicit controller service owns the separate input path. */
+class UsbDiagnostics(private val context: Context) {
     private val manager = context.getSystemService(UsbManager::class.java)
+    private fun text(id: Int, vararg args: Any) = context.getString(id, *args)
 
     fun candidates(): List<UsbDevice> = manager.deviceList.values.filter {
         it.vendorId == Pdk2.VID && it.productId in setOf(Pdk2.PID, 0x01cc, 0x01cb, 0x02d2)
     }.sortedBy { it.deviceName }
 
     fun describe(device: UsbDevice): String {
-        val interfaces = (0 until device.interfaceCount).map { device.getInterface(it) }
-        val functions = interfaces.map {
+        val functions = (0 until device.interfaceCount).map { device.getInterface(it) }.map {
             when (it.interfaceClass) {
-                UsbConstants.USB_CLASS_HID -> "mando HID"
-                UsbConstants.USB_CLASS_MASS_STORAGE -> "almacenamiento USB"
-                else -> "interfaz " + it.interfaceClass
+                UsbConstants.USB_CLASS_HID -> text(R.string.usb_hid)
+                UsbConstants.USB_CLASS_MASS_STORAGE -> text(R.string.usb_storage)
+                else -> text(R.string.usb_interface, it.interfaceClass)
             }
         }.distinct().joinToString(" + ")
-        return "PSP USB · " + "%04X:%04X".format(device.vendorId, device.productId) +
-            "\n" + functions + "\nPermiso de la aplicación: " +
-            if (manager.hasPermission(device)) "concedido" else "pendiente"
+        return text(R.string.usb_description, device.vendorId, device.productId, functions,
+            text(if (manager.hasPermission(device)) R.string.permission_granted else R.string.permission_pending))
     }
 
     fun inputSummary(): String {
@@ -34,72 +34,52 @@ class UsbDiagnostics(context: Context) {
                 (it.sources and InputDevice.SOURCE_JOYSTICK) == InputDevice.SOURCE_JOYSTICK
         }
         val psp = inputs.count { it.vendorId == Pdk2.VID && it.productId in setOf(Pdk2.PID, 0x01cc, 0x01cb) }
-        return "Mandos reconocidos por Android: " + inputs.size +
-            "\nCon identificador PSP: " + psp +
-            "\nEsta detección no verifica la identidad de una carpeta de guardados."
+        return text(R.string.input_summary, inputs.size, psp)
     }
 
     fun readStatus(deviceName: String): String {
         val all = candidates()
-        require(all.size == 1) { "Conecta una sola PSP para comprobar el protocolo." }
+        require(all.size == 1) { text(R.string.usb_ambiguous) }
         val device = all.single()
-        require(device.deviceName == deviceName && manager.hasPermission(device)) {
-            "La conexión o el permiso USB han cambiado."
-        }
-        val connection = manager.openDevice(device) ?: error("Android no permite abrir el dispositivo USB.")
+        require(device.deviceName == deviceName && manager.hasPermission(device)) { text(R.string.usb_denied) }
+        val connection = manager.openDevice(device) ?: error(text(R.string.usb_open_failed))
         try {
             val revision = Pdk2.usbRevision(connection.rawDescriptors)
             require(Pdk2.mayReadStatus(device.vendorId, device.productId, revision, all.size)) {
-                "bcdDevice observado " + "%04X".format(revision) +
-                    ". Se admite 0100 o 0302 como descriptor USB; la identidad del firmware se comprueba en NAT3. No se enviará ninguna orden."
+                text(R.string.usb_revision_unsupported, revision)
             }
             val hid = (0 until device.interfaceCount).map { device.getInterface(it) }.filter {
                 it.interfaceClass == UsbConstants.USB_CLASS_HID && it.interfaceSubclass == 0 &&
                     (0 until it.endpointCount).any { index ->
                         val endpoint = it.getEndpoint(index)
                         endpoint.direction == UsbConstants.USB_DIR_IN &&
-                            endpoint.type == UsbConstants.USB_ENDPOINT_XFER_INT &&
-                            endpoint.maxPacketSize == 8
+                            endpoint.type == UsbConstants.USB_ENDPOINT_XFER_INT && endpoint.maxPacketSize == 8
                     }
-            }.singleOrNull() ?: error("No se observa una única interfaz HID esperada.")
-            val hasStorage = (0 until device.interfaceCount).any {
+            }.singleOrNull() ?: error(text(R.string.usb_no_hid))
+            require((0 until device.interfaceCount).any {
                 device.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_MASS_STORAGE
-            }
-            require(hasStorage) { "La PSP no presenta almacenamiento y mando en el mismo dispositivo." }
+            }) { text(R.string.usb_no_storage) }
             val payload = ByteArray(Pdk2.PAYLOAD_SIZE)
-            // Deliberately no claimInterface, detach, setConfiguration or SET_REPORT.
-            // Class GET_REPORT may fail while Android owns HID. We preserve that driver.
+            // No claimInterface, detach, configuration change, SET_REPORT or work claim in diagnostics.
             val count = connection.controlTransfer(0xa1, 1, Pdk2.FEATURE_VALUE, hid.id, payload, payload.size, 750)
-            if (count < 0) return "Android no ha permitido leer el estado PDK2 (resultado " + count +
-                "). Puede existir un conflicto con el controlador HID, un error de permiso o de transporte. " +
-                "No se ha reclamado la interfaz ni desconectado el mando. El diagnóstico no identifica errno desde Java."
-            require(count == payload.size) { "Respuesta PDK2/v3 incompleta: " + count + " de 64 bytes. Las revisiones 0300 y 0301 están retiradas." }
-            require(manager.deviceList[deviceName]?.deviceId == device.deviceId) {
-                "La PSP se desconectó durante la consulta."
-            }
+            if (count < 0) return text(R.string.usb_read_blocked, count)
+            require(count == payload.size) { text(R.string.usb_short_report, count) }
+            require(manager.deviceList[deviceName]?.deviceId == device.deviceId) { text(R.string.usb_gone) }
             val status = Pdk2.decode(payload)
-            val progress = when (status.unit) {
-                0 -> "sin medida"
-                1 -> status.completed.toString() + " / " + status.total + " bytes"
-                2 -> status.completed.toString() + " / " + status.total + " archivos"
-                else -> "unidad desconocida en estado de error"
+            val phase = when (status.phase) {
+                0 -> R.string.phase_boot
+                Pdk2.STORAGE -> R.string.phase_storage
+                Pdk2.CONTROLLER -> R.string.phase_controller
+                Pdk2.COPYING -> R.string.phase_copy
+                Pdk2.EXIT_SYNC -> R.string.phase_exit
+                Pdk2.SAFE -> R.string.phase_safe
+                else -> R.string.phase_error
             }
-            return "PDK2/v3 responde · firmware " + "%04X".format(status.firmwareRevision) +
-                " · build " + "%08X".format(status.buildId) +
-                "\nbcdDevice USB: " + "%04X".format(revision) + " · capacidades: " + "%04X".format(status.capabilities) +
-                "\nFase: " + status.phaseName +
-                "\nSecuencia: " + status.sequence + " · resultado: " + status.result +
-                "\nEnlace: " + ifYes(status.connected) + " · controlador Sony: " + ifYes(status.sonyStorageStarted) +
-                "\nOrden pendiente: " + ifYes(status.pending) +
-                "\nHost confirmado por la PSP: " + ifYes(status.hostConfirmed) +
-                "\nEntrada habilitada por firmware: " + ifYes(status.inputEnabled) +
-                "\nProgreso: " + progress +
-                "\nEste diagnóstico no envía HOST_BEGIN ni habilita el mando PSP. Usa el mando de la televisión." +
-                "\nNo se han cambiado fases ni escrito archivos. Este estado no demuestra montaje, identidad del volumen o expulsión segura."
-        } finally {
-            connection.close()
-        }
+            return text(R.string.usb_status_details, status.firmwareRevision, status.buildId, revision,
+                status.capabilities, text(phase), status.sequence, status.result,
+                yes(status.hostConfirmed), yes(status.exitRequested), yes(status.uiSoundsReady), status.transportWord)
+        } finally { connection.close() }
     }
 
-    private fun ifYes(value: Boolean) = if (value) "sí" else "no"
+    private fun yes(value: Boolean) = text(if (value) R.string.yes else R.string.no)
 }

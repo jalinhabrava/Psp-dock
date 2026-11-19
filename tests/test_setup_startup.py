@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-import setup_startup as setup
+import psp_dock.core.setup_startup as setup
 
 
 class StartupInstallerTests(unittest.TestCase):

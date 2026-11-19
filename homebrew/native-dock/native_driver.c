@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-3.0-only
- * PSP Dock 0302: native Sony USBSTOR owns the Memory Stick; this module
+ * PSP Dock 0308: native Sony USBSTOR owns the Memory Stick; this module
  * contributes HID and a session-bound phase channel to the USB bus.
  * No filesystem, raw-sector, Sony-driver patch or flash-write API is used.
  * HID mapping/descriptor derived from FuSa GAMEPAD, Andy_maN, upstream
@@ -19,7 +19,13 @@
 #include "native_descriptors.h"
 #include "lab_gate.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,2);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_KERNEL,3,8);
+
+/* Auditable shared-RAM policy, not an extra HID report/opcode. Timeout and
+ * cancellation revoke export permission; they never permit USB startup. */
+static const uint8_t pdn_export_gate_contract[12] __attribute__((used))={
+    'P','D','X','G',1,1,1,1,0x80,0x96,0x98,0 /* 10,000,000 microseconds */
+};
 
 typedef struct {
     const char *path,*name;
@@ -53,8 +59,40 @@ static uint8_t idle_rate,latest_pad[8];
 static uint8_t pad_buffer[64] __attribute__((aligned(64)));
 static uint8_t ctl_buffer[256] __attribute__((aligned(64)));
 static struct UsbdDeviceReq pad_req,ctl_req;
+/* Four-byte OUT reports completed on this console. Assemble only 32 ordered
+ * successful fragments in one link generation; the unchanged full parser
+ * still checks nonce, sequence and firmware before any action.
+ * Bytes: C0|index(0..31), assembly token, two payload bytes. The token
+ * separates assemblies; it is not authentication or permission to act. */
+static uint8_t fragment_buffer[PDN_FEATURE_SIZE];
+static unsigned fragment_next;
+static uint8_t fragment_token;
+static uint32_t fragment_generation;
+static int fragment_active;
 
 static void set_stage(unsigned stage) { if(ui)ui->stage=stage; }
+static void set_worker_site(unsigned site) { if(ui)ui->worker_site=site; }
+/* Diagnostic writers run with interrupts suspended, for RAM publication
+ * only. Never cover a USB call or a wait with this diagnostic seqlock. */
+static void ep0_diag_begin(void) {
+    if(ui){ui->ep0.generation++;__asm__ volatile("" ::: "memory");}
+}
+static void ep0_diag_end(void) {
+    if(ui){__asm__ volatile("" ::: "memory");ui->ep0.generation++;}
+}
+static uint32_t ep0_gate_flags(void) {
+    return (active?PDN_EP0_ACTIVE:0u)|(connected?PDN_EP0_CONNECTED:0u)|
+        (ctl_quiescing?PDN_EP0_QUIESCING:0u)|(link_reset_pending?PDN_EP0_RESET_PENDING:0u)|
+        (ctl_generation==link_generation?PDN_EP0_SAME_GENERATION:0u)|
+        (ctl_busy?PDN_EP0_CTL_BUSY:0u)|(ctl_submitting?PDN_EP0_CTL_SUBMITTING:0u)|
+        (protocol.pending?PDN_EP0_PROTOCOL_PENDING:0u);
+}
+static void ep0_diag_link(void) {
+    if(ui){
+        ui->ep0.request_generation=ctl_generation;ui->ep0.live_generation=link_generation;
+        ui->ep0.gate_flags=ep0_gate_flags();
+    }
+}
 static void record_error(int result) {
     if(ui && !ui->error){ui->error=result;ui->error_stage=ui->stage;}
 }
@@ -65,6 +103,7 @@ static void publish_phase(void) {
     ui->rejected_commands=protocol.rejected;ui->last_rejection=protocol.last_rejection;
     ui->host_confirmed=protocol.host_confirmed;ui->activity=protocol.activity;
     if(protocol.host_confirmed)ui->host_session_seen=1;
+    if(protocol.shutdown_requested)ui->stop_reason=PDN_STOP_HOST;
     ui->progress_unit=protocol.progress_unit;ui->completed=protocol.completed;ui->total=protocol.total;
     ui->presentation_generation++;
 }
@@ -81,14 +120,81 @@ static int pad_done(struct UsbdDeviceReq *r,int a,int b) {
     else need_initial_pad=1;
     hid_busy=0;return 0;
 }
+static uint16_t fragment_crc16(const uint8_t *data,unsigned size) {
+    uint16_t crc=0xffffu;unsigned i,bit;
+    for(i=0;i<size;i++){
+        crc^=(uint16_t)((uint16_t)data[i]<<8);
+        for(bit=0;bit<8;bit++)crc=(uint16_t)((crc&0x8000u)?
+            ((uint32_t)crc<<1)^0x1021u:(uint32_t)crc<<1);
+    }
+    return crc;
+}
+static int assemble_output(const uint8_t in[4]) {
+    unsigned index=in[0]&31u;
+    if(in[0]==0xe0u){
+        int valid=fragment_active && fragment_next==PDN_FEATURE_SIZE/2u &&
+            fragment_generation==link_generation && in[1]==fragment_token &&
+            fragment_crc16(fragment_buffer,PDN_FEATURE_SIZE)==(uint16_t)(in[2]|((uint16_t)in[3]<<8));
+        fragment_active=0;return valid?1:-1;
+    }
+    if((in[0]&0xe0u)!=0xc0u){fragment_active=0;return -1;}
+    if(!index){
+        fragment_active=1;fragment_next=0;fragment_token=in[1];
+        fragment_generation=ctl_generation;
+    }
+    if(!fragment_active || fragment_generation!=link_generation ||
+       in[1]!=fragment_token || index!=fragment_next){fragment_active=0;return -1;}
+    fragment_buffer[index*2u]=in[2];fragment_buffer[index*2u+1u]=in[3];
+    fragment_next++;
+    return 0;
+}
 static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
-    int irq;(void)a;(void)b;
-    if(ctl_feature_receive && !r->retcode && r->recvsize==(int)PDN_FEATURE_SIZE){
-        sceKernelDcacheInvalidateRange(ctl_buffer,sizeof(ctl_buffer));
+    int irq,received,assembled;unsigned i;
+    int expected=ctl_feature_receive==2?4:(int)PDN_TRANSFER_SIZE;
+    const uint8_t *payload=ctl_buffer;
+    (void)a;(void)b;
+    if(ctl_feature_receive && ui){
+        irq=sceKernelCpuSuspendIntr();ep0_diag_begin();
+        ui->ep0.completions++;ui->ep0.retcode=r->retcode;ui->ep0.recvsize=r->recvsize;
+        ui->ep0.drop_reason=r->retcode?PDN_EP0_DROP_RETCODE:
+            r->recvsize!=expected?PDN_EP0_DROP_SIZE:PDN_EP0_DROP_NONE;
+        ep0_diag_link();
+        /* The full allocated buffer is always readable. This snapshot is
+         * not a claim that 64 bytes arrived when recvsize reports otherwise. */
+        for(i=0;i<PDN_FEATURE_SIZE;i++)ui->ep0.raw[i]=ctl_buffer[i];
+        ep0_diag_end();sceKernelCpuResumeIntr(irq);
+    }
+    if(ctl_feature_receive==2 && (r->retcode || r->recvsize!=expected))fragment_active=0;
+    if(ctl_feature_receive && !r->retcode && r->recvsize==expected){
+        /* Recv owns this buffer until completion. Prepare its cache before
+         * submission (below), as Sony usbacc does for EP0 OUT; do not
+         * invalidate here. A USBBus CPU copy can leave the received command
+         * dirty in cache, and invalidation would restore the preceding GET
+         * report from memory, silently discarding HOST_BEGIN/SET_PHASE. */
         irq=sceKernelCpuSuspendIntr();
         if(active && connected && !ctl_quiescing && !link_reset_pending &&
            ctl_generation==link_generation){
-            pdn_protocol_receive(&protocol,ctl_buffer,PDN_FEATURE_SIZE);publish_phase();
+            if(ctl_feature_receive==2){
+                assembled=assemble_output(ctl_buffer);
+                if(assembled<=0){
+                    if(ui){ep0_diag_begin();ui->ep0.drop_reason=assembled<0?
+                        PDN_EP0_DROP_FRAGMENT:PDN_EP0_ASSEMBLING;ep0_diag_end();}
+                    sceKernelCpuResumeIntr(irq);ctl_busy=0;return 0;
+                }
+                payload=fragment_buffer;
+            }
+            received=pdn_protocol_receive(&protocol,payload,PDN_FEATURE_SIZE);
+            if(ui){
+                ep0_diag_begin();ui->ep0.parser_calls++;ui->ep0.parser_result=received;
+                for(i=0;i<PDN_FEATURE_SIZE;i++)ui->ep0.raw[i]=payload[i];
+                ui->ep0.drop_reason=received<0?PDN_EP0_DROP_PARSER:PDN_EP0_DROP_NONE;
+                ep0_diag_link();ep0_diag_end();
+            }
+            publish_phase();
+        }else if(ui){
+            fragment_active=0;
+            ep0_diag_begin();ui->ep0.drop_reason=PDN_EP0_DROP_LINK;
+            ep0_diag_link();ep0_diag_end();
         }
         sceKernelCpuResumeIntr(irq);
     }
@@ -97,12 +203,25 @@ static int ctl_done(struct UsbdDeviceReq *r,int a,int b) {
 static int control_submit(const uint8_t *data,int size,int receive,int feature) {
     int irq=sceKernelCpuSuspendIntr(),result;
     if(!active || ctl_busy || ctl_quiescing || size<0 || size>(int)sizeof(ctl_buffer)){
+        if(feature && ui){
+            ep0_diag_begin();ui->ep0.drop_reason=PDN_EP0_DROP_SUBMIT_GATE;
+            ep0_diag_link();ep0_diag_end();
+        }
         sceKernelCpuResumeIntr(irq);return -1;
     }
     ctl_busy=1;ctl_submitting=1;ctl_generation=link_generation;ctl_feature_receive=feature;
+    if(feature && ui){
+        ep0_diag_begin();ui->ep0.recv_submissions++;ui->ep0.submit_result=INT32_MIN;
+        ep0_diag_link();ep0_diag_end();
+    }
     sceKernelCpuResumeIntr(irq);
     memset(&ctl_req,0,sizeof(ctl_req));ctl_req.endp=&pdn_endpoints[0];
     ctl_req.data=ctl_buffer;ctl_req.size=size;ctl_req.func=ctl_done;
+    /* PSPSDK calls this field unkc; xerpi's matching PSP USB layout names
+     * it isControlRequest. Sony usbacc sets it on the EP0 request shared
+     * by IN and OUT. Mark control transfers explicitly; EP1 stays zero.
+     * A complete payload with a cancelled completion is still rejected. */
+    ctl_req.unkc=1;
     if(receive){
         sceKernelDcacheWritebackInvalidateRange(ctl_buffer,sizeof(ctl_buffer));
         result=sceUsbbdReqRecv(&ctl_req);
@@ -113,10 +232,15 @@ static int control_submit(const uint8_t *data,int size,int receive,int feature) 
     }
     irq=sceKernelCpuSuspendIntr();
     if(result<0)ctl_busy=0;
+    if(feature && ui){
+        ep0_diag_begin();ui->ep0.submit_result=result;
+        if(result<0)ui->ep0.drop_reason=PDN_EP0_DROP_SUBMIT_ERROR;
+        ep0_diag_end();
+    }
     ctl_submitting=0;sceKernelCpuResumeIntr(irq);return result;
 }
 static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *r) {
-    uint8_t answer[PDN_FEATURE_SIZE];int length,irq;
+    uint8_t answer[PDN_TRANSFER_SIZE];int length,irq;
     (void)endpoint;
     if(!r || interface_arg<0 || (r->wIndex&0xff00u))return -1;
     /* Sony USBBus dispatches interface-recipient requests to this driver.
@@ -143,8 +267,33 @@ static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *
     if(r->bmRequestType==0xa1 && r->bRequest==1){
         irq=sceKernelCpuSuspendIntr();
         if(r->wValue==0x0300){
-            pdn_protocol_status(&protocol,answer,connected,storage_started,exit_requested);length=PDN_FEATURE_SIZE;
+            pdn_protocol_status(&protocol,answer,connected,storage_started,exit_requested);length=PDN_TRANSFER_SIZE;
+            if(ui){
+                /* 0307 status-only diagnostic: drop4, receive-length7,
+                 * signed result5 (-16 unknown). Commands keep these two
+                 * reserved bytes zero, so this cannot authorize an action. */
+                uint32_t drop=ui->ep0.drop_reason&15u;
+                int32_t rx=ui->ep0.recvsize;
+                int32_t value=drop==PDN_EP0_DROP_PARSER?ui->ep0.parser_result:ui->ep0.retcode;
+                uint32_t encoded=(uint32_t)(value==INT32_MIN?-16:value< -15?-15:value>15?15:value)&31u;
+                uint16_t diagnostic=(uint16_t)(drop|((uint32_t)(rx<0 || rx>127?127:rx)<<4)|(encoded<<11));
+                answer[46]=(uint8_t)diagnostic;answer[47]=(uint8_t)(diagnostic>>8);
+                /* 0308 proves this launch compared/published the staged file
+                 * against this PSP's source. A previous file on the card is
+                 * not evidence when the current export was skipped. This
+                 * status bit travels with the current protocol nonce. */
+                if(ui->export_done && ui->export_result==PDN_EXPORT_READY)
+                    answer[7]|=PDN_FLAG_UI_SOUNDS_READY;
+            }
         }else if(r->wValue==0x0100){memcpy(answer,latest_pad,8);length=8;}
+        else if(r->wValue==0x0200 && r->wLength==4 && ui){
+            int32_t rc=ui->ep0.retcode,parser=ui->ep0.parser_result;
+            answer[0]=(uint8_t)ui->ep0.drop_reason;
+            answer[1]=(uint8_t)(ui->ep0.recvsize<0 || ui->ep0.recvsize>255?255:ui->ep0.recvsize);
+            answer[2]=(uint8_t)(rc==INT32_MIN?-128:rc< -127?-127:rc>127?127:rc);
+            answer[3]=(uint8_t)(parser==INT32_MIN?-128:parser< -127?-127:parser>127?127:parser);
+            length=4;
+        }
         else{sceKernelCpuResumeIntr(irq);return -1;}
         sceKernelCpuResumeIntr(irq);
         if(ui)ui->hid_interface=r->wIndex;
@@ -152,9 +301,26 @@ static int receive_control(int endpoint,int interface_arg,struct DeviceRequest *
         return control_submit(answer,length,0,0);
     }
     if(r->bmRequestType==0x21 && r->bRequest==9){
-        if(r->wValue==0x0300 && r->wLength==PDN_FEATURE_SIZE)
-            return control_submit(NULL,PDN_FEATURE_SIZE,1,1);
-        if(r->wValue==0x0200 && r->wLength==4)return control_submit(NULL,4,1,0);
+        if(((r->wValue&0xff00u)==0x0300u || r->wValue==0x0200) && ui){
+            unsigned i;
+            irq=sceKernelCpuSuspendIntr();ep0_diag_begin();ui->ep0.set_seen++;
+            ui->ep0.setup=(uint32_t)r->bmRequestType|((uint32_t)r->bRequest<<8)|
+                ((uint32_t)r->wLength<<16);
+            ui->ep0.value_index=(uint32_t)r->wValue|((uint32_t)r->wIndex<<16);
+            ui->ep0.submit_result=ui->ep0.retcode=ui->ep0.parser_result=INT32_MIN;
+            ui->ep0.recvsize=-1;
+            ui->ep0.drop_reason=((r->wValue==0x0300 && r->wLength==PDN_TRANSFER_SIZE) ||
+                                (r->wValue==0x0200 && r->wLength==4))?
+                PDN_EP0_DROP_NONE:PDN_EP0_DROP_SUBMIT_GATE;
+            ep0_diag_link();
+            for(i=0;i<PDN_FEATURE_SIZE;i++)ui->ep0.raw[i]=0;
+            ep0_diag_end();sceKernelCpuResumeIntr(irq);
+        }
+        if(r->wValue==0x0300 && r->wLength==PDN_TRANSFER_SIZE){
+            fragment_active=0;
+            return control_submit(NULL,PDN_TRANSFER_SIZE,1,1);
+        }
+        if(r->wValue==0x0200 && r->wLength==4)return control_submit(NULL,4,1,2);
         return -1;
     }
     if(r->bmRequestType==0xa1 && r->bRequest==2 && !r->wValue && r->wLength==1)
@@ -178,7 +344,7 @@ static int attach(int speed,void *a,void *b) {
 }
 static int detach(int a,int b,int c) {
     int irq=sceKernelCpuSuspendIntr();(void)a;(void)b;(void)c;
-    connected=0;link_attached=0;
+    connected=0;link_attached=0;fragment_active=0;
     if(active){
         link_generation++;link_reset_pending=1;input_rearm=1;
         pdn_protocol_invalidate_link(&protocol);publish_phase();
@@ -218,11 +384,19 @@ static void encode_pad(const SceCtrlData *pad,uint8_t out[8]) {
     for(i=0;i<12;i++)if(b&masks[i])out[4+(i+4)/8]|=(uint8_t)(1u<<((i+4)%8));
 }
 static void gated_pad(const SceCtrlData *pad,uint8_t out[8]) {
+    /* Kernel Ctrl also reports persistent hardware state (Memory Stick,
+     * UMD, WLAN and remote switches). Those are not held game buttons.
+     * Waiting for Buttons==0 on a console with a card can never rearm. */
+    const uint32_t held_controls=PSP_CTRL_CROSS|PSP_CTRL_CIRCLE|PSP_CTRL_SQUARE|
+        PSP_CTRL_TRIANGLE|PSP_CTRL_UP|PSP_CTRL_RIGHT|PSP_CTRL_DOWN|PSP_CTRL_LEFT|
+        PSP_CTRL_LTRIGGER|PSP_CTRL_RTRIGGER|PSP_CTRL_SELECT|PSP_CTRL_START|
+        PSP_CTRL_HOME|PSP_CTRL_VOLDOWN|PSP_CTRL_VOLUP|PSP_CTRL_SCREEN|
+        0x00020000u; /* HOLD remains an intentional input lock. */
     neutral_pad(out);
     if(!pdn_protocol_accepts_input(&protocol))return;
     if(input_rearm){
         /* Release buttons/analogue before the next UI can consume input. */
-        if(!(pad->Buttons&~PSP_CTRL_NOTE) && pad->Lx>=111 && pad->Lx<=143 && pad->Ly>=111 && pad->Ly<=143)
+        if(!(pad->Buttons&held_controls) && pad->Lx>=111 && pad->Lx<=143 && pad->Ly>=111 && pad->Ly<=143)
             input_rearm=0;
         return;
     }
@@ -247,7 +421,7 @@ static int sample_pad(SceSize args,void *argp) {
                 if(++hold>=250)request_exit(PDN_STOP_USER);
             }else hold=0;
             sceKernelWaitSema(lifecycle_lock,1,NULL);
-            if(active && connected && !link_reset_pending){
+            if(active && connected && !link_reset_pending && !protocol.shutdown_requested){
                 irq=sceKernelCpuSuspendIntr();gated_pad(&pad,sample);memcpy(latest_pad,sample,8);
                 send=!hid_busy && (need_initial_pad || !hid_reports || memcmp(pad_buffer,sample,8) ||
                     (idle_rate && (uint32_t)(sceKernelGetSystemTimeLow()-last_pad_time)>=(uint32_t)idle_rate*4000));
@@ -318,6 +492,10 @@ static int unload_dependencies(void) {
 }
 static int quiesce_link(void) {
     uint32_t generation;unsigned tries;int irq,result=0,old_control;
+    /* Applied host release is terminal even if detach races the next tick.
+     * Never replace its session/authorization with a fresh waiting nonce. */
+    if(protocol.shutdown_requested)return 0;
+    set_worker_site(PDN_WORKER_LOCK_WAIT);
     sceKernelWaitSema(lifecycle_lock,1,NULL);
     irq=sceKernelCpuSuspendIntr();generation=link_generation;connected=0;
     old_control=(ctl_busy||ctl_submitting) && ctl_generation!=generation;
@@ -347,6 +525,7 @@ done:
 static int apply_phase(void) {
     unsigned tries;int irq,result=0;uint32_t generation;
     if(!protocol.pending || ctl_busy || ctl_submitting)return 0;
+    set_worker_site(PDN_WORKER_LOCK_WAIT);
     sceKernelWaitSema(lifecycle_lock,1,NULL);
     irq=sceKernelCpuSuspendIntr();generation=link_generation;
     if(!active || !connected || link_reset_pending || !protocol.pending || ctl_busy || ctl_submitting){
@@ -354,12 +533,16 @@ static int apply_phase(void) {
     }
     sceKernelCpuResumeIntr(irq);
     /* Input samples queued for the old UI must finish/cancel before ACK. */
+    set_worker_site(PDN_WORKER_EP1_CANCEL);
     sceUsbbdReqCancelAll(&pdn_endpoints[1]);
+    set_worker_site(PDN_WORKER_EP1_DRAIN);
     for(tries=0;hid_busy && tries<2000;tries++)sceKernelDelayThread(1000);
     if(hid_busy){result=-3023;goto done;}
     irq=sceKernelCpuSuspendIntr();
     if(active && connected && !link_reset_pending && generation==link_generation){
+        set_worker_site(PDN_WORKER_COMMIT);
         pdn_protocol_apply(&protocol);input_rearm=1;need_initial_pad=1;
+        if(ui)ui->apply_count++;
         neutral_pad(latest_pad);publish_phase();
     }
     sceKernelCpuResumeIntr(irq);
@@ -385,10 +568,12 @@ static int poll_cable(void) {
 }
 static int stop_usb(void) {
     unsigned tries;int result,usb;
-    /* This check also protects error paths and external module_stop. */
+    /* The worker may close with the cable present only after applying the
+     * bound HOST_SHUTDOWN. SAFE, local exit and detach confer no authority.
+     * External module_stop keeps its separate cable guard below. */
     if(activated){
         usb=sceUsbGetState();if(usb<0)return usb;
-        if(usb&PSP_USB_CABLE_CONNECTED)return -3030;
+        if((usb&PSP_USB_CABLE_CONNECTED) && !protocol.shutdown_requested)return -3030;
     }
     sceKernelWaitSema(lifecycle_lock,1,NULL);active=0;set_stage(PDN_STAGE_STOPPING);
     for(tries=0;ctl_submitting && tries<2000;tries++)sceKernelDelayThread(1000);
@@ -410,18 +595,55 @@ static int stop_usb(void) {
 done:
     sceKernelSignalSema(lifecycle_lock,1);return result;
 }
+static int pdn_safe_to_start(int usb,int storage,int bus) {
+    /* Native Dock starts both storage and HID. A cable attached to inactive,
+     * unconfigured USB is safe at launch; it is not a foreign USB session.
+     * Preserve the lab's storage/bus checks and every other USB guard. */
+    if(usb<0)return 0;
+    return hid_lab_safe_to_start(usb&~PSP_USB_CABLE_CONNECTED,storage,bus);
+}
+static int wait_resource_export(void) {
+    uint32_t began=sceKernelGetSystemTimeLow();int result;
+    if(!ui)return -3050;
+    set_stage(PDN_STAGE_RESOURCE_EXPORT);
+    ui->export_done=0;ui->export_result=PDN_EXPORT_PENDING;
+    __sync_synchronize();ui->export_request=PDN_EXPORT_REQUESTED;
+    for(;;){
+        if(ui->request_stop || exit_requested){
+            ui->export_request=PDN_EXPORT_REVOKED;request_exit(PDN_STOP_USER);return 1;
+        }
+        if(ui->export_done){
+            __sync_synchronize();result=ui->export_result;
+            ui->export_request=PDN_EXPORT_REVOKED;
+            return (result==PDN_EXPORT_READY || result==PDN_EXPORT_SKIPPED)?0:-3053;
+        }
+        if((uint32_t)(sceKernelGetSystemTimeLow()-began)>=PDN_EXPORT_WAIT_US){
+            ui->export_request=PDN_EXPORT_REVOKED;return -3051;
+        }
+        sceKernelDelayThread(10000);
+    }
+}
 static int start_usb(void) {
     int usb,storage,bus,result;
     set_stage(PDN_STAGE_GUARD);usb=sceUsbGetState();
     storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);bus=sceUsbGetDrvState(PSP_USBBUS_DRIVERNAME);
     if(ui){ui->usb_state=(uint32_t)usb;ui->bus_before=bus;ui->storage_before=storage;}
-    if(!hid_lab_safe_to_start(usb,storage,bus))return -3002;
+    if(!pdn_safe_to_start(usb,storage,bus))return -3002;
     result=load_dependencies();if(result<0)return result;
-    /* A cable or foreign USB session may have appeared during module load. */
+    /* Recheck for a foreign USB session or storage use during module load. */
     set_stage(PDN_STAGE_GUARD);usb=sceUsbGetState();
     storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);bus=sceUsbGetDrvState(PSP_USBBUS_DRIVERNAME);
-    if(!hid_lab_safe_to_start(usb,storage,bus) || storage!=HID_LAB_DRIVER_STOPPED)return -3003;
+    if(!pdn_safe_to_start(usb,storage,bus) || storage!=HID_LAB_DRIVER_STOPPED)return -3003;
     if(ui && ui->request_stop){request_exit(PDN_STOP_USER);return 0;}
+    result=wait_resource_export();
+    if(result<0)return result;
+    if(result>0)return 0; /* Cancelled before any bus/storage activation. */
+    /* USER cannot perform more file IO after its acknowledgement. Recheck
+     * that no foreign USB/storage operation started while exporting. */
+    set_stage(PDN_STAGE_GUARD);usb=sceUsbGetState();
+    storage=sceUsbGetDrvState(PSP_USBSTOR_DRIVERNAME);bus=sceUsbGetDrvState(PSP_USBBUS_DRIVERNAME);
+    if(!pdn_safe_to_start(usb,storage,bus) || storage!=HID_LAB_DRIVER_STOPPED)return -3054;
+    if(ui && (ui->request_stop || exit_requested)){request_exit(PDN_STOP_USER);return 0;}
     if(bus==HID_LAB_DRIVER_STOPPED){
         set_stage(PDN_STAGE_BUS_START);result=sceUsbStart(PSP_USBBUS_DRIVERNAME,0,NULL);
         if(result<0)return result;
@@ -447,38 +669,59 @@ static int start_usb(void) {
     activated=1;set_stage(PDN_STAGE_READY);return 0;
 }
 static int io_worker(SceSize args,void *argp) {
-    int result,cleanup,fault=0;(void)args;(void)argp;
+    int result,cleanup,stopped=0,fault=0;(void)args;(void)argp;
+    set_worker_site(PDN_WORKER_INIT);
     make_session();result=start_usb();
     if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
-    /* If activation did succeed, even a later HID fault waits for unplug.
-     * A controller error is never treated as permission to cut Sony I/O. */
+    /* Faults still wait for physical absence or an applied host release.
+     * An error by itself never authorizes cutting Sony I/O. */
     while(activated){
+        if(protocol.shutdown_requested){request_exit(PDN_STOP_HOST);break;}
+        if(ui)ui->worker_loops++;
         if(ui && ui->request_stop)request_exit(PDN_STOP_USER);
+        set_worker_site(PDN_WORKER_POLL);
         result=poll_cable();
         if(result==1)break;
         if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
         if(!fault && link_reset_pending){
+            set_worker_site(PDN_WORKER_QUIESCE);
             result=quiesce_link();if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
         }
-        if(!fault){
-            result=apply_phase();if(result<0){record_error(result);request_exit(PDN_STOP_ERROR);fault=1;}
+        if(!fault || (protocol.pending && protocol.command[5]==PDN_OP_HOST_SHUTDOWN)){
+            set_worker_site(PDN_WORKER_APPLY);
+            result=apply_phase();
+            if(result<0){
+                int irq=sceKernelCpuSuspendIntr();
+                pdn_protocol_fail_pending(&protocol,PDN_ERR_LINK);sceKernelCpuResumeIntr(irq);
+                record_error(result);request_exit(PDN_STOP_ERROR);fault=1;
+            }
         }
+        if(protocol.shutdown_requested){request_exit(PDN_STOP_HOST);break;}
         if(fault){
+            set_worker_site(PDN_WORKER_FAULT);
             int irq=sceKernelCpuSuspendIntr();
-            pdn_protocol_fail_pending(&protocol,PDN_ERR_LINK);protocol.phase=PDN_PHASE_ERROR;
+            /* A complete terminal command can arrive while this faulty
+             * worker is sleeping or its EP0 callback is still unwinding.
+             * Preserve it for the guarded apply path; fail ordinary work. */
+            if(!protocol.pending || protocol.command[5]!=PDN_OP_HOST_SHUTDOWN)
+                pdn_protocol_fail_pending(&protocol,PDN_ERR_LINK);
+            protocol.phase=PDN_PHASE_ERROR;
             input_rearm=1;neutral_pad(latest_pad);publish_phase();sceKernelCpuResumeIntr(irq);
         }
         if(exit_requested || protocol.phase==PDN_PHASE_SAFE)set_stage(PDN_STAGE_WAIT_UNPLUG);
+        set_worker_site(PDN_WORKER_SLEEP);
         sceKernelDelayThread(4000);
     }
+    set_worker_site(PDN_WORKER_STOP);
     cleanup=stop_usb();
+    stopped=cleanup>=0;
     if(cleanup<0){record_error(cleanup);fault=1;}
     if(!hid_started && !storage_started && !registered && !activated && !bus_owned){
         cleanup=unload_dependencies();if(ui && cleanup<0)ui->cleanup_error=cleanup;
     }
     running=0;
     set_stage(fault?PDN_STAGE_ERROR:PDN_STAGE_STOPPED);
-    if(ui && !hid_started && !storage_started && !registered && !activated && !bus_owned &&
+    if(ui && stopped && !hid_started && !storage_started && !registered && !activated && !bus_owned &&
        !hid_busy && !ctl_busy && !ctl_submitting)ui->safe_to_unload=1;
     return 0;
 }
@@ -493,6 +736,8 @@ int module_start(SceSize args,void *argp) {
     memcpy(&launch,argp,sizeof(launch));
     if(launch.magic!=PDN_LAUNCH_MAGIC || launch.size!=sizeof(launch) || !valid_shared(launch.shared))return -1;
     ui=launch.shared;ui->safe_to_unload=0;ui->request_stop=0;
+    ui->export_request=PDN_EXPORT_NOT_REQUESTED;ui->export_done=0;ui->export_result=PDN_EXPORT_PENDING;
+    fragment_active=0;fragment_next=0;
     ui->error=0;ui->stage=PDN_STAGE_INIT;ui->hid_interface=UINT32_MAX;
     neutral_pad(latest_pad);
     lifecycle_lock=sceKernelCreateSema("DockNativeLock",0,1,1,NULL);

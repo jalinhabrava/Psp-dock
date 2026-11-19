@@ -19,6 +19,7 @@ final class DockEngineHost {
     static final String SESSION_TOKEN = "com.pspdock.SESSION_TOKEN";
     private static File dataDirectory;
     private static WeakReference<Activity> owner = new WeakReference<>(null);
+    private static DockControllerClient controller;
 
     private DockEngineHost() {}
 
@@ -72,8 +73,32 @@ final class DockEngineHost {
         return true;
     }
 
+    static void resumeController(PpssppActivity activity) {
+        if (owner.get() != activity) return;
+        if (controller == null) {
+            controller = new DockControllerClient(activity, () -> {
+                if (owner.get() == activity && !activity.isFinishing()) {
+                    // The firmware's explicit exit request takes the same clean
+                    // native shutdown path as Exit in the embedded pause menu.
+                    activity.postCommand("finish", "");
+                }
+            });
+        }
+        controller.start();
+    }
+
+    static void pauseController() {
+        if (controller != null) {
+            controller.stop();
+            controller = null;
+        }
+    }
+
     static void activityDestroyed(Activity activity) {
-        if (owner.get() == activity) owner.clear();
+        if (owner.get() == activity) {
+            pauseController();
+            owner.clear();
+        }
     }
 
     static void completedShutdown() {

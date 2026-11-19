@@ -4,6 +4,8 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-feature android:name="android.hardware.usb.host" android:required="true" />
     <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <application
         android:allowBackup="false"
         android:banner="@drawable/tv_banner"
@@ -13,6 +15,11 @@
         android:theme="@style/Theme.PspDock"
         android:usesCleartextTraffic="false"
         android:enableOnBackInvokedCallback="false">
+        <service
+            android:name=".UsbControllerService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice"
+            android:stopWithTask="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -5,7 +5,7 @@ import unittest
 import zlib
 from random import Random
 
-import psp_artwork as art
+import psp_dock.media.psp_artwork as art
 
 
 def png_chunk(kind: bytes, data: bytes) -> bytes:

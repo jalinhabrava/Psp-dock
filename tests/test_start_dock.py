@@ -107,8 +107,8 @@ class ExistingDockWindowTests(unittest.TestCase):
              patch('dock.Path.is_file',return_value=True), \
              patch('dock.subprocess.Popen') as spawn, \
              patch('dock.threading.Thread') as thread, \
-             patch('xmb_window.enumerate_xmb_windows',return_value=[orphan]), \
-             patch('xmb_window.maximize_existing_xmb',return_value=True) as focus:
+             patch('psp_dock.core.xmb_window.enumerate_xmb_windows',return_value=[orphan]), \
+             patch('psp_dock.core.xmb_window.maximize_existing_xmb',return_value=True) as focus:
             self.assertEqual(start_dock.launch(self.data),'already_running')
         focus.assert_not_called()
         self.assertIn('--app=http://127.0.0.1:59336',spawn.call_args.args[0])

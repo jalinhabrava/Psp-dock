@@ -105,6 +105,10 @@ def patch_activity(original: bytes) -> str:
         "\t\t\t}")
     source = replace_once(source, "\t\tlifeCycle.onDestroy();",
         "\t\tlifeCycle.onDestroy();\n\t\tDockEngineHost.activityDestroyed(this);")
+    source = replace_once(source, "\t\tNativeApp.resume();",
+        "\t\tNativeApp.resume();\n\t\tDockEngineHost.resumeController(this);")
+    source = replace_once(source, "\t\tlifeCycle.onPause();",
+        "\t\tDockEngineHost.pauseController();\n\t\tlifeCycle.onPause();")
     source = replace_once(source, "\t\tsuper.onNewIntent(intent);",
         "\t\tsuper.onNewIntent(intent);\n"
         "\t\tif (!dockAccepted) return;\n"

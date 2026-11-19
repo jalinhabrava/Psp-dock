@@ -72,6 +72,36 @@ class EngineEmbeddingTest(unittest.TestCase):
         self.assertLess(resume.index('if (!intent.hasExtra("request_id")) return;'),
                         resume.index("setIntent(intent);"))
 
+    def test_pause_menu_exit_uses_the_reviewed_native_finish_path(self):
+        launcher = (PROJECT / "app/src/main/java/app/pspdock/tv/EmbeddedEmulator.kt").read_text()
+        self.assertIn('"--pause-menu-exit"', launcher)
+        self.assertNotIn('"--escape-exit"', launcher)
+        native = (SOURCE / "UI/NativeApp.cpp").read_text()
+        pause = (SOURCE / "UI/PauseScreen.cpp").read_text()
+        android = (SOURCE / "android/jni/app-android.cpp").read_text()
+        flag = native.split('"--pause-menu-exit"', 1)[1].split('"--fullscreen"', 1)[0]
+        self.assertIn("g_Config.bPauseMenuExitsEmulator = true;", flag)
+        exit_path = pause.split("void GamePauseScreen::OnExit", 1)[1].split("void GamePauseScreen::OnReportFeedback", 1)[0]
+        self.assertEqual(exit_path.count("System_ExitApp();"), 2)
+        self.assertIn('case SystemRequestType::EXIT_APP:\n\t\tPushCommand("finish", "");', android)
+        finish = self.adapted.split('command.equals("finish")', 1)[1].split('command.equals("rotate")', 1)[0]
+        self.assertIn("dockFinishRequested = true;", finish)
+        self.assertIn("shuttingDown = true;", finish)
+        self.assertIn("finish();", finish)
+
+    def test_controller_handoff_only_runs_while_native_engine_is_resumed(self):
+        self.assertIn("NativeApp.resume();\n\t\tDockEngineHost.resumeController(this);", self.adapted)
+        pause = self.adapted.split("protected void onPause()", 1)[1].split("protected void onResume()", 1)[0]
+        self.assertLess(pause.index("DockEngineHost.pauseController();"), pause.index("joinRenderLoopThread();"))
+        self.assertLess(pause.index("DockEngineHost.pauseController();"), pause.index("NativeApp.pause();"))
+        destroy = self.adapted.split("protected void onDestroy()", 1)[1].split("protected void onStart()", 1)[0]
+        self.assertLess(destroy.index("DockEngineHost.activityDestroyed(this);"), destroy.index("NativeApp.shutdown();"))
+        client = (PROJECT / "ppsspp-engine/src/main/java/org/ppsspp/ppsspp/DockControllerClient.java").read_text()
+        self.assertIn("context.bindService(intent, connection, 0)", client)
+        self.assertNotIn("BIND_AUTO_CREATE", client)
+        self.assertNotIn("claimInterface", client)
+        self.assertNotIn("startForegroundService", client)
+
     def test_storage_picker_and_native_fallbacks_stay_private(self):
         folder = self.adapted.split('command.equals("browse_folder")', 1)[1].split('command.equals("share_text")', 1)[0]
         self.assertIn("NativeApp.RESULT_CANCELED", folder)

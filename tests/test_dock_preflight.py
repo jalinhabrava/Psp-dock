@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from dock_preflight import assess_storage
+from psp_dock.core.dock_preflight import assess_storage
 from dock import Dock, volume_identity
 
 

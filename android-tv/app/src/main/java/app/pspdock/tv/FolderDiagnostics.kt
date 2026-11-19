@@ -7,7 +7,7 @@ import android.provider.DocumentsContract
 object FolderDiagnostics {
     fun inspect(context: Context, tree: Uri): String {
         require(tree.scheme == "content" && DocumentsContract.isTreeUri(tree)) {
-            "El selector no devolvió una carpeta compatible."
+            context.getString(R.string.folder_invalid)
         }
         val id = DocumentsContract.getTreeDocumentId(tree)
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, id)
@@ -22,10 +22,8 @@ object FolderDiagnostics {
                 if (cursor.getString(1) == DocumentsContract.Document.MIME_TYPE_DIR &&
                     name.uppercase(java.util.Locale.ROOT) in setOf("PSP", "GAME", "SAVEDATA", "ISO")) names += name
             }
-        } ?: error("Android no permite leer esta carpeta.")
-        return "Lectura de carpeta disponible.\nEstructura reconocida: " +
-            if (names.isEmpty()) "sin carpetas PSP conocidas en este nivel.\n" +
-                "La selección no demuestra pertenencia a la consola." else
-                names.joinToString(", ") + ".\nLa selección no demuestra pertenencia a la consola."
+        } ?: error(context.getString(R.string.folder_unreadable))
+        return context.getString(R.string.folder_details, if (names.isEmpty())
+            context.getString(R.string.folder_no_structure) else names.joinToString(", "))
     }
 }

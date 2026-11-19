@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from dock import Dock
-from psp_retro import SYSTEMS
+from psp_dock.emulation.psp_retro import SYSTEMS
 
 
 class RetroBridgeTests(unittest.TestCase):
@@ -31,7 +31,9 @@ class RetroBridgeTests(unittest.TestCase):
         empty_devices.start()
         self.addCleanup(empty_devices.stop)
         self.dock = Dock(self.root / 'data')
-        self.dock.settings({'psp_root':str(self.psp)})
+        # These are synthetic ROM fixtures; the production default now
+        # provisions RetroArch automatically. Never allow tests to download.
+        self.dock.settings({'psp_root':str(self.psp),'retro_install_policy':'off'})
 
     def item(self):
         roms = self.dock.retro_catalog()['roms']
@@ -132,9 +134,9 @@ class RetroBridgeTests(unittest.TestCase):
         self.dock.session['prepared_volume'] = self.dock.retro_volume
         self.dock.retro_save_plan()
         with patch.object(self.dock,'root',return_value=None), \
-             patch('ppsspp_hid_session.validate_hid_only',side_effect=['stable','stable']) as hid, \
+             patch('psp_dock.emulation.ppsspp_hid_session.validate_hid_only',side_effect=['stable','stable']) as hid, \
              patch('dock.subprocess.Popen') as launch, \
-             patch('ppsspp_windows_flow.focus_async'):
+             patch('psp_dock.emulation.ppsspp_windows_flow.focus_async'):
             self.dock.launch_retro(ready['id'])
         self.assertEqual(hid.call_count,2)
         cmd = launch.call_args.args[0]
@@ -153,7 +155,7 @@ class RetroBridgeTests(unittest.TestCase):
         self.install_pc_emulator()
         self.dock.session['prepared_volume'] = self.dock.retro_volume
         with patch.object(self.dock,'root',return_value=None), \
-             patch('ppsspp_hid_session.validate_hid_only',side_effect=['A','B']), \
+             patch('psp_dock.emulation.ppsspp_hid_session.validate_hid_only',side_effect=['A','B']), \
              patch('dock.subprocess.Popen') as launch:
             with self.assertRaises(ValueError):
                 self.dock.launch_retro(ready['id'])

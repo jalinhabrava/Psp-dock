@@ -11,8 +11,8 @@ android {
         applicationId = "app.pspdock.tv"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0-preview"
+        versionCode = 2
+        versionName = "0.1.3-tv-preview"
         testInstrumentationRunner = "android.test.InstrumentationTestRunner"
     }
     buildTypes {

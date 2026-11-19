@@ -7,7 +7,7 @@ from unittest.mock import patch
 from dock import Dock
 from tests.test_psp_artwork import write_fixture_iso
 from tests.test_psp_game_metadata import fixture_sfo
-from psp_artwork import SECTOR
+from psp_dock.media.psp_artwork import SECTOR
 from tests.test_psp_artwork import rec
 
 
@@ -36,8 +36,8 @@ class VerifiedGameTextureTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_view_reports_own_profile_and_reset_follows_default(self):
-        with patch('ppsspp_graphics.primary_monitor',
-                   return_value=__import__('ppsspp_graphics').Monitor(1920,1080)):
+        with patch('psp_dock.emulation.ppsspp_graphics.primary_monitor',
+                   return_value=__import__('psp_dock.emulation.ppsspp_graphics', fromlist=['Monitor']).Monitor(1920,1080)):
             first=self.dock.graphics_view(self.id)
             self.assertFalse(first['custom'])
             self.assertEqual(first['default_choice']['quality'],'auto')
@@ -51,8 +51,8 @@ class VerifiedGameTextureTests(unittest.TestCase):
                 self.dock.set_graphics_view({'id':None,'reset':True})
 
     def test_verified_pc_game_disc_id_used_for_texture_pack(self):
-        with patch('psp_game_metadata.read_metadata',
-                   wraps=__import__('psp_game_metadata').read_metadata) as loader:
+        with patch('psp_dock.media.psp_game_metadata.read_metadata',
+                   wraps=__import__('psp_dock.media.psp_game_metadata', fromlist=['read_metadata']).read_metadata) as loader:
             overview=self.dock.graphics_view(self.id)
         self.assertEqual(overview['game_metadata']['disc_id'],'NPJH50053')
         self.assertFalse(overview['hd_texture_pack_installed'])
@@ -70,7 +70,7 @@ class VerifiedGameTextureTests(unittest.TestCase):
         another=self.psp/'ISO/Large.iso'
         write_fixture_iso(another)
         missed=next(g for g in self.dock.games() if g['title']=='Large')
-        with patch('psp_game_metadata.read_metadata',
+        with patch('psp_dock.media.psp_game_metadata.read_metadata',
                    side_effect=AssertionError('USB metadata read forbidden')):
             overview=self.dock.graphics_view(missed['id'])
         self.assertNotIn('game_metadata',overview)

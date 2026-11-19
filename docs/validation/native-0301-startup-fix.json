@@ -92,7 +92,7 @@
       "result": "PASS",
       "compiler": "PSP GCC",
       "warnings_as_errors": true,
-      "build_directory": "/home/david/projects/psp-dock-build/native-dock-0301"
+      "build_directory": "/home/<usuario>/projects/psp-dock-build/native-dock-0301"
     },
     "compiled_audit": {
       "result": "PASS",

@@ -3,23 +3,36 @@ name: Android TV Dock
 on:
   push:
     branches: [feat/android-tv-dock]
+    paths:
+      - "android-tv/**"
+      - "!android-tv/**/*.md"
+      - ".github/workflows/android-tv.yml"
+      - "psp_dock/devices/native_dock.py"
+      - "homebrew/native-dock/native_protocol.h"
+      - "homebrew/native-dock/native_driver.c"
   pull_request:
     paths:
       - "android-tv/**"
+      - "!android-tv/**/*.md"
       - ".github/workflows/android-tv.yml"
+      - "psp_dock/devices/native_dock.py"
+      - "homebrew/native-dock/native_protocol.h"
+      - "homebrew/native-dock/native_driver.c"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-tv-dock-${{ github.ref }}
+  group: android-tv-dock-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    env:
+      PSP_DOCK_TEST_NO_REAL_USB: "1"
     defaults:
       run:
         working-directory: android-tv
@@ -29,6 +42,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+          cache: gradle
+          cache-dependency-path: |
+            android-tv/**/*.gradle.kts
+            android-tv/gradle/wrapper/gradle-wrapper.properties
+      - name: Verify parity with the current Windows protocol
+        run: python3 protocol/windows_vectors.py --check
       - name: Install pinned Android SDK, NDK and CMake
         run: |
           "${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager" \
@@ -36,30 +55,25 @@ jobs:
             "ndk;29.0.14206865" "cmake;3.22.1" </dev/null
       - name: Prepare and verify pinned PPSSPP sources
         run: python3 scripts/prepare_engine.py
-      - name: Test embedded engine boundaries against upstream
-        run: python3 -m unittest discover -s tests -p test_engine_embedding.py -v
-      - name: Build APK and run unit tests and Android lint
+      - name: Test engine boundaries, protocol parity and APK validation
+        run: python3 -m unittest discover -s tests -p "test_*.py" -v
+      - name: Unit tests and Android lint
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon --max-workers=2 :session-contract:test :app:testDebugUnitTest :app:assembleDebug :app:lintDebug
-      - name: Verify that the APK contains the engine for both ARM architectures
+          ./gradlew --no-daemon --max-workers=2 :session-contract:test :app:testDebugUnitTest :app:lintDebug
+      - name: Build both ARM architectures
+        run: ./gradlew --no-daemon --max-workers=2 :app:assembleDebug
+      - name: Verify the complete APK and optimized native engine
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          import zipfile
-
-          apks = list(Path("app/build/outputs/apk/debug").glob("*.apk"))
-          if len(apks) != 1:
-              raise SystemExit("Expected one Android TV APK")
-          with zipfile.ZipFile(apks[0]) as apk:
-              for abi in ("arm64-v8a", "armeabi-v7a"):
-                  path = "lib/" + abi + "/libppsspp_jni.so"
-                  binary = apk.read(path)
-                  if not binary.startswith(b"\x7fELF") or len(binary) < 1000000:
-                      raise SystemExit("Missing or invalid embedded engine: " + abi)
-              print("Embedded PPSSPP verified in", apks[0])
-          PY
+          python3 scripts/verify_apk.py \
+            --apk app/build/outputs/apk/debug/app-debug.apk \
+            --sdk "$ANDROID_HOME" \
+            --native-build-dir ppsspp-engine/.cxx \
+            --report app/build/reports/dock-apk.json
+      # The current project license needs an Android-specific decision before
+      # public binary distribution; see android-tv/LICENSING.md.
       - name: Android TV debug APK
+        if: vars.ANDROID_TV_DISTRIBUTION_READY == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: psp-dock-android-tv-debug
@@ -72,6 +86,7 @@ jobs:
         with:
           name: android-tv-validation
           path: |
+            android-tv/app/build/reports/dock-apk.json
             android-tv/app/build/reports/tests/
             android-tv/app/build/reports/lint-results-debug.*
             android-tv/session-contract/build/reports/tests/

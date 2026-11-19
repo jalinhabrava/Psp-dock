@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from psp_usb import PspStorage, UsbTransitionError, validate_identity, safe_eject
+from psp_dock.devices.psp_usb import PspStorage, UsbTransitionError, validate_identity, safe_eject
 
 DISK = r'USBSTOR\DISK&VEN_SONY&PROD_"PSP"_MS&REV_1.00\8A67FB08B1B4B5A6&0'
 USB = r'USB\VID_054C&PID_02D2\8A67FB08B1B4B5A6'
@@ -25,7 +25,7 @@ class PSPUSBTests(unittest.TestCase):
 
     def test_mismatched_volume_never_calls_device_eject(self):
         p = PspStorage('G:\\', '31930445', DISK, USB, 'SONY "PSP" MS USB Device')
-        with patch('psp_usb.identify', return_value=(p, 42)) as identity:
+        with patch('psp_dock.devices.psp_usb.identify', return_value=(p, 42)) as identity:
             with self.assertRaisesRegex(UsbTransitionError, 'cambió'):
                 safe_eject('G:\\', 'bad-volume')
         identity.assert_called_once()

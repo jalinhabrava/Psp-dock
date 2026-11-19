@@ -88,6 +88,12 @@ class ArtworkCatalogTests(unittest.TestCase):
         initial = manifest.read_bytes()
         original = backend.game_inventory
 
+        # The shipped catalog intentionally skips rescanning an unchanged
+        # Memory Stick. Change only metadata to require a new read, then
+        # simulate an unplug while the fresh inventory is in progress.
+        before = self.first.stat()
+        os.utime(self.first, ns=(before.st_atime_ns, before.st_mtime_ns + 4_000_000_000))
+
         def interrupted(root):
             if Path(root) == self.psp1:
                 raise OSError('Simulated unplug during read-only scan')

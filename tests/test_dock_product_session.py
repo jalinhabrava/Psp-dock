@@ -6,9 +6,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 import dock as app
-from dock_product_session import DockProductSession
-from retro_runtime import private_save_paths
-from psp_retro import SYSTEMS
+from psp_dock.core.dock_product_session import DockProductSession
+from psp_dock.emulation.retro_runtime import private_save_paths
+from psp_dock.emulation.psp_retro import SYSTEMS
 
 
 class FakeTransport:
@@ -38,7 +38,8 @@ class FakeTransport:
                 'safe_ready': self.phase == 5, 'controller_available': self.phase in (1, 2) and self.host_confirmed,
                 'phase': self.phase, 'path': 'synthetic-native-hid', 'product_id': 0x01CD,
                 'revision': 0x0100, 'usb_revision': 0x0100, 'protocol_version':3,
-                'firmware_revision':0x0302, 'host_confirmed': self.host_confirmed,
+                'firmware_revision':0x0303, 'host_confirmed': self.host_confirmed,
+                'capabilities':0x0007, 'build_id':0x03030001,
                 'usb_parent': 'USB\\VID_054C&PID_01CD\\SYNTHETIC',
                 'root': str(self.root), 'exit_requested': self.exit_requested}
 
@@ -86,11 +87,17 @@ class FakeTransport:
                 'mode': 'native_dock', 'synthetic_storage': False, 'path': 'synthetic-native-hid',
                 'session': self.session_id, 'phase': self.phase, 'product_id': 0x01CD,
                 'revision': 0x0100, 'usb_revision':0x0100, 'protocol_version':3,
-                'firmware_revision':0x0302, 'host_confirmed':self.host_confirmed,
+                'firmware_revision':0x0303, 'host_confirmed':self.host_confirmed,
+                'capabilities':0x0007, 'build_id':0x03030001,
                 'reason': 'Synthetic transport for tests'}
 
     def finish_session(self, *, cancel=False):
         self.finishes += 1
+        if cancel and not self.host_confirmed and self.phase == 1:
+            if self.veto:
+                raise ValueError('Synthetic Windows safe-eject veto')
+            self.connected = False
+            return {'verified':True, 'host_eject_accepted':True, 'entry_unclaimed':True}
         if cancel and self.host_confirmed and self.phase in (1, 2):
             self.phase = 4
         if self.phase not in (4, 5):
@@ -118,7 +125,8 @@ class DockProductSessionTests(unittest.TestCase):
         # Ignore a real bundled PPSSPP in the checkout. These tests exercise
         # session/file orchestration; launch cases supply their own fake exe.
         # Persist this choice so recovery fixtures inherit the same isolation.
-        self.dock.settings({'psp_root':str(self.psp), 'emulator':''})
+        self.dock.settings({'psp_root':str(self.psp), 'emulator':'',
+                            'retro_install_policy':'off'})
         self.transport = FakeTransport(self.psp)
         self.product = DockProductSession(self.dock, self.transport)
         self.dock.product_session = self.product
@@ -199,7 +207,143 @@ class DockProductSessionTests(unittest.TestCase):
             self.offer()
         self.assertEqual(self.transport.begins, 1)
 
-    def test_psp_exit_before_inventory_only_claims_and_ejects_without_copies(self):
+    def test_publishing_native_inventory_does_not_repeat_game_and_rom_scan(self):
+        self.offer()
+        with patch.object(self.dock, 'games', side_effect=AssertionError('duplicate PSP game scan')), \
+             patch.object(self.dock, 'retro_catalog', side_effect=AssertionError('duplicate PSP ROM scan')):
+            view = self.dock.state(cached_catalogs=True)
+        self.assertEqual(view['games'], self.dock.cached_game_results)
+        self.assertEqual(view['retro'], self.dock.cached_retro_results)
+        self.assertFalse(view['can_launch_game'])
+        self.assertEqual(view['product_flow']['phase'], 'choosing')
+
+    def test_native_presentation_never_scans_saves_again(self):
+        self.retro_fixture()
+        self.offer()
+        with patch.object(self.dock,'save_plan',side_effect=AssertionError('UI repeated native saves')), \
+             patch.object(self.dock,'retro_save_plan',side_effect=AssertionError('UI repeated SRAMs')), \
+             patch.object(self.product,'return_plan',side_effect=AssertionError('UI repeated return')), \
+             patch.object(self.product,'retro_return_view',side_effect=AssertionError('UI repeated retro return')):
+            view=self.dock.state(cached_catalogs=True)
+        self.assertEqual(view['product_flow']['phase'],'choosing')
+        self.assertTrue(view['retro_saves']['rows'])
+
+    def test_choice_is_remembered_without_implicit_consent(self):
+        token=self.offer()
+        self.product.choose('none',token)
+        pref=self.dock.device_memory.preference(self.transport.current,self.dock.config)
+        self.assertEqual(pref,{'choice':'none','automatic':False})
+        self.assertEqual(self.product.snapshot()['remembered_choice'],'none')
+
+    def test_choosing_uses_confirmed_transport_even_if_ui_snapshot_is_from_inventory(self):
+        self.offer()
+        self.dock.snapshot['controller_status']={'connected':False,'mode':'await_native'}
+        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
+            reader.return_value.read.return_value={'connected':True,'source':'psp_winmm','button_mask':1,'accept':True}
+            frame=self.dock.psp_launcher_input()
+        self.assertTrue(frame['connected'])
+        self.assertTrue(frame['accept'])
+        reader.assert_called_once_with(expected_product=0x01CD)
+        self.assertTrue((self.dock.data/'selector-input.json').exists())
+
+    def test_none_entry_does_not_repeat_psp_save_or_game_inventory(self):
+        self.retro_fixture();token=self.offer()
+        self.product.choose('none',token)
+        with patch.object(self.product,'_save_snapshots',side_effect=AssertionError('PSP baseline already captured')), \
+             patch.object(self.dock,'games',side_effect=AssertionError('catalog already verified')):
+            self.product.tick(self.dock.devices())
+        self.assertNotEqual(self.product.snapshot()['phase'],'attention')
+
+    def test_opted_in_policy_is_reused_only_after_live_inventory(self):
+        self.dock.device_memory.remember(self.transport.current,self.dock.config,'none',True)
+        self.product.tick(self.dock.devices())
+        self.assertEqual(self.transport.begins,1)
+        self.assertEqual(self.product.snapshot()['phase'],'entering_controller')
+        self.assertEqual(self.product.snapshot()['choice'],'none')
+        self.assertTrue(self.product.entry_path.exists())
+
+    def test_remembered_policy_never_bypasses_save_conflicts(self):
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'PSP version')
+        self.slot(self.pc_saves,'SAVE',b'PC version')
+        self.dock.device_memory.remember(self.transport.current,self.dock.config,'all',True)
+        self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'],'choosing')
+        self.assertGreater(self.product.snapshot()['counts']['save_conflicts'],0)
+
+    def test_no_pc_save_change_exits_without_rescanning_psp_savedata(self):
+        self.retro_fixture()
+        self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'unchanged')
+        self.slot(self.pc_saves,'SAVE',b'unchanged')
+        self.ready('none')
+        self.dock.request_exit()
+        self.product.tick(self.dock.devices())  # Confirm EXIT_SYNC.
+        with patch.object(self.product,'_return_plans',side_effect=AssertionError('unchanged PC must not rescan PSP')), \
+             patch.object(self.dock,'retro_save_plan',side_effect=AssertionError('unchanged PC must not enumerate SRAM')):
+            self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'],'finalizing')
+        self.assertEqual(self.product.entry['return_summary'],
+            {'psp_copied':0,'retro_copied':0,'pc_unchanged':True})
+        self.assertTrue(self.product.entry['return_data_verified'])
+
+    def test_cached_exit_conflicts_keep_direction_and_fresh_revision(self):
+        psp=self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'old')
+        pc=self.slot(self.pc_saves,'SAVE',b'old')
+        self.ready('none')
+        psp.write_bytes(b'PSP changed');pc.write_bytes(b'PC changed')
+        self.dock.request_exit()
+        self.product.tick(self.dock.devices());self.product.tick(self.dock.devices())
+        self.assertEqual(self.product.snapshot()['phase'],'attention')
+        view=self.dock.state(cached_catalogs=True)
+        self.assertEqual(view['saves']['direction_scope'],'to_psp')
+        self.assertEqual(len(view['saves']['conflicts']),1)
+        self.assertTrue(view['saves']['conflicts'][0]['revision'])
+
+    def test_failed_host_begin_publishes_attention_without_any_catalog_scan(self):
+        self.assertIsNone(self.dock.cached_game_results)
+        self.assertIsNone(self.dock.cached_retro_results)
+        with patch.object(self.transport, 'begin_session', side_effect=ValueError('HOST_BEGIN sin ACK')) as begin, \
+             patch.object(self.transport, 'observe', wraps=self.transport.observe) as observe, \
+             patch.object(self.dock, 'state', side_effect=AssertionError('no fallback after failed handshake')) as state, \
+             patch.object(self.dock, 'games', side_effect=AssertionError('no PC game inventory')) as games, \
+             patch.object(self.dock, 'retro_catalog', side_effect=AssertionError('no PC ROM inventory')) as retro:
+            for _ in range(3):
+                self.watch_once()
+
+        begin.assert_called_once()
+        self.assertEqual(observe.call_count, 3)
+        state.assert_not_called()
+        games.assert_not_called()
+        retro.assert_not_called()
+        view = self.dock.snapshot
+        self.assertEqual(view['product_flow']['phase'], 'attention')
+        self.assertEqual(view['product_flow']['purpose'], 'initial')
+        self.assertIn('HOST_BEGIN sin ACK', view['product_flow']['attention_reason'])
+        self.assertFalse(view['product_flow']['entry_completed'])
+        self.assertFalse(self.transport.host_confirmed)
+        self.assertIsNone(view['selected_device'])
+        self.assertFalse(view['scanning'])
+        self.assertFalse(view['can_launch_game'])
+        self.assertFalse(view['can_launch_retro'])
+        self.assertFalse(view['controller_status']['connected'])
+        stages = self.product.diagnostics.snapshot()['stages']
+        self.assertEqual(stages['ui.publish_native_waiting']['count'], 3)
+        self.assertNotIn('ui.publish', stages)
+
+    def test_native_publication_rebuilds_invalidated_catalogs_instead_of_old_snapshot(self):
+        self.offer()
+        games = list(self.dock.cached_game_results)
+        retro = {'emulators':[], 'roms':[{'availability':'ready', 'core_available':True}]}
+        self.dock.snapshot['retro'] = {'emulators':[], 'roms':[{'availability':'ready', 'core_available':False}]}
+        self.dock.cached_game_results = self.dock.cached_retro_results = None
+        with patch.object(self.dock, 'games', return_value=games) as refresh_games, \
+             patch.object(self.dock, 'retro_catalog', return_value=retro) as refresh_retro:
+            view = self.dock.state(cached_catalogs=True)
+        refresh_games.assert_called_with()
+        refresh_retro.assert_called_with()
+        self.assertEqual(view['games'], games)
+        self.assertTrue(view['retro']['roms'][0]['core_available'])
+
+    def test_psp_exit_before_inventory_ejects_without_claim_or_copies(self):
         original = self.slot(self.psp/'PSP/SAVEDATA','SAVE',b'psp only')
         self.dock.session['pending_return'] = True  # Preserve unrelated recovery metadata.
         self.transport.exit_requested = True
@@ -208,12 +352,45 @@ class DockProductSessionTests(unittest.TestCase):
             self.tick()
         self.assertEqual(self.product.snapshot()['purpose'], 'cancel')
         self.assertEqual(self.product.snapshot()['phase'], 'safe_to_disconnect')
-        self.assertEqual(self.transport.begins, 1)
+        self.assertEqual(self.transport.begins, 0)
         self.assertEqual(self.transport.finishes, 1)
         self.assertEqual(self.transport.roles, [])
         self.assertFalse(self.product.entry_path.exists())
         self.assertEqual(original.read_bytes(), b'psp only')
         self.assertTrue(self.dock.session['pending_return'])
+
+    def test_cancel_after_failed_begin_never_repeats_the_failed_command(self):
+        saved = self.slot(self.psp/'PSP/SAVEDATA', 'SAVE', b'original')
+        with patch.object(self.transport, 'begin_session', side_effect=ValueError('missing HOST_BEGIN ACK')) as begin, \
+             patch('dock.copy_slot', side_effect=AssertionError('cancel must not copy saves')):
+            self.tick()
+            self.assertEqual(self.product.snapshot()['phase'], 'attention')
+            self.assertTrue(self.product.snapshot()['can_cancel'])
+            self.product.request_cancel()
+            self.tick()
+            self.assertEqual(begin.call_count, 1)
+        self.assertEqual(self.product.snapshot()['phase'], 'safe_to_disconnect')
+        self.assertEqual(self.transport.finishes, 1)
+        self.assertFalse(self.product.entry_path.exists())
+        self.assertEqual(saved.read_bytes(), b'original')
+
+    def test_connection_timing_distinguishes_observation_and_failed_handshake(self):
+        with patch.object(self.transport, 'begin_session', side_effect=ValueError('missing ACK')):
+            self.tick()
+        timing = self.product.diagnostics.snapshot()
+        self.assertEqual(timing['stages']['usb.observe']['count'], 1)
+        self.assertEqual(timing['stages']['usb.host_begin']['errors'], 1)
+        self.assertEqual(timing['stages']['callback.inventory']['errors'], 1)
+        durable = app.read_json(self.dock.data/'connection-timing.json', {})
+        self.assertEqual(durable['events'][-1]['event'], 'error')
+
+    def test_usb_discovery_is_visible_before_windows_finishes_enumerating(self):
+        with self.product.diagnostics.measure('usb.devices'):
+            with patch.object(self.transport, 'observe', side_effect=AssertionError('snapshot must not probe')):
+                view = self.product.snapshot()
+            self.assertEqual(view['connection']['phase'], 'searching')
+            self.assertFalse(view['can_choose'])
+        self.assertEqual(self.product.snapshot()['connection']['phase'], 'waiting')
 
     def test_psp_exit_drains_current_save_and_never_starts_the_next_copy(self):
         self.slot(self.psp/'PSP/SAVEDATA','SAVE_A',b'first')
@@ -287,7 +464,9 @@ class DockProductSessionTests(unittest.TestCase):
             self.tick()
         inventory = [row for row in views if row['stage'] == 'inventory']
         self.assertTrue(any(row['completed'] > 0 for row in inventory))
-        self.assertTrue(all(row['mode'] == 'indeterminate' and row['total'] is None for row in inventory))
+        self.assertTrue(all((row['mode'] == 'indeterminate' and row['total'] is None) or
+                            (row['mode'] == 'determinate' and row['total'] > 0 and
+                             0 <= row['completed'] <= row['total']) for row in inventory))
         saved = [row for row in views if row['stage'] == 'saves' and row['mode'] == 'determinate']
         self.assertTrue(saved)
         self.assertTrue(any(row['completed'] == row['total'] == 3 for row in saved))
@@ -470,7 +649,7 @@ class DockProductSessionTests(unittest.TestCase):
     def test_active_native_session_refuses_relocation_before_migration(self):
         self.ready('none')
         before=dict(self.dock.config)
-        with patch('storage_layout.migrate_pc_data') as migrate:
+        with patch('psp_dock.core.storage_layout.migrate_pc_data') as migrate:
             with self.assertRaisesRegex(ValueError,'Termina la sesión del Dock'):
                 self.dock.relocate_storage(str(self.home/'new-library'))
         migrate.assert_not_called()
@@ -479,15 +658,23 @@ class DockProductSessionTests(unittest.TestCase):
 
     def test_launcher_input_requires_firmware_and_handshake_independent_of_sony_usb_revision(self):
         self.ready('none')
-        with patch('psp_launcher_input.PSPWinMMReader') as reader:
+        with patch('psp_dock.devices.psp_launcher_input.PSPWinMMReader') as reader:
             reader.return_value.read.return_value = {'connected': True, 'source': 'psp_winmm'}
-            self.assertTrue(self.dock.psp_launcher_input()['connected'])
-            reader.assert_called_once_with(expected_product=0x01CD)
             original = dict(self.dock.snapshot['controller_status'])
-            for changes in ({'firmware_revision':0x0301}, {'protocol_version':2}, {'host_confirmed':False}):
+            for firmware, build in ((0x0303, 0x03030001), (0x0304, 0x03040001)):
+                self.dock.snapshot['controller_status'] = {
+                    **original, 'firmware_revision':firmware, 'build_id':build}
+                self.assertTrue(self.dock.psp_launcher_input()['connected'])
+            self.assertEqual(reader.call_count, 2)
+            reader.assert_called_with(expected_product=0x01CD)
+            for changes in ({'firmware_revision':0x0301}, {'protocol_version':2},
+                            {'host_confirmed':False}, {'capabilities':0},
+                            {'firmware_revision':0x0304}, {'build_id':0x03040001},
+                            {'firmware_revision':[]}, {'firmware_revision':None},
+                            {'build_id':None}, {'synthetic_storage':True}):
                 self.dock.snapshot['controller_status'] = {**original, **changes}
                 self.assertFalse(self.dock.psp_launcher_input()['connected'])
-            self.assertEqual(reader.call_count, 1)
+            self.assertEqual(reader.call_count, 2)
 
     def test_dock_apps_are_excluded_but_unrelated_homebrew_is_preserved(self):
         for name in ('PSPDock','pspdocknative','PSPDockStorageTest','PSPDockCompositeTest',
@@ -645,8 +832,8 @@ class DockProductSessionTests(unittest.TestCase):
         with self.mock_windows(), \
              patch.object(self.dock,'prepared_runtime_path',return_value=exe), \
              patch.object(self.dock,'apply_game_graphics'), \
-             patch('ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('native composite is not legacy HID-only')), \
-             patch('ppsspp_windows_flow.focus_async'), \
+             patch('psp_dock.emulation.ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('native composite is not legacy HID-only')), \
+             patch('psp_dock.emulation.ppsspp_windows_flow.focus_async'), \
              patch('dock.subprocess.Popen',return_value=process) as spawn:
             self.dock.launch(game['id'])
         self.assertEqual(spawn.call_count,1)
@@ -654,7 +841,7 @@ class DockProductSessionTests(unittest.TestCase):
         self.assertTrue(self.dock.session['pending_return'])
         self.assertNotIn('prepared_volume',self.dock.session)
         process.poll.return_value = 0
-        with patch('ppsspp_windows_flow.return_to_xmb',return_value=False):
+        with patch('psp_dock.emulation.ppsspp_windows_flow.return_to_xmb',return_value=False):
             self.assertFalse(self.dock.running())
         self.assertEqual(self.product.snapshot()['phase'],'ready')
         self.assertEqual(self.transport.roles,[('controller','initial')])
@@ -674,8 +861,8 @@ class DockProductSessionTests(unittest.TestCase):
         process.poll.return_value = None
         with self.mock_windows(), \
              patch('dock.prepare_joypad_profile',wraps=app.prepare_joypad_profile) as profile, \
-             patch('ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('no legacy transport assertion')), \
-             patch('ppsspp_windows_flow.focus_async'), \
+             patch('psp_dock.emulation.ppsspp_hid_session.validate_hid_only',side_effect=AssertionError('no legacy transport assertion')), \
+             patch('psp_dock.emulation.ppsspp_windows_flow.focus_async'), \
              patch('dock.subprocess.Popen',return_value=process) as spawn:
             self.dock.launch_retro(rom['id'])
         self.assertEqual(spawn.call_count,1)

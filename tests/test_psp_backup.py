@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-import psp_backup as backup
+import tools.psp.psp_backup as backup
 
 
 class PspBackupTests(unittest.TestCase):
@@ -106,7 +106,7 @@ class PspBackupTests(unittest.TestCase):
                                verify_identity=lambda: True, reserve_bytes=0)
         (self.target / "recovery-configs").mkdir()
         with patch.object(backup, "DEFAULT_DEST", self.target), \
-             patch("sys.argv", ["psp_backup.py", "--verify-latest"]):
+             patch("sys.argv", ["tools.psp.psp_backup.py", "--verify-latest"]):
             self.assertEqual(backup.main(), 0)
 
     def test_usb_identity_changed_during_copy_is_incomplete(self):

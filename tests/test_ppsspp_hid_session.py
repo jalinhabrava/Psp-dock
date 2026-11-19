@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
-import ppsspp_hid_session as hid
+import psp_dock.emulation.ppsspp_hid_session as hid
 
 
 DEVICE = {
@@ -172,7 +172,7 @@ class HidPpssppSessionTests(unittest.TestCase):
 
     @patch.object(hid, "windows_devices", return_value=[])
     def test_gameplay_requires_correct_ppsspp_psp_controls(self, devices):
-        import ppsspp_psp_button_map as mapping
+        import psp_dock.emulation.ppsspp_psp_button_map as mapping
 
         plan = hid.plan_game(self.live, private_data=self.private, emulator=self.emu)
         controls = plan.private_memstick / "PSP/SYSTEM/controls.ini"

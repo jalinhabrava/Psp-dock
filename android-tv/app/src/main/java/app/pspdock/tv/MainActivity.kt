@@ -36,6 +36,9 @@ import android.widget.ScrollView
 import android.widget.TextView
 import app.pspdock.session.SessionLedger
 import app.pspdock.tv.core.VerifiedImport
+import app.pspdock.tv.core.PspInput
+import app.pspdock.tv.core.PspInputGate
+import app.pspdock.tv.core.UiPressGate
 import java.io.InputStream
 import java.io.InterruptedIOException
 import java.io.File
@@ -78,6 +81,12 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
     }
     private var requestedUsbName: String? = null
+    private var requestedController = false
+    private lateinit var controllerBinding: ControllerBinding
+    private var pspControllerActive = false
+    private var previousPsp = PspInput()
+    private val pspGate = PspInputGate()
+    private val nativePresses = UiPressGate<View>()
     private var lastAxis = 0
     private var lastAxisAt = 0L
     private val preferences by lazy { getSharedPreferences("dock", MODE_PRIVATE) }
@@ -96,8 +105,10 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                     requestedUsbName = null
                     if (device == null || expected == null || device.deviceName != expected) return
                     if (intent.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) {
-                        probe(device.deviceName)
+                        if (requestedController) startPspController(device.deviceName) else probe(device.deviceName)
+                        requestedController = false
                     } else {
+                        requestedController = false
                         usbMessage = getString(R.string.usb_denied)
                         if (tab == Tab.CONNECTION) render()
                     }
@@ -117,6 +128,12 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         store = GameStore(applicationContext)
         usb = UsbDiagnostics(applicationContext)
         inputManager = getSystemService(InputManager::class.java)
+        controllerBinding = ControllerBinding(this, ::pspInput) { active, text ->
+            pspControllerActive = active
+            usbMessage = text
+            if (::controller.isInitialized && text.isNotEmpty()) controller.text = text
+            if (tab == Tab.CONNECTION && !busy) render()
+        }
         ledger = SessionLedger(File(filesDir, "emulation"))
         statusMessage = if (store.removeInterruptedImports() > 0) getString(R.string.import_restart)
             else getString(R.string.ready)
@@ -129,6 +146,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     override fun onResume() {
         super.onResume()
         resumed = true
+        controllerBinding.bind()
         sessionHandler.removeCallbacks(sessionPoll)
         sessionPoll.run()
         if (Build.VERSION.SDK_INT >= 30) {
@@ -141,7 +159,9 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     }
 
     override fun onPause() {
+        nativePresses.clear()
         resumed = false
+        controllerBinding.unbind()
         sessionHandler.removeCallbacks(sessionPoll)
         super.onPause()
     }
@@ -151,7 +171,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         sessionError = ""
         session = try { ledger.observe(preferences.getString("engine_token", null)) }
         catch (error: Exception) {
-            sessionError = error.message ?: "No se pudo leer el registro de sesión."
+            sessionError = error.message ?: getString(R.string.session_read_error)
             SessionLedger.Snapshot(SessionLedger.State.UNKNOWN, null, true)
         }
         if (session != previous && ::page.isInitialized) {
@@ -162,14 +182,14 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     private fun sessionText(): String = when (session.state) {
         SessionLedger.State.IDLE -> getString(R.string.ready)
-        SessionLedger.State.STARTING -> "Esperando el arranque del motor integrado."
-        SessionLedger.State.RUNNING -> "El motor sigue activo. Puedes volver al juego para continuar o cerrarlo."
-        SessionLedger.State.STOPPING -> "El motor ha terminado; esperando que cierre su proceso."
-        SessionLedger.State.CLOSED -> "Juego cerrado. Los guardados permanecen en este dispositivo."
-        SessionLedger.State.INTERRUPTED -> "El motor se interrumpió sin confirmar el cierre. No se devolverán guardados a la PSP."
-        SessionLedger.State.FAILED -> "El motor no llegó a iniciar. Puedes volver a intentarlo."
-        SessionLedger.State.RECOVERED -> "Sesión anterior descartada como interrumpida. Los archivos locales se conservan."
-        SessionLedger.State.UNKNOWN -> "No se ha podido verificar la sesión anterior. " + sessionError
+        SessionLedger.State.STARTING -> getString(R.string.session_starting)
+        SessionLedger.State.RUNNING -> getString(R.string.session_running)
+        SessionLedger.State.STOPPING -> getString(R.string.session_stopping)
+        SessionLedger.State.CLOSED -> getString(R.string.session_closed)
+        SessionLedger.State.INTERRUPTED -> getString(R.string.session_interrupted)
+        SessionLedger.State.FAILED -> getString(R.string.session_failed)
+        SessionLedger.State.RECOVERED -> getString(R.string.session_recovered)
+        SessionLedger.State.UNKNOWN -> getString(R.string.session_unknown, sessionError)
     }
 
     private fun buildShell() {
@@ -212,6 +232,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     private fun render() {
         if (isFinishing || isDestroyed) return
+        val focusedTag = page.findFocus()?.tag
         page.removeAllViews()
         when (tab) {
             Tab.LIBRARY -> renderLibrary()
@@ -220,6 +241,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
         status = label(statusMessage, 13, muted).apply { setPadding(dp(4), dp(10), dp(4), dp(8)) }
         page.addView(status)
+        if (focusedTag != null) page.findViewWithTag<View>(focusedTag)?.requestFocus()
     }
 
     private fun renderLibrary() {
@@ -235,11 +257,11 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
             empty.addView(label(getString(R.string.empty_library), 23, ink, true))
             empty.addView(label(getString(R.string.empty_hint), 15, muted).apply { setPadding(0, dp(8), 0, 0) })
         } else {
-            page.addView(label(games.size.toString() + " juegos en este dispositivo", 18, ink, true)
+            page.addView(label(getString(R.string.games_count, games.size), 18, ink, true)
                 .apply { setPadding(dp(4), dp(8), 0, dp(10)) })
             games.forEach { game ->
                 page.addView(button(game.title + "\n" + Formatter.formatShortFileSize(this, game.bytes) +
-                    " · Jugar") { launch(game) }, buttonLayout(68))
+                    " · " + getString(R.string.play)) { launch(game) }, buttonLayout(68))
             }
         }
         page.addView(label(getString(R.string.preview_limit), 13, muted).apply { setPadding(dp(4), dp(18), dp(4), 0) })
@@ -248,11 +270,11 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private fun renderSession() {
         if (session.mayLaunch) return
         val sessionCard = card()
-        sessionCard.addView(label("Sesión de juego", 19, ink, true))
+        sessionCard.addView(label(getString(R.string.game_session), 19, ink, true))
         sessionCard.addView(label(sessionText(), 15, muted).apply { setPadding(0, dp(8), 0, 0) })
-        if (session.mayResume) sessionCard.addView(button("Volver al juego") { resumeEngine() }, buttonLayout())
-        if (session.mayRecover) sessionCard.addView(button("Recuperar el Dock") { recoverSession() }, buttonLayout())
-        sessionCard.addView(button("Comprobar sesión") { refreshSession(); render() }, buttonLayout())
+        if (session.mayResume) sessionCard.addView(button(getString(R.string.resume_game)) { resumeEngine() }, buttonLayout())
+        if (session.mayRecover) sessionCard.addView(button(getString(R.string.recover_dock)) { recoverSession() }, buttonLayout())
+        sessionCard.addView(button(getString(R.string.check_session)) { refreshSession(); render() }, buttonLayout())
     }
 
     private fun renderConnection() {
@@ -261,7 +283,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         connection.addView(label(getString(R.string.connect_psp), 23, ink, true))
         connection.addView(label(getString(R.string.connection_hint), 15, muted).apply { setPadding(0, dp(8), 0, dp(10)) })
         if (devices.isEmpty()) {
-            connection.addView(label("No hay una PSP USB identificada.", 16, ink))
+            connection.addView(label(getString(R.string.no_psp), 16, ink))
         } else {
             devices.forEach { connection.addView(label(usb.describe(it), 15, ink).apply {
                 setPadding(0, dp(6), 0, dp(8))
@@ -270,12 +292,19 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         connection.addView(button(getString(R.string.check_connection)) { render() }, buttonLayout())
         if (devices.size == 1) {
             connection.addView(button(getString(R.string.usb_probe)) { requestUsb(devices.single()) }, buttonLayout())
+            if (pspControllerActive) {
+                connection.addView(button(getString(R.string.controller_stop)) { stopPspController() }, buttonLayout())
+            } else {
+                connection.addView(button(getString(R.string.controller_start)) {
+                    confirmPspController(devices.single())
+                }, buttonLayout())
+            }
         } else if (devices.size > 1) {
             connection.addView(label(getString(R.string.usb_ambiguous), 15, accent))
         }
         if (usbMessage.isNotEmpty()) connection.addView(label(usbMessage, 14, accent).apply { setPadding(0, dp(10), 0, 0) })
         val inputs = card()
-        inputs.addView(label("Mando y almacenamiento", 18, ink, true))
+        inputs.addView(label(getString(R.string.input_storage), 18, ink, true))
         inputs.addView(label(usb.inputSummary(), 15, muted).apply { setPadding(0, dp(8), 0, 0) })
         val folder = card()
         folder.addView(label(getString(R.string.folder_hint), 15, ink))
@@ -295,7 +324,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         val device = card()
         device.addView(label(getString(R.string.diagnostic_title), 18, ink, true))
         device.addView(label(Build.MANUFACTURER + " " + Build.MODEL + " · Android " + Build.VERSION.RELEASE +
-            "\nUSB host: " + if (packageManager.hasSystemFeature("android.hardware.usb.host")) "disponible" else "no anunciado", 15, muted))
+            "\nUSB host: " + if (packageManager.hasSystemFeature("android.hardware.usb.host")) getString(R.string.available) else getString(R.string.not_advertised), 15, muted))
         device.addView(label(getString(R.string.preview_limit), 14, muted).apply { setPadding(0, dp(8), 0, 0) })
         device.addView(button(getString(R.string.forget_folder)) { forgetFolder() }, buttonLayout())
         page.addView(button(getString(R.string.exit)) { confirmExit() }, buttonLayout())
@@ -343,7 +372,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         io.execute {
             try {
                 val (name, size) = store.sourceMetadata(uri)
-                val source = contentResolver.openInputStream(uri) ?: error("No se puede abrir el archivo seleccionado.")
+                val source = contentResolver.openInputStream(uri) ?: error(getString(R.string.open_file_failed))
                 activeSource.set(source)
                 var lastUpdate = 0L
                 val game = source.use {
@@ -361,7 +390,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                 onUi {
                     busy = false
                     importing = false
-                    statusMessage = "Importado y verificado: " + game.title
+                    statusMessage = getString(R.string.import_success, game.title)
                     render()
                 }
             } catch (error: Exception) {
@@ -369,7 +398,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                     busy = false
                     importing = false
                     statusMessage = if (cancelled.get() || error is InterruptedIOException) getString(R.string.import_cancelled)
-                        else "Importación detenida: " + (error.message ?: error.javaClass.simpleName)
+                        else getString(R.string.import_failed, error.message ?: error.javaClass.simpleName)
                     render()
                 }
             } finally {
@@ -402,8 +431,8 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                     }
                 }
                 FolderDiagnostics.inspect(applicationContext, uri) +
-                    if (persistent) "\nPermiso de lectura recordado." else "\nPermiso disponible solo para esta sesión."
-            }.getOrElse { "No se pudo comprobar la carpeta: " + (it.message ?: it.javaClass.simpleName) }
+                    if (persistent) "\n" + getString(R.string.folder_remembered) else "\n" + getString(R.string.folder_temporary)
+            }.getOrElse { getString(R.string.folder_failed, it.message ?: it.javaClass.simpleName) }
             onUi { busy = false; folderMessage = report; if (tab == Tab.CONNECTION) render() }
         }
     }
@@ -414,14 +443,18 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         }
         preferences.edit().remove("tree").apply()
         folderMessage = ""
-        statusMessage = "Permiso de carpeta olvidado."
+        statusMessage = getString(R.string.folder_forgotten)
         render()
     }
 
-    private fun requestUsb(device: UsbDevice) {
+    private fun requestUsb(device: UsbDevice, forController: Boolean = false) {
         if (busy) return
         val manager = getSystemService(UsbManager::class.java)
-        if (manager.hasPermission(device)) { probe(device.deviceName); return }
+        if (manager.hasPermission(device)) {
+            if (forController) startPspController(device.deviceName) else probe(device.deviceName)
+            return
+        }
+        requestedController = forController
         requestedUsbName = device.deviceName
         val intent = Intent(usbAction).setPackage(packageName)
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or
@@ -438,9 +471,63 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         if (tab == Tab.CONNECTION) render()
         io.execute {
             val result = runCatching { usb.readStatus(name) }
-                .getOrElse { "Consulta detenida: " + (it.message ?: it.javaClass.simpleName) }
+                .getOrElse { getString(R.string.probe_failed, it.message ?: it.javaClass.simpleName) }
             onUi { busy = false; usbMessage = result; if (tab == Tab.CONNECTION) render() }
         }
+    }
+
+    private fun confirmPspController(device: UsbDevice) {
+        if (busy) return
+        AlertDialog.Builder(this).setTitle(R.string.controller_consent_title)
+            .setMessage(R.string.controller_consent).setNegativeButton(R.string.stay, null)
+            .setPositiveButton(R.string.controller_activate) { _, _ -> requestUsb(device, true) }.show()
+    }
+
+    private fun startPspController(name: String) {
+        if (busy) return
+        try {
+            val intent = Intent(this, UsbControllerService::class.java).setAction(UsbControllerService.START)
+                .putExtra(UsbControllerService.DEVICE_NAME, name).putExtra(UsbControllerService.CONSENT, true)
+            startForegroundService(intent)
+            // Started by the visible, explicitly confirmed action above. Rebind after creation.
+            controllerBinding.unbind()
+            controllerBinding.bind(createAfterConsent = true)
+            usbMessage = getString(R.string.controller_connecting)
+            if (tab == Tab.CONNECTION) render()
+        } catch (error: Exception) {
+            message(getString(R.string.controller_failed, error.message ?: error.javaClass.simpleName))
+        }
+    }
+
+    private fun stopPspController() {
+        startService(Intent(this, UsbControllerService::class.java).setAction(UsbControllerService.STOP))
+        pspControllerActive = false
+        previousPsp = PspInput()
+        usbMessage = getString(R.string.controller_stopped)
+        if (tab == Tab.CONNECTION) render()
+    }
+
+    private fun pspInput(rawInput: PspInput) {
+        if (!resumed || busy || session.lockHeld) { pspGate.reset(); previousPsp = PspInput(); return }
+        val input = pspGate.accept(rawInput)
+        val before = previousPsp
+        previousPsp = input
+        val pressed = input.buttons and before.buttons.inv()
+        if (pressed and 1 != 0) { currentFocus?.performClick(); return }
+        if (pressed and 2 != 0) { handleBack(); return }
+        val direction = when {
+            input.hat in setOf(1, 2, 8) || input.y < 65 -> View.FOCUS_UP
+            input.hat in setOf(4, 5, 6) || input.y > 190 -> View.FOCUS_DOWN
+            input.hat == 7 || input.x < 65 -> View.FOCUS_LEFT
+            input.hat == 3 || input.x > 190 -> View.FOCUS_RIGHT
+            else -> 0
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (direction != 0 && (lastAxis != direction || now - lastAxisAt > 230)) {
+            currentFocus?.focusSearch(direction)?.requestFocus()
+            lastAxisAt = now
+        }
+        lastAxis = direction
     }
 
     private fun launch(game: LibraryGame) {
@@ -455,13 +542,13 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         try {
             val file = game?.let { store.file(it.id) }
             token = ledger.prepare()
-            check(preferences.edit().putString("engine_token", token).commit()) { "No se pudo guardar la sesión de arranque." }
+            check(preferences.edit().putString("engine_token", token).commit()) { getString(R.string.session_save_failed) }
             refreshSession()
             EmbeddedEmulator.launch(this, token, file)
         } catch (error: Exception) {
             token?.let { runCatching { ledger.markLaunchFailed(it) } }
             refreshSession()
-            message("No se pudo abrir el juego: " + (error.message ?: error.javaClass.simpleName))
+            message(getString(R.string.launch_failed, error.message ?: error.javaClass.simpleName))
         }
     }
 
@@ -469,21 +556,21 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
         refreshSession()
         if (!session.mayResume) return
         try { EmbeddedEmulator.resume(this, checkNotNull(session.token)) }
-        catch (error: Exception) { message("No se pudo volver al juego: " + error.message) }
+        catch (error: Exception) { message(getString(R.string.resume_failed, error.message ?: "")) }
     }
 
     private fun recoverSession() {
         refreshSession()
         if (!session.mayRecover || busy) return
-        AlertDialog.Builder(this).setTitle("Recuperar el Dock")
-            .setMessage("El motor ya no mantiene el bloqueo de sesión. Se descartará el arranque pendiente o la sesión interrumpida; los juegos y guardados locales se conservan. Esto no confirma un cierre limpio ni escribe en la PSP.")
+        AlertDialog.Builder(this).setTitle(getString(R.string.recover_dock))
+            .setMessage(getString(R.string.recovery_explanation))
             .setNegativeButton(R.string.stay, null)
-            .setPositiveButton("Recuperar") { _, _ ->
+            .setPositiveButton(getString(R.string.recover)) { _, _ ->
                 try {
                     val token = ledger.recover(session.token)
-                    check(preferences.edit().putString("engine_token", token).commit()) { "No se pudo guardar la recuperación." }
+                    check(preferences.edit().putString("engine_token", token).commit()) { getString(R.string.recovery_save_failed) }
                     refreshSession()
-                } catch (error: Exception) { message(error.message ?: "No se pudo recuperar la sesión.") }
+                } catch (error: Exception) { message(error.message ?: getString(R.string.recovery_failed)) }
             }.show()
     }
 
@@ -503,15 +590,18 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (::controller.isInitialized && event.action == KeyEvent.ACTION_DOWN) {
-            controller.text = if (tab == Tab.CONNECTION) "Entrada: " + KeyEvent.keyCodeToString(event.keyCode)
-                else "Mando activo · Navega con la cruceta · Confirmar para elegir · Atrás para volver"
+            controller.text = if (tab == Tab.CONNECTION) getString(R.string.input_key, KeyEvent.keyCodeToString(event.keyCode))
+                else getString(R.string.input_active)
         }
-        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_A) {
-            if (event.action == KeyEvent.ACTION_UP) currentFocus?.performClick()
-            return true
-        }
-        if (event.keyCode == KeyEvent.KEYCODE_BUTTON_B) {
-            if (event.action == KeyEvent.ACTION_UP) handleBack()
+        if (event.keyCode in setOf(KeyEvent.KEYCODE_BUTTON_A, KeyEvent.KEYCODE_BUTTON_B)) {
+            if (!resumed) { nativePresses.clear(); return true }
+            val accept = event.keyCode == KeyEvent.KEYCODE_BUTTON_A
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                nativePresses.down(event.keyCode, event.deviceId, currentFocus, event.repeatCount != 0)
+            } else if (event.action == KeyEvent.ACTION_UP && nativePresses.up(event.keyCode, event.deviceId,
+                    currentFocus, sameFocus = accept, cancelled = event.isCanceled)) {
+                if (accept) currentFocus?.performClick() else handleBack()
+            }
             return true
         }
         return super.dispatchKeyEvent(event)
@@ -537,8 +627,8 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
                 lastAxisAt = now
             }
             lastAxis = direction
-            controller.text = if (tab == Tab.CONNECTION) "Mando: analógico " + "%.2f / %.2f".format(x, y)
-                else "Mando activo · Navega con la cruceta · Confirmar para elegir · Atrás para volver"
+            controller.text = if (tab == Tab.CONNECTION) getString(R.string.input_analog, x, y)
+                else getString(R.string.input_active)
             return true
         }
         return super.onGenericMotionEvent(event)
@@ -558,15 +648,15 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
     private fun confirmExit() {
         refreshSession()
         if (session.lockHeld) {
-            val dialog = AlertDialog.Builder(this).setTitle("Cierra primero el juego")
+            val dialog = AlertDialog.Builder(this).setTitle(getString(R.string.close_game_first))
                 .setMessage(sessionText()).setNegativeButton(R.string.stay, null)
-            if (session.mayResume) dialog.setPositiveButton("Volver al juego") { _, _ -> resumeEngine() }
+            if (session.mayResume) dialog.setPositiveButton(getString(R.string.resume_game)) { _, _ -> resumeEngine() }
             dialog.show()
             return
         }
         AlertDialog.Builder(this).setTitle(R.string.exit_title).setMessage(R.string.exit_message)
             .setNegativeButton(R.string.stay, null)
-            .setPositiveButton(R.string.close) { _, _ -> cancelImport(); finish() }.show()
+            .setPositiveButton(R.string.close) { _, _ -> cancelImport(); stopPspController(); finish() }.show()
     }
 
     private fun message(text: String) {
@@ -594,6 +684,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     private fun button(text: String, onClick: () -> Unit) = Button(this).apply {
         this.text = text
+        tag = text
         isAllCaps = false
         textSize = 16f
         gravity = Gravity.CENTER_VERTICAL or Gravity.START
@@ -628,6 +719,7 @@ class MainActivity : Activity(), InputManager.InputDeviceListener {
 
     override fun onDestroy() {
         resumed = false
+        controllerBinding.unbind()
         sessionHandler.removeCallbacks(sessionPoll)
         cancelled.set(true)
         runCatching { activeSource.getAndSet(null)?.close() }

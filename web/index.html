@@ -1,11 +1,12 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#07374b">
   <title>PSP Dock</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/i18n.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -48,6 +49,7 @@
           <div><dt>Guardados pendientes</dt><dd id="dock-session-save-count">—</dd></div>
         </dl>
         <div class="dock-session-choices" id="dock-session-choices" aria-label="Qué sincronizar en esta sesión" hidden>
+          <button type="button" id="dock-session-remember" aria-pressed="false">Aplicar mi elección automáticamente al conectar esta PSP: no</button>
           <button type="button" data-session-choice="all"><strong>Todo</strong><span>Copiar los juegos que faltan y sincronizar partidas y estados compatibles.</span></button>
           <button type="button" data-session-choice="saves"><strong>Partidas y estados</strong><span>Sincronizar guardados compatibles sin copiar juegos.</span></button>
           <button type="button" data-session-choice="games"><strong>Sólo juegos</strong><span>Copiar al PC los juegos que faltan. Se usarán las partidas del PC.</span></button>
@@ -59,6 +61,7 @@
           <p id="dock-session-progress-detail"></p><p id="dock-session-progress-item" hidden></p>
         </div>
         <p class="dock-session-note" id="dock-session-note"></p>
+        <p class="dock-session-note" id="dock-session-controller" role="status" hidden>Comprobando los controles de tu PSP…</p>
         <p class="dock-session-note" id="dock-session-unsupported" hidden></p>
         <p class="dock-session-error" id="dock-session-error" role="alert" hidden></p>
         <details class="dock-diagnostics" id="dock-session-diagnostics" hidden><summary>Detalles de diagnóstico</summary><pre id="dock-session-diagnostics-text"></pre></details>
@@ -66,6 +69,7 @@
           <button type="button" id="dock-session-review" hidden>Revisar partidas</button>
           <button type="button" id="dock-session-retry" hidden>Reintentar</button>
           <button type="button" id="dock-session-refresh" hidden>Comprobar conexión</button>
+          <button type="button" id="dock-session-cancel" hidden>Cancelar y desconectar</button>
           <button type="button" id="dock-session-close" hidden>Cerrar app <span aria-hidden="true">↗</span></button>
         </div>
       </div>

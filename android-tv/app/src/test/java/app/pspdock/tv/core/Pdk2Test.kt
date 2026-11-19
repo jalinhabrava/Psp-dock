@@ -28,9 +28,9 @@ class Pdk2Test {
         val result = Pdk2.decode(frame(sequence = 0xffffffffL))
         assertEquals(0xffffffffL, result.sequence)
         assertEquals("0102030405060708090a0b0c0d0e0f10", result.session)
-        assertEquals(0x0302, result.firmwareRevision)
-        assertEquals(0x0007, result.capabilities)
-        assertEquals(0x03020001L, result.buildId)
+        assertEquals(0x0308, result.firmwareRevision)
+        assertEquals(0x000f, result.capabilities)
+        assertEquals(0x03080001L, result.buildId)
         assertTrue(result.connected)
         assertTrue(result.sonyStorageStarted)
         assertTrue(result.hostConfirmed)
@@ -40,7 +40,7 @@ class Pdk2Test {
 
     @Test fun safePhaseDoesNotCertifyUnmount() {
         val status = Pdk2.decode(frame(phase = 5))
-        assertEquals("Trabajo del cliente terminado", status.phaseName)
+        assertEquals(Pdk2.SAFE, status.phase)
         assertTrue(status.sonyStorageStarted)
         assertFalse(status.inputEnabled)
     }
@@ -48,15 +48,15 @@ class Pdk2Test {
     @Test fun featureValueUsbDescriptorAndFirmwareIdentityAreDistinct() {
         assertEquals(0x0300, Pdk2.FEATURE_VALUE)
         assertTrue(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0100, 1))
-        assertTrue(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0302, 1))
+        assertTrue(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0308, 1))
         assertFalse(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0300, 1))
         assertFalse(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0301, 1))
-        assertFalse(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0302, 2))
-        assertFalse(Pdk2.mayReadStatus(0x054c, 0x01cc, 0x0302, 1))
-        assertFalse(Pdk2.mayReadStatus(0x1234, 0x01cd, 0x0302, 1))
+        assertFalse(Pdk2.mayReadStatus(0x054c, 0x01cd, 0x0308, 2))
+        assertFalse(Pdk2.mayReadStatus(0x054c, 0x01cc, 0x0308, 1))
+        assertFalse(Pdk2.mayReadStatus(0x1234, 0x01cd, 0x0308, 1))
         rejects { Pdk2.decode(frame(firmware = 0x0301)) }
         rejects { Pdk2.decode(frame(capabilities = 3)) }
-        rejects { Pdk2.decode(frame(build = 0x03020002)) }
+        rejects { Pdk2.decode(frame(build = 0x03080002)) }
     }
 
     @Test fun sonyCompositeDescriptorDoesNotIdentifyFirmware() {
@@ -76,7 +76,7 @@ class Pdk2Test {
         rejects { Pdk2.decode(frame().also { it[4] = 2 }) }
         rejects { Pdk2.decode(frame().also { it[5] = 2 }) }
         rejects { Pdk2.decode(frame().also { it[32] = 0 }) }
-        rejects { Pdk2.decode(frame().also { it[46] = 1 }) }
+        rejects { Pdk2.decode(frame().also { it[46] = 10 }) }
         rejects { Pdk2.decode(frame(phase = 9)) }
         rejects { Pdk2.decode(frame(flags = 0x85)) }
         rejects { Pdk2.decode(frame().also { java.util.Arrays.fill(it, 8, 24, 0.toByte()) }) }
