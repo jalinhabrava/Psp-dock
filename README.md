@@ -109,3 +109,7 @@ Read about the [project structure](docs/PROJECT-STRUCTURE.md), the [PSP 0308 hom
   <sub>PSP Dock is an independent project, not affiliated with or endorsed by Sony, PlayStation, PPSSPP, or RetroArch. All trademarks belong to their owners.</sub>
 
 </div>
+
+## Android TV development in this branch
+
+This branch includes the Android TV port based on the current Windows code and native 0308 contract. PPSSPP runs inside the same APK, with a private library, TV controls and an optional direct PSP USB-controller preview. See [Android TV build, scope and validation](android-tv/README.md) and the [binary-distribution licensing decision](android-tv/LICENSING.md). Physical TV/PSP acceptance remains pending; the Windows/PSP download links above are unchanged.

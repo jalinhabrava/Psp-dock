@@ -18,7 +18,9 @@ Los componentes que reutilizan material PSPSDK conservan su aviso BSD-compatible
 
 ## PPSSPP, RetroArch y núcleos externos
 
-PSP Dock **no incluye** juegos, BIOS, archivos de firmware de Sony ni los ejecutables de PPSSPP y RetroArch. Sus licencias, las de los núcleos y las de cualquier componente descargado se aplican separadamente; no se relicencian por figurar aquí. Los prototipos Android TV y otros experimentos permanecen en las ramas y commits históricos de Git, no en la versión final mantenida en `main`.
+Las descargas de Windows y el host Linux **no incluyen** juegos, BIOS, archivos de firmware de Sony ni los ejecutables de PPSSPP y RetroArch. Sus licencias, las de los núcleos y las de cualquier componente descargado se aplican separadamente; no se relicencian por figurar aquí.
+
+La integración de Android TV de esta rama compila PPSSPP dentro de la misma APK. PPSSPP conserva GPL-2.0-or-later y sus avisos se incluyen en `android-tv/licenses/` y en los recursos del motor. La licencia no comercial del código original Android necesita una decisión específica del titular antes de distribuir el binario combinado. [La propuesta y el límite de publicación](android-tv/LICENSING.md) están documentados; esta rama no aplica una nueva licencia al código original ni modifica las licencias de Windows/Linux.
 
 ## Alcance práctico
 

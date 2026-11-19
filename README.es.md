@@ -107,3 +107,7 @@ Puedes consultar la [estructura actual del proyecto](docs/PROJECT-STRUCTURE.md),
   <sub>PSP Dock no está afiliado a Sony, PlayStation, PPSSPP ni RetroArch. Las marcas pertenecen a sus respectivos propietarios.</sub>
 
 </div>
+
+## Desarrollo de Android TV en esta rama
+
+Esta rama incluye el puerto para Android TV sobre el código actual de Windows y el protocolo nativo 0308. PPSSPP funciona dentro de la misma APK, con biblioteca privada, controles de TV y una vista previa opcional del mando PSP por USB directo. Consulta [compilación, alcance y validación](android-tv/README.md) y la [decisión de licencia antes de distribuir la APK](android-tv/LICENSING.md). Sigue pendiente la aceptación con una TV y PSP físicas; los enlaces de descarga anteriores corresponden a Windows y PSP.
