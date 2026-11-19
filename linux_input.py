@@ -5,7 +5,7 @@ import os
 import threading
 
 from linux_native import LinuxHid
-from native_dock import STORAGE, CONTROLLER, NativeDockError
+from native_dock import STORAGE, CONTROLLER, CHOOSING, NativeDockError
 from psp_launcher_input import idle, normalize_psp_joystick
 
 
@@ -51,7 +51,8 @@ class PSPLinuxReader:
                 self._api.attributes(self._fd)  # Reject disconnect or changed sysfs identity.
                 status = self._api.get(self._fd)
                 if (status.session != key[1] or not status.connected or not status.sony_storage or
-                        status.pending or status.result < 0 or status.phase not in (STORAGE, CONTROLLER)):
+                        not status.host_confirmed or status.pending or status.result < 0 or
+                        not (status.phase == CONTROLLER or status.phase == STORAGE and status.activity == CHOOSING)):
                     raise NativeDockError('La navegación está bloqueada durante la transición del Dock.')
                 # Raw queues belong to this handle; kernel evdev/SDL retains
                 # its own event stream. Never EVIOCGRAB or detach usbhid.

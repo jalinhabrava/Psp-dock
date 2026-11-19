@@ -13,7 +13,7 @@
 #include "native_common.h"
 #include "native_ui.h"
 
-PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,1);
+PSP_MODULE_INFO("PSPDockNative",PSP_MODULE_USER,3,2);
 PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 PSP_MAIN_THREAD_STACK_SIZE_KB(64);
 static PdnSharedStatus state;
@@ -96,35 +96,60 @@ static void ui_init(void) {
     pspDebugScreenClear();
     /* Let a frame scheduled by debug initialization become current. */
     sceDisplayWaitVblankStart();draw_brand();
-    ui_line(40,UI_MUTED,"MEMORY STICK + MANDO / %04X",(unsigned)PDN_REVISION);
+    ui_line(40,UI_MUTED,"");
 }
 
+static void draw_progress_bar(int measured,unsigned percent) {
+    void *address=NULL;int stride=0,format=-1,x,y,filled;
+    uintptr_t physical;volatile uint32_t *pixels;
+    if(sceDisplayGetFrameBuf(&address,&stride,&format,PSP_DISPLAY_SETBUF_IMMEDIATE)<0 ||
+       !address || format!=PSP_DISPLAY_PIXEL_FORMAT_8888 || stride<480 || stride>512)return;
+    physical=(uintptr_t)address&0x1fffffffu;
+    if(physical<0x04000000u || physical>0x04200000u-(uint32_t)stride*272u*4u)return;
+    pixels=(volatile uint32_t *)(physical|0x40000000u);
+    filled=measured?(int)(452u*(percent>100u?100u:percent)/100u):0;
+    for(y=204;y<212;y++)for(x=14;x<466;x++)
+        pixels[y*stride+x]=!measured?UI_BACKGROUND:(x-14<filled?UI_TEAL:0xff3d3228u);
+}
 static void draw_status(int module_unloaded) {
+    static int last_diagnostic=-1;
     PdnUiView view=pdn_ui_present(&state,module_unloaded);
+    int diagnostic=state.diagnostic_visible || view.warning;
+    if(diagnostic!=last_diagnostic){ui_clear_body();last_diagnostic=diagnostic;}
+    if(diagnostic)ui_line(40,UI_MUTED,"DIAGNOSTICO / VERSION %04X",(unsigned)PDN_REVISION);
+    else ui_line(40,UI_MUTED,"");
     ui_line(68,view.warning?UI_ERROR:UI_TEAL,"%s",view.heading);
     ui_line(92,UI_WHITE,"%s",view.context);
     ui_line(112,UI_MUTED,"%s",view.detail);
     ui_line(126,UI_MUTED,"%s",view.action);
-    ui_line(156,UI_MUTED,"USB %08X  HID %u  IF %s",
-        (unsigned)state.usb_state,(unsigned)state.hid_reports,view.interface_label);
-    ui_line(168,UI_MUTED,"Sony %u  Fase %u  ACK %u/%d",
-        (unsigned)state.sony_storage_started,(unsigned)state.phase,
-        (unsigned)state.sequence,(int)state.phase_result);
-    ui_line(180,UI_MUTED,"Bus %08X  Sony antes/desp %08X/%08X",
-        (unsigned)state.bus_before,(unsigned)state.storage_before,(unsigned)state.storage_after);
-    ui_line(192,UI_MUTED,"Paso %u Mod %u  Carg %02X Reus %02X",
-        (unsigned)state.stage,(unsigned)state.dependency,
-        (unsigned)state.modules_loaded,(unsigned)state.modules_borrowed);
-    ui_line(204,view.warning?UI_ERROR:UI_MUTED,"Error %08X en %u  Cierre %08X",
-        (unsigned)state.error,(unsigned)state.error_stage,(unsigned)state.cleanup_error);
-    ui_line(216,UI_MUTED,"Ctrl %u  SETUP %08X  IF/valor %08X",
-        (unsigned)state.ctrl_requests,(unsigned)state.last_setup,(unsigned)state.last_value_index);
+    if(diagnostic){
+        ui_line(156,UI_MUTED,"USB %08X  HID %u  IF %s",
+            (unsigned)state.usb_state,(unsigned)state.hid_reports,view.interface_label);
+        ui_line(168,UI_MUTED,"Sony %u Fase %u ACK %u/%d Host %u",
+            (unsigned)state.sony_storage_started,(unsigned)state.phase,
+            (unsigned)state.sequence,(int)state.phase_result,(unsigned)state.host_confirmed);
+        ui_line(180,UI_MUTED,"Actividad %u  Gen %u  Rechazos %u/%d",
+            (unsigned)state.activity,(unsigned)state.link_generation,
+            (unsigned)state.rejected_commands,(int)state.last_rejection);
+        ui_line(192,UI_MUTED,"Paso %u Mod %u  Carg %02X Reus %02X",
+            (unsigned)state.stage,(unsigned)state.dependency,
+            (unsigned)state.modules_loaded,(unsigned)state.modules_borrowed);
+        ui_line(204,view.warning?UI_ERROR:UI_MUTED,"Error %08X en %u  Cierre %08X",
+            (unsigned)state.error,(unsigned)state.error_stage,(unsigned)state.cleanup_error);
+        ui_line(216,UI_MUTED,"Ctrl %u  SETUP %08X  IF/valor %08X",
+            (unsigned)state.ctrl_requests,(unsigned)state.last_setup,(unsigned)state.last_value_index);
+    }else{
+        ui_line(168,UI_TEAL,"%s",view.progress_visible?view.progress:"");
+        ui_line(184,UI_MUTED,"%s",view.progress_measured?view.progress_detail:"");
+        draw_progress_bar(view.progress_measured,view.progress_percent);
+    }
     ui_line(230,UI_TEAL,"%s",view.footer);
     ui_line(244,UI_MUTED,"%s",view.footer_note);
     ui_line(258,UI_TEAL,"%s",view.exit_hint);
 }
 static void draw_launcher_failure(const char *operation,int result,int status) {
     ui_clear_body();
+    ui_line(40,UI_MUTED,"DIAGNOSTICO / VERSION %04X",(unsigned)PDN_REVISION);
     ui_line(68,UI_ERROR,"Arranque detenido");
     ui_line(92,UI_WHITE,"No se pudo %s el controlador.",operation);
     ui_line(112,UI_MUTED,"Archivo: docknative.prx");
@@ -148,7 +173,7 @@ int main(void) {
     ui_init();
     ui_line(76,UI_WHITE,"Tu PSP, tus juegos y tus partidas en el dock.");
     ui_line(108,UI_MUTED,"Abre PSP Dock en Windows para empezar.");
-    ui_line(128,UI_MUTED,"Esta version utiliza tu Memory Stick real.");
+    ui_line(128,UI_MUTED,"Elige que copiar al comenzar la sesion.");
     ui_line(168,UI_WHITE,"1. Sal de Conexion USB y desconecta el cable.");
     ui_line(188,UI_WHITE,"2. Pulsa X; conecta cuando aparezca LISTO.");
     ui_line(236,UI_TEAL,"X  INICIAR                O  VOLVER AL XMB");

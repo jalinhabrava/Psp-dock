@@ -1,4 +1,4 @@
-"""Linux SDL2 controller profile for the native PSP Dock (revision 0301).
+"""Linux SDL2 controller profile for a session-bound native PSP Dock 0302.
 
 Reads the kernel's joystick metadata; never grabs, detaches or writes a USB
 interface. Settings are returned to the caller for its private PPSSPP profile
@@ -18,7 +18,7 @@ from pathlib import Path
 import re
 import threading
 
-VID, PID, REVISION = 0x054C, 0x01CD, 0x0301
+from native_dock import VID, PID, USB_REVISIONS
 _SDL_INIT_JOYSTICK = 0x200
 _SDL_LOCK = threading.Lock()
 
@@ -34,7 +34,7 @@ class SDLPad:
     path: str
     vendor: int
     product: int
-    revision: int
+    revision: int  # USB bcdDevice only; firmware identity comes from PDK2/v3.
     axes: int
     buttons: int
     hats: int
@@ -131,11 +131,12 @@ def select_psp_pad(pads, usb_parent, *, sysfs_root=Path("/sys")) -> SDLPad:
     expected = Path(usb_parent).resolve(strict=True)
     if not expected.is_relative_to(root / "devices"):
         raise LinuxControllerError("El padre USB no está dentro del árbol sysfs esperado.")
-    if _usb_identity(expected) != (VID, PID, REVISION):
-        raise LinuxControllerError("Sólo se admite el mando nativo PSP Dock 0301.")
+    usb_identity = _usb_identity(expected)
+    if usb_identity[:2] != (VID, PID) or usb_identity[2] not in USB_REVISIONS:
+        raise LinuxControllerError("El padre USB no corresponde al Dock nativo. Su firmware debe confirmarse mediante PDK2/v3.")
     matches = []
     for pad in pads:
-        if (pad.vendor, pad.product, pad.revision) != (VID, PID, REVISION):
+        if (pad.vendor, pad.product) != (VID, PID) or pad.revision not in USB_REVISIONS:
             continue
         if not re.fullmatch(r"/dev/input/event[0-9]+", pad.path):
             continue
@@ -145,7 +146,7 @@ def select_psp_pad(pads, usb_parent, *, sysfs_root=Path("/sys")) -> SDLPad:
                           if (p / "idVendor").is_file() and (p / "idProduct").is_file())
         except (OSError, RuntimeError, StopIteration):
             continue
-        if parent != expected or _usb_identity(parent) != (VID, PID, REVISION):
+        if parent != expected or _usb_identity(parent) != usb_identity or pad.revision != usb_identity[2]:
             continue
         if ((pad.axes, pad.buttons, pad.hats) != (4, 12, 1)
                 or type(pad.index) is not int or not 0 <= pad.index < 10
@@ -163,7 +164,7 @@ def controller_mapping(guid: str) -> str:
     if not isinstance(guid, str) or not re.fullmatch(r"[0-9a-f]{32}", guid) or guid == "0" * 32:
         raise LinuxControllerError("GUID de SDL2 inválido.")
     return (
-        guid + ",PSP Dock native 0301,"
+        guid + ",PSP Dock native 0302,"
         "a:b0,b:b1,x:b2,y:b3,leftshoulder:b4,rightshoulder:b5,"
         "back:b6,start:b7,guide:b8,"
         "dpup:h0.1,dpright:h0.2,dpdown:h0.4,dpleft:h0.8,"

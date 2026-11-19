@@ -1,4 +1,4 @@
-"""Native package bytes, branded PBP and independent 0301 schema gates."""
+"""Product artwork, protocol identity and independent 0302 package gates."""
 import hashlib
 import json
 from pathlib import Path
@@ -8,16 +8,25 @@ import unittest
 from unittest.mock import Mock, patch
 
 import psp_native_package as package
-from tests.test_psp_msc_package import pbp, sfo
+from tests.test_psp_msc_package import pbp as legacy_pbp, sfo
+
+
+def pbp(title=package.TITLE, *, sfo_data=None, replacements=None):
+    art = {name: (package.ASSETS / name).read_bytes() for _, name, _ in package.ARTWORK}
+    art.update(replacements or {})
+    return legacy_pbp(title=title, sfo_data=sfo_data, replacements=art)
 
 
 def abi_for(raw=b'NATIVE-ELF-FIXTURE'):
-    return {'revision': '0301', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
+    return {'revision': '0302', 'elf_machine': 'MIPS', 'kernel_module_verified': True,
             'mandatory_modules': ['flash0:/kd/semawm.prx', 'flash0:/kd/usbstor.prx',
                                   'flash0:/kd/usbstormgr.prx', 'flash0:/kd/usbstorms.prx'],
             'optional_bootstrap_modules': [],
             'function_descriptors_verified': True, 'hid_function_interfaces': 1,
-            'hid_input_bytes': 8, 'hid_feature_bytes': 32, 'protocol': 'PDK2/v2',
+            'hid_input_bytes': 8, 'hid_feature_bytes': 64, 'protocol': 'PDK2/v3',
+            'firmware_identity_in_protocol': True, 'host_begin_required': True,
+            'host_progress_supported': True, 'usb_revision_is_firmware_revision': False,
+            'firmware_build_id': '03020001', 'protocol_capabilities': '0007',
             'storage_backend': 'native Sony USBStor_Driver', 'kernel_filesystem_imports': [],
             'early_sony_boot_imports': [], 'expected_pid': '01CD',
             'wire_identity_verified': False, 'sony_composition_physically_verified': False,
@@ -34,8 +43,9 @@ def fixture_native_package(root: Path) -> Path:
     for name, raw in blobs.items():
         (folder / name).write_bytes(raw)
         records[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': len(raw)}
-    manifest = {'schema': package.SCHEMA, 'revision': '0301', 'folder': package.REMOTE_FOLDER,
-                'expected_usb_identity': dict(package.USB_IDENTITY), 'synthetic_storage': False,
+    manifest = {'schema': package.SCHEMA, 'revision': '0302', 'folder': package.REMOTE_FOLDER,
+                'expected_usb_identity': dict(package.USB_IDENTITY),
+                'expected_protocol_identity': dict(package.PROTOCOL_IDENTITY), 'synthetic_storage': False,
                 'storage_backend': 'native Sony USBStor_Driver', 'storage_read_only': False,
                 'real_memory_stick_access_requested': True, 'installed_on_psp': False,
                 'hardware_execution_verified': False, 'compiled_abi': abi_for(),
@@ -58,7 +68,8 @@ class NativePackageTests(unittest.TestCase):
         self.assertEqual(visual['title'], package.TITLE)
         self.assertEqual(set(visual['artwork']), {'ICON0.PNG', 'PIC0.PNG', 'PIC1.PNG'})
         for title in ('PSP Dock - USB Storage + HID 0207',
-                      'PSP Dock - Memory Stick + Mando 0300', 'PSP Dock'):
+                      'PSP Dock - Memory Stick + Mando 0300',
+                      'PSP Dock - Memory Stick + Mando 0301', 'Unknown homebrew'):
             with self.subTest(title=title), self.assertRaises(ValueError):
                 package.audit_pbp(pbp(title=title))
 
@@ -81,18 +92,36 @@ class NativePackageTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 package.verify_package(root)
         file.write_text(json.dumps(original))
-        self.assertEqual(package.verify_package(root)['revision'], '0301')
+        self.assertEqual(package.verify_package(root)['revision'], '0302')
 
-    def test_old_or_optional_bootstrap_is_not_a_valid_0301_audit(self):
+    def test_old_or_optional_bootstrap_is_not_a_valid_0302_audit(self):
         root = fixture_native_package(self.root / 'package')
         file = root / 'manifest.json'
         original = json.loads(file.read_text())
         for changes in ({'revision': '0300'}, {'mandatory_modules': []},
                         {'mandatory_modules': abi_for()['mandatory_modules'] + ['flash0:/kd/usbstorboot.prx']},
-                        {'optional_bootstrap_modules': ['flash0:/kd/npdrm.prx']}):
+                        {'optional_bootstrap_modules': ['flash0:/kd/npdrm.prx']},
+                        {'revision': '0301'}, {'hid_feature_bytes': 32}, {'protocol': 'PDK2/v2'},
+                        {'firmware_identity_in_protocol': False}, {'host_begin_required': False},
+                        {'usb_revision_is_firmware_revision': True}, {'firmware_build_id': '03020000'},
+                        {'protocol_capabilities': '0001'}):
             changed = {**original, 'compiled_abi': {**original['compiled_abi'], **changes}}
             file.write_text(json.dumps(changed))
             with self.subTest(changes=changes), self.assertRaises(ValueError):
+                package.verify_package(root)
+
+    def test_usb_revision_alone_does_not_authorize_this_package(self):
+        root = fixture_native_package(self.root / 'package')
+        file = root / 'manifest.json'
+        original = json.loads(file.read_text())
+        for key, value in (
+                ('expected_usb_identity', {'vid': '054C', 'pid': '01CD', 'revision': '0302'}),
+                ('expected_protocol_identity', None),
+                ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'version': 2}),
+                ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'firmware_revision': '0301'}),
+                ('expected_protocol_identity', {**package.PROTOCOL_IDENTITY, 'feature_payload_bytes': 32})):
+            file.write_text(json.dumps({**original, key: value}))
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                 package.verify_package(root)
 
     def test_changed_firmware_or_extra_file_is_rejected(self):

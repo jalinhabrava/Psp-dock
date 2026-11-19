@@ -22,13 +22,16 @@
         <p class="dock-connect-intro" id="dock-connect-intro">Abre Dock en la consola para preparar tu sesión.</p>
         <ol class="dock-connect-steps" id="dock-connect-steps">
           <li><span class="dock-connect-number" aria-hidden="true">01</span><div><h2>Abre PSP Dock en la consola</h2><p>Ve a Juego → Memory Stick y abre PSP Dock.</p></div></li>
-          <li><span class="dock-connect-number" aria-hidden="true">02</span><div><h2>Conecta el cable USB</h2><p>Conecta la PSP a este ordenador.</p></div></li>
+          <li><span class="dock-connect-number" aria-hidden="true">02</span><div><h2>Conecta el cable USB</h2><p>Cuando la PSP indique LISTO, conéctala a este ordenador.</p></div></li>
         </ol>
         <div class="dock-connect-status" id="dock-connect-status" role="status" aria-live="polite">
           <span class="dock-connect-dot" aria-hidden="true"></span>
           <div><b id="dock-connect-status-title">Comprobando conexión…</b><p id="dock-connect-status-detail">Puedes conectar la consola en cualquier momento.</p><button type="button" class="dock-connect-prepare" id="dock-connect-prepare" hidden>Preparar biblioteca <span aria-hidden="true">→</span></button></div>
         </div>
-        <div class="dock-connect-footer"><span id="dock-connect-footer">La app está esperando tu PSP.</span><button type="button" id="dock-connect-close">Cerrar app <span aria-hidden="true">↗</span></button></div>
+        <progress class="dock-connect-progress" id="dock-connect-progress" aria-label="Comprobando la conexión" hidden></progress>
+        <p class="dock-session-note" id="dock-connect-hint" hidden></p>
+        <details class="dock-diagnostics" id="dock-connect-diagnostics" hidden><summary>Detalles de diagnóstico</summary><pre id="dock-connect-diagnostics-text"></pre></details>
+        <div class="dock-connect-footer"><span id="dock-connect-footer">La app está esperando tu PSP.</span><div class="dock-connect-actions"><button type="button" id="dock-connect-refresh" hidden>Comprobar de nuevo</button><button type="button" id="dock-connect-close">Cerrar app <span aria-hidden="true">↗</span></button></div></div>
         <p class="dock-connect-error" id="dock-connect-error" role="alert" hidden></p>
       </div>
     </section>
@@ -50,10 +53,15 @@
           <button type="button" data-session-choice="games"><strong>Sólo juegos</strong><span>Copiar al PC los juegos que faltan. Se usarán las partidas del PC.</span></button>
           <button type="button" data-session-choice="none"><strong>Sin copiar ahora</strong><span>Usar los juegos y las partidas del PC. Los juegos pendientes seguirán identificados.</span></button>
         </div>
-        <div class="dock-session-progress" id="dock-session-progress" hidden><progress id="dock-session-progress-bar" aria-label="Progreso de copia"></progress><p id="dock-session-progress-label"></p></div>
+        <div class="dock-session-progress" id="dock-session-progress" hidden>
+          <div class="dock-session-progress-heading"><p id="dock-session-progress-label" role="status" aria-live="polite"></p><strong id="dock-session-progress-percent" hidden></strong></div>
+          <progress id="dock-session-progress-bar" aria-label="Progreso de la etapa" aria-describedby="dock-session-progress-label dock-session-progress-detail"></progress>
+          <p id="dock-session-progress-detail"></p><p id="dock-session-progress-item" hidden></p>
+        </div>
         <p class="dock-session-note" id="dock-session-note"></p>
         <p class="dock-session-note" id="dock-session-unsupported" hidden></p>
         <p class="dock-session-error" id="dock-session-error" role="alert" hidden></p>
+        <details class="dock-diagnostics" id="dock-session-diagnostics" hidden><summary>Detalles de diagnóstico</summary><pre id="dock-session-diagnostics-text"></pre></details>
         <div class="dock-session-actions">
           <button type="button" id="dock-session-review" hidden>Revisar partidas</button>
           <button type="button" id="dock-session-retry" hidden>Reintentar</button>

@@ -1,6 +1,6 @@
 """Bind the product workflow to Dock's real, verified file operations.
 
-Only the native 0301 transport activates this adapter. The existing Sony
+Only the verified native transport activates this adapter. The existing Sony
 manual workflow and the 0207 synthetic diagnostic retain their own gates.
 """
 from __future__ import annotations
@@ -12,9 +12,13 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 
-from dock_product_flow import FlowCallbacks, ProductFlow, ProductFlowError, plan_session_return
-from native_dock import NativeDockTransport
+from dock_product_flow import (FlowCallbacks, ProductFlow, ProductFlowError,
+                               ProductFlowCancelled, plan_session_return)
+from native_dock import (NativeDockTransport, STORAGE, CONTROLLER, COPYING, EXIT_SYNC, SAFE,
+                         INVENTORY, CHOOSING, SYNC_IN, COPY_GAME, CONTROL_ACTIVITY, SYNC_OUT,
+                         SAFE_ACTIVITY, UNKNOWN, BYTES, FILES)
 from retro_runtime import private_save_paths
 from retro_saves import RAW_PROFILES, _baseline_key, copy_sram_verified
 
@@ -26,6 +30,10 @@ class DockProductSession:
         self.transport = transport or NativeDockTransport()
         self.observation = None
         self._callback_state = threading.local()
+        self._progress_lock = threading.Lock()
+        self._progress = {'active': False}
+        self._last_wire_progress = (None, 0.0)
+        self._progress_error = None
         self.entry_path = dock.data / 'product-entry.json'
         self.entry = self.api.read_json(self.entry_path, {})
         self.flow = ProductFlow(
@@ -44,7 +52,12 @@ class DockProductSession:
             result['can_choose'] = False
             result['can_retry'] = False
             result['can_review_saves'] = False
-        result['progress'] = self.dock.transfer_progress()
+            if self.observation and self.observation.get('exit_requested'):
+                result.update(phase='waiting_game_exit', blocking=True, can_close=False,
+                              message='Has pedido salir desde la PSP. Cierra el emulador normalmente para devolver las partidas.')
+        result['connection'] = self.transport.connection_status()
+        with self._progress_lock:
+            result['progress'] = dict(self._progress)
         result['unsupported_state_formats'] = [
             'Los estados de emuladores sin formato compatible verificado se conservan en el PC.'
         ] if self.dock.last_emulators else []
@@ -53,15 +66,16 @@ class DockProductSession:
 
     def root(self):
         current = self.observation
-        return Path(current['root']) if current and current.get('storage_ready') else None
+        return Path(current['root']) if current and current.get('storage_ready') and current.get('host_confirmed') else None
 
     def tick(self, devices):
         if self.dock.demo or self.dock.stop.is_set():
             return False
         try:
             self.observation = self.transport.observe(devices)
-        except (OSError, ValueError):
+        except Exception as exc:
             self.observation = None
+            self.transport.connection_error(exc)
             if self.flow.enabled:
                 self.flow.observe(None)
             raise
@@ -78,9 +92,11 @@ class DockProductSession:
             self.flow.observe(self.observation)
         if self.dock.stop.is_set():
             return False
-        if (self.observation and self.observation.get('exit_requested') and
-                self.flow.snapshot()['phase'] == 'ready' and not self.dock.running()):
-            self.request_exit()
+        if self.observation and self.observation.get('exit_requested') and not self.dock.running():
+            if self.flow.can_cancel_entry():
+                self.request_cancel()
+            elif self.flow.snapshot()['phase'] == 'ready':
+                self.request_exit()
         if self.dock.running() or self.dock.stop.is_set():
             # A prior emulator may outlive a crashed Windows app. The
             # durable running flag blocks work until explicit recovery has
@@ -97,10 +113,81 @@ class DockProductSession:
         if self.dock.stop.is_set():
             raise ProductFlowError('La app se está cerrando; no se iniciará otra operación.')
         self._callback_state.active = True
+        self._callback_state.context = context
+        self._progress_error = None
+        self._last_wire_progress = (None, 0.0)
+        stage = ('inventory' if callback == self.inventory else
+                 'games' if callback == self.copy_one else
+                 'finalizing' if callback == self.finalize_exit else
+                 'verifying' if callback == self.request_role else 'saves')
+        self.publish_progress(stage, 'Preparando la operación.', wire=False)
         try:
             return callback(context)
         finally:
             self._callback_state.active = False
+            self._callback_state.context = None
+            with self._progress_lock:
+                self._progress = {**self._progress, 'active': False}
+
+    def publish_progress(self, stage, label, *, completed=0, total=None, unit='items', current_item='',
+                         wire=True, activity=None):
+        """Publish measured work from the worker; GET only copies this cache."""
+        context = getattr(self._callback_state, 'context', None)
+        if not context:
+            return
+        measured = type(total) is int and total > 0 and type(completed) is int and 0 <= completed <= total
+        value = {'active': True, 'operation_id': context['operation_id'], 'stage': stage,
+                 'mode': 'determinate' if measured else 'indeterminate', 'unit': unit,
+                 'completed': max(0, int(completed)), 'total': total if measured else None,
+                 'label': label, 'current_item': str(current_item)[:250]}
+        with self._progress_lock:
+            self._progress = value
+        current = self.transport.current
+        if not wire or not current or not current.get('host_confirmed') or self._progress_error:
+            return
+        activity = activity if activity is not None else {
+            STORAGE: INVENTORY if stage == 'inventory' else SYNC_IN,
+            CONTROLLER: CONTROL_ACTIVITY, COPYING: COPY_GAME, EXIT_SYNC: SYNC_OUT,
+            SAFE: SAFE_ACTIVITY}.get(current['phase'])
+        if activity is None:
+            return
+        now = time.monotonic()
+        key = (context['operation_id'], stage, activity, label, total if measured else None, unit)
+        previous, when = self._last_wire_progress
+        if key == previous and now - when < 1.0 and not (measured and completed == total):
+            return
+        self._last_wire_progress = (key, now)
+        try:
+            result = self.transport.set_progress(context, activity,
+                unit=(BYTES if unit == 'bytes' else FILES) if measured else UNKNOWN,
+                completed=completed if measured else 0, total=total if measured else 0)
+            if result.get('exit_requested') is True and self.flow.can_cancel_entry():
+                self.flow.request_cancel()
+        except Exception as exc:
+            # A display ACK failure must not interrupt a file between its
+            # write and verification. Stop at the next operation checkpoint.
+            self._progress_error = exc
+            self.transport.connection_error(exc)
+
+    def inventory_progress(self, label, completed, current_item=''):
+        if self.flow.snapshot()['phase'] in ('inventory', 'syncing_in', 'syncing_out'):
+            self.publish_progress('inventory', label, completed=completed, current_item=current_item)
+            if self.flow.snapshot()['cancel_requested']:
+                raise ProductFlowCancelled('La entrada se canceló durante la comparación, sin iniciar otra copia.')
+
+    def operation_checkpoint(self):
+        context = getattr(self._callback_state, 'context', None)
+        if context and getattr(self._callback_state, 'active', False):
+            self._context_root(context)
+
+    def transfer_progress_changed(self, value):
+        if not getattr(self._callback_state, 'active', False):
+            return
+        stage = 'verifying' if value.get('phase') == 'verifying' else 'games'
+        self.publish_progress(stage, 'Verificando la copia.' if stage == 'verifying' else 'Copiando juegos al ordenador.',
+                              completed=value.get('copied_bytes', 0),
+                              total=value.get('total_bytes') if stage == 'games' else None,
+                              unit='bytes', current_item=value.get('title', ''))
 
     def _require_idle(self):
         if self.dock.stop.is_set() and not getattr(self._callback_state, 'active', False):
@@ -117,6 +204,8 @@ class DockProductSession:
 
     def _context_root(self, context):
         self._require_idle()
+        if self._progress_error:
+            raise ProductFlowError('La PSP no confirmó la actualización de la operación: ' + str(self._progress_error))
         current = self.transport.current
         expected = context.get('identity', {})
         if (not current or current['session_id'] != expected.get('session_id') or
@@ -126,6 +215,10 @@ class DockProductSession:
         self.assert_storage(root)
         if {key: self.observation[key] for key in ('session_id', 'volume_serial')} != expected:
             raise ProductFlowError('La PSP cambió durante la comprobación del almacenamiento.')
+        if self.observation.get('exit_requested') and self.flow.can_cancel_entry():
+            self.flow.request_cancel()
+        if self.flow.snapshot()['cancel_requested'] and context.get('purpose') == 'initial':
+            raise ProductFlowCancelled('La entrada se canceló después de terminar la operación admitida.')
         expected_phase = {'initial':1, 'game_copy':3, 'exit':4}.get(context.get('purpose'))
         if expected_phase is not None and self.observation.get('phase') != expected_phase:
             raise ProductFlowError('La PSP no confirmó la fase de almacenamiento de esta operación.')
@@ -171,8 +264,14 @@ class DockProductSession:
     def _report(self, context, *, capture=False):
         root = self._context_root(context)
         d = self.dock
-        games, retro = d.games(), d.retro_catalog()
-        saves, retro_saves = d.save_plan(), d.retro_save_plan()
+        self.publish_progress('inventory', 'Buscando juegos de PSP.')
+        games = d.games()
+        self.publish_progress('inventory', 'Buscando emuladores y ROMs.', completed=len(games))
+        retro = d.retro_catalog()
+        self.publish_progress('inventory', 'Comparando partidas guardadas.', completed=len(games) + len(retro['roms']))
+        saves = d.save_plan()
+        self.publish_progress('inventory', 'Comprobando partidas de emuladores.', completed=len(saves['actions']) + saves['unchanged'])
+        retro_saves = d.retro_save_plan()
         snapshots = self._save_snapshots(root)
         missing = [g['id'] for g in games if g['availability'] == 'missing']
         missing += [g['id'] for g in retro['roms'] if g['availability'] == 'missing']
@@ -206,7 +305,15 @@ class DockProductSession:
         return {'fingerprint': fingerprint, 'counts': counts, 'missing_game_ids': missing}
 
     def inventory(self, context):
-        return self._report(context, capture=True)
+        self.publish_progress('inventory', 'Confirmando la conexión con la PSP.', wire=False)
+        self.transport.begin_session(context)
+        self.observation = self.transport.current
+        result = self._report(context, capture=True)
+        self.publish_progress('inventory', 'El inventario está listo para tu elección.',
+                              completed=result['counts']['psp_games'], activity=CHOOSING)
+        if self._progress_error:
+            raise ProductFlowError('No se pudo confirmar el final del inventario: ' + str(self._progress_error))
+        return result
 
     def choose(self, choice, offer_id):
         self._require_idle()
@@ -238,15 +345,26 @@ class DockProductSession:
             if conflicts:
                 return {'verified': False, 'conflicts': conflicts,
                         'reason': 'Elige qué versión conservar de las partidas en conflicto.'}
-            final = d.sync()
+            retro_actions = [item for item in retro['rows'] if item['status'] in ('psp_to_pc', 'pc_to_psp')]
+            native_count = [len(plan['actions'])]
+            def saved(completed, total, slot):
+                native_count[0] = total
+                self.publish_progress('saves', 'Sincronizando partidas guardadas.', completed=completed,
+                                      total=total + len(retro_actions), current_item=slot or '')
+            final = d.sync(progress=saved, before_action=lambda: self._context_root(context))
             if final['conflicts'] or final['actions']:
                 return {'verified': False, 'conflicts': final['conflicts'],
                         'reason': 'La sincronización de partidas requiere revisión.'}
-            for item in list(d.retro_save_plan()['rows']):
-                if item['status'] in ('psp_to_pc', 'pc_to_psp'):
-                    self._context_root(context)
-                    d.sync_retro_save(item['rom_id'], 'psp' if item['status'] == 'psp_to_pc' else 'pc', item['revision'])
+            for index, item in enumerate(retro_actions, 1):
+                self._context_root(context)
+                d.sync_retro_save(item['rom_id'], 'psp' if item['status'] == 'psp_to_pc' else 'pc', item['revision'])
+                self.publish_progress('saves', 'Sincronizando partidas guardadas.',
+                                      completed=native_count[0] + index,
+                                      total=native_count[0] + len(retro_actions),
+                                      current_item=item.get('title', item['rom_id']))
         if choice in ('games', 'all'):
+            self._context_root(context)
+            self.publish_progress('games', 'Preparando los juegos que faltan en el ordenador.')
             ids = [g['id'] for g in d.games() if g['availability'] == 'missing']
             if ids:
                 d.transfer(ids)
@@ -262,6 +380,14 @@ class DockProductSession:
 
     def request_role(self, context):
         self._require_idle()
+        current = self.transport.current
+        if current and not current.get('host_confirmed'):
+            # After a disconnect the same PSP has a new nonce and no claim.
+            # Flow required explicit recovery consent and journaled this
+            # request_role intent before admitting the callback. Establish
+            # only the new claim; preserve the original save comparison.
+            self.transport.begin_session(context)
+            self.observation = self.transport.current
         if context['role'] == 'controller':
             d = self.dock
             root = self._context_root(context)
@@ -313,6 +439,16 @@ class DockProductSession:
         except OSError as exc:
             self.flow.halt(str(exc))
             raise
+
+    def request_cancel(self):
+        self._require_idle()
+        self.flow.request_cancel()
+        # This intent closes an entry session. It does not authorize a
+        # return sync, clear a previous pending return, or discard journals.
+        d = self.dock
+        if not d.session.get('close_after_verified_return'):
+            d.session['close_after_verified_return'] = True
+            self.api.atomic_json(d.data / 'session.json', d.session)
 
     def retry(self, offer_id):
         self._require_idle()
@@ -404,16 +540,26 @@ class DockProductSession:
             return {'verified': False, 'direction': 'to_psp', 'conflicts': conflicts,
                     'reason': 'Hay partidas modificadas en la PSP que necesitan una decisión.'}
         d, a = self.dock, self.api
+        total = len(native['actions']) + len(retro['actions'])
+        self.publish_progress('saves', 'Devolviendo partidas a la PSP.', total=total)
+        completed = 0
         for action in native['actions']:
             self._context_root(context)
             source = a.inside(Path(d.config['memstick'])/'PSP/SAVEDATA', action['slot'])
             target = a.inside(root/'PSP/SAVEDATA', action['slot'])
             a.copy_slot(source, target, Path(d.config['storage_root'])/'backups',
                         action['source_hash'], action['target_hash'])
+            completed += 1
+            self.publish_progress('saves', 'Devolviendo partidas a la PSP.', completed=completed,
+                                  total=total, current_item=action['slot'])
         for action in retro['actions']:
             self._context_root(context)
             self._copy_retro_out(root, action)
+            completed += 1
+            self.publish_progress('saves', 'Devolviendo partidas a la PSP.', completed=completed,
+                                  total=total, current_item=action['slot'])
         self._context_root(context)
+        self.publish_progress('verifying', 'Verificando las partidas devueltas.')
         final_native, final_retro, _ = self._return_plans(root)
         if (final_native['actions'] or final_native['conflicts'] or
                 final_retro['actions'] or final_retro['conflicts']):
@@ -427,11 +573,21 @@ class DockProductSession:
 
     def finalize_exit(self, context):
         self._require_idle()
-        entry = self._require_entry(context)
-        if not entry.get('return_data_verified') or entry.get('return_identity') != context['identity']:
-            raise ProductFlowError('La devolución no está verificada para esta sesión.')
+        cancelling = context.get('purpose') == 'cancel'
+        if cancelling:
+            current = self.transport.current
+            if (not current or {key: current[key] for key in ('session_id', 'volume_serial')} != context['identity']):
+                raise ProductFlowError('La conexión cambió antes de cancelar la entrada.')
+            if not current.get('host_confirmed'):
+                self.transport.begin_session(context)
+                self.observation = self.transport.current
+        else:
+            entry = self._require_entry(context)
+            if not entry.get('return_data_verified') or entry.get('return_identity') != context['identity']:
+                raise ProductFlowError('La devolución no está verificada para esta sesión.')
+        self.publish_progress('finalizing', 'Cerrando la conexión con la PSP.', wire=False)
         try:
-            result = self.transport.finish_session()
+            result = self.transport.finish_session(cancel=True) if cancelling else self.transport.finish_session()
         finally:
             # SAFE is terminal even when Windows vetoes eject. Publishing
             # the old EXIT_SYNC observation would invite another FAT scan.
@@ -439,8 +595,11 @@ class DockProductSession:
         if result.get('verified') is not True or result.get('host_eject_accepted') is not True:
             raise ProductFlowError('Windows no ha confirmado la expulsión segura de esta PSP.')
         d = self.dock
-        d.session.update(pending_return=False, exit_requested=False, return_sync_authorized=False,
-                         return_sync_attempted=False, return_result='verified')
+        if cancelling:
+            d.session['entry_cancelled'] = True
+        else:
+            d.session.update(pending_return=False, exit_requested=False, return_sync_authorized=False,
+                             return_sync_attempted=False, return_result='verified')
         self.api.atomic_json(d.data/'session.json', d.session)
         self.observation = None
         return result

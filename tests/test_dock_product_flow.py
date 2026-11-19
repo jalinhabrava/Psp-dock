@@ -10,7 +10,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
-from dock_product_flow import FlowCallbacks, ProductFlow, ProductFlowError, plan_session_return
+from dock_product_flow import (FlowCallbacks, ProductFlow, ProductFlowError,
+                               ProductFlowCancelled, plan_session_return)
 
 
 GAME = "a" * 24
@@ -108,6 +109,79 @@ class ProductFlowTests(unittest.TestCase):
         self.assertEqual(self.flow.snapshot()["phase"], "ready")
         self.assertFalse(self.flow.snapshot()["blocking"])
 
+    def test_early_psp_exit_skips_inventory_choice_and_all_sync_callbacks(self):
+        self.flow.observe({**storage(), 'exit_requested':True})
+        self.assertEqual(self.flow.snapshot()['phase'], 'finalizing')
+        self.assertEqual(self.flow.snapshot()['purpose'], 'cancel')
+        self.assertTrue(self.flow.advance())
+        self.assertEqual(self.adapter.names(), ['finalize_exit'])
+        self.assertEqual(self.adapter.calls[0][1]['purpose'], 'cancel')
+        self.assertEqual(self.flow.snapshot()['message'], 'Conexión cerrada. Ya puedes desconectar la PSP.')
+
+    def test_cancel_after_choice_never_starts_the_authorized_but_not_admitted_sync(self):
+        self.flow.choose('all', self.offer())
+        self.flow.observe({**storage(), 'exit_requested':True})
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory', 'finalize_exit'])
+
+    def test_exit_before_first_controller_observation_still_cancels_entry(self):
+        self.flow.choose('none', self.offer())
+        self.flow.advance()
+        self.flow.observe({**controller(), 'exit_requested':True})
+        self.assertFalse(self.flow.snapshot()['entry_completed'])
+        self.assertEqual(self.flow.snapshot()['purpose'], 'cancel')
+        self.flow.advance()
+        self.assertNotIn('sync_return', self.adapter.names())
+
+    def test_cancel_during_admitted_callback_drains_then_only_finalizes(self):
+        self.flow.choose('saves', self.offer())
+        def finish_current(ctx):
+            self.flow.request_cancel()
+            self.assertTrue(self.flow.snapshot()['operation_active'])
+            self.assertTrue(json.loads(self.path.read_text())['cancel_requested'])
+            raise ProductFlowCancelled('finished the admitted file')
+        self.adapter.handlers['sync_initial'] = finish_current
+        self.flow.advance()
+        self.assertEqual(self.flow.snapshot()['phase'], 'finalizing')
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory','sync_initial','finalize_exit'])
+
+    def test_failure_while_cancelling_needs_explicit_retry_and_never_replays_sync(self):
+        self.flow.choose('saves', self.offer())
+        def failed(ctx):
+            self.flow.request_cancel()
+            raise OSError('verification failed; recovery journal remains')
+        self.adapter.handlers['sync_initial'] = failed
+        self.flow.advance()
+        self.assertEqual(self.flow.snapshot()['phase'], 'attention')
+        self.assertFalse(self.flow.advance())
+        self.flow.retry(self.flow.snapshot()['offer_id'])
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory','sync_initial','finalize_exit'])
+
+    def test_crashed_cancel_intent_requires_review_and_resumes_only_finalization(self):
+        self.flow.observe(storage())
+        def interrupted(ctx):
+            self.flow.request_cancel()
+            resumed = self.new_flow()
+            resumed.observe(storage())
+            self.assertEqual(resumed.snapshot()['phase'], 'attention')
+            self.assertEqual(resumed.snapshot()['purpose'], 'cancel')
+            self.assertFalse(resumed.advance())
+            resumed.retry(resumed.snapshot()['offer_id'])
+            resumed.advance()
+            return deepcopy(INVENTORY)
+        self.adapter.handlers['inventory'] = interrupted
+        self.flow.advance()
+        self.assertEqual(self.adapter.names(), ['inventory','finalize_exit'])
+
+    def test_entry_cancellation_is_not_an_exit_shortcut_after_playing(self):
+        self.ready()
+        self.flow.set_game_running(True)
+        self.flow.set_game_running(False)
+        with self.assertRaises(ProductFlowError):
+            self.flow.request_cancel()
+
     def test_choice_selects_exact_initial_callback_policy(self):
         for choice in ("saves", "games", "all"):
             with self.subTest(choice=choice):
@@ -181,7 +255,10 @@ class ProductFlowTests(unittest.TestCase):
                 offer_id = self.offer()
                 self.flow.observe(changed)
                 self.assertEqual(self.flow.snapshot()["phase"], "attention")
-                self.assertFalse(self.flow.snapshot()["can_retry"])
+                self.assertEqual(self.flow.snapshot()["can_retry"], changed['volume_serial'] == '12345')
+                # Same-card reconnect offers explicit recovery; observing
+                # it still cannot restart inventory or copy on its own.
+                self.assertFalse(self.flow.advance())
                 with self.assertRaises(ProductFlowError):
                     self.flow.choose("all", offer_id)
                 self.assertFalse(self.flow.advance())

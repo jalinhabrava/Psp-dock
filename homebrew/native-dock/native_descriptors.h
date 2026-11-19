@@ -7,7 +7,7 @@
 #include <stddef.h>
 #include <pspusbbus.h>
 #include "native_common.h"
-#include "report_descriptor.h"
+#include "native_report_descriptor.h"
 
 typedef struct {
     struct EndpointDescriptor wire;

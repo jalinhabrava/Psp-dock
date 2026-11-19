@@ -10,14 +10,20 @@ RetroArch, apertura manual y desmontaje final mediante UDisks2.
 
 **Es un port de software pendiente de aceptación con la PSP física.** Los
 tests usan dispositivos y archivos sintéticos; no demuestran que el firmware
-0301 haya enumerado correctamente la Memory Stick, ni miden latencia, vídeo,
+0302 haya enumerado correctamente la Memory Stick, ni miden latencia, vídeo,
 audio o la compatibilidad de guardados con una consola real. Esta rama no
 recompila ni instala firmware y no modifica la versión Windows del controlador.
 
-Se admite únicamente `054c:01cd`, revisión USB **0301**, descriptor nativo
-exacto y sesión **PDK2**. La 0300 retirada y los prototipos PDK1 no autorizan
-juegos ni escrituras en Linux. El `wValue=0x0300` de un FEATURE report USB
-significa tipo FEATURE + report ID 0; no es la revisión del dispositivo.
+Se admite únicamente `054c:01cd`, descriptor nativo exacto y sesión
+**PDK2/v3** con firmware **0302**, capacidades **0x0007** y build
+**0x03020001** confirmados por la extensión `NAT3` del FEATURE report.
+El informe tiene 64 bytes de payload; hidraw recibe/envía 65 al incluir el
+report ID 0. Las revisiones de firmware 0300 y 0301 están retiradas.
+Sony puede publicar `bcdDevice=0100`; también se admite `0302` como revisión
+USB, pero **ninguno de esos valores demuestra la versión del firmware**.
+Tampoco el `wValue=0x0300` identifica una versión: significa tipo FEATURE +
+report ID 0. PDK1, el descriptor antiguo de 32 bytes y las extensiones de
+identidad incompletas o distintas no autorizan juegos ni escrituras.
 
 ## Requisitos
 
@@ -27,7 +33,7 @@ significa tipo FEATURE + report ID 0; no es la revisión del dispositivo.
 | Python | 3.10 o posterior; host sin dependencias pip |
 | Entrada | Kernel `usbhid`/`hidraw`, `evdev` y SDL2 2.24 o posterior |
 | Ventana | Chromium o Chrome para `--app`; navegador predeterminado como alternativa |
-| PSP | PSP Dock nativo 0301 y Memory Stick FAT montada por el escritorio |
+| PSP | PSP Dock nativo 0302 con PDK2/v3 y Memory Stick FAT montada por el escritorio |
 | Salida | UDisks2 con `udisksctl` y permiso de desmontaje de la sesión local |
 | PPSSPP | Frontend nativo **PPSSPPSDL** / **ppsspp-sdl**, contrato de CLI de v1.20.4 |
 | RetroArch | Opcional; binario nativo `retroarch` con driver SDL2 y núcleos `.so` de la misma arquitectura |
@@ -62,8 +68,9 @@ ruta absoluta cuando quieras mover la biblioteca.
    sudo udevadm control --reload-rules
    ```
 
-   Después reconecta la PSP. La regla concede acceso sólo al PID y revisión
-   indicados y no hace que todos los dispositivos HID sean escribibles por
+   Después reconecta la PSP. La regla limita acceso al VID/PID y los valores
+   bcdDevice admitidos; el host comprueba después el firmware por FEATURE.
+   No hace que todos los dispositivos HID sean escribibles por
    todos los usuarios. El Dock se ejecuta como usuario normal.
 3. Abre el host manualmente:
 
@@ -82,7 +89,7 @@ ruta absoluta cuando quieras mover la biblioteca.
 4. En Ajustes selecciona el ejecutable PPSSPPSDL y OpenGL o Vulkan. El host
    busca PPSSPPSDL / ppsspp-sdl en PATH si todavía no hay ajustes. El perfil
    inicial usa OpenGL y escala 2×. Direct3D no se ofrece en Linux.
-5. Inicia el Dock 0301 en la PSP y monta su Memory Stick en el gestor de
+5. Inicia el Dock 0302 en la PSP y monta su Memory Stick en el gestor de
    archivos si el escritorio no la monta automáticamente. Debe verse la raíz
    FAT completa, con `PSP/`; el host no solicita montaje automático ni usa
    permisos de administrador para acceder a la tarjeta.
@@ -102,7 +109,12 @@ partidas; cerrar sólo un juego nunca las devuelve.
 2. Identifica el volumen por su serie FAT publicada en `/dev/disk/by-uuid`.
    Convierte `ABCD-1234` al mismo número decimal usado por Windows para que
    los registros conserven una identidad de volumen coherente.
-3. Presenta el inventario y la elección de copias. Los cambios de fase
+3. Registra la intención de iniciar sesión, solicita `HOST_BEGIN` y exige
+   confirmación `HOST_CONFIRMED` antes de autorizar almacenamiento o mando.
+   Presenta el inventario y la elección de copias. `HOST_PROGRESS` comunica
+   actividad y contadores reales a la PSP; no concede permisos de escritura.
+   La navegación durante STORAGE requiere la actividad CHOOSING confirmada.
+   Los cambios de fase
    STORAGE / CONTROLLER / COPYING / EXIT_SYNC / SAFE usan la sesión y una
    secuencia PDK2. Cada orden se envía una sola vez y necesita confirmación;
    un timeout no autoriza repetirla ni escribir.

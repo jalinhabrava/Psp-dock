@@ -61,12 +61,12 @@ class PhysicalBindingTests(unittest.TestCase):
         except (OSError, NotImplementedError):
             self.skipTest("Creating a synthetic sysfs needs directory symlinks")
         self.pad = sdl.SDLPad(0, GUID, "/dev/input/event7",
-                             sdl.VID, sdl.PID, sdl.REVISION, 4, 12, 1)
+                             sdl.VID, sdl.PID, 0x0100, 4, 12, 1)
 
     def make_usb(self, name):
         parent = self.sys/"devices/usb1"/name
         parent.mkdir(parents=True)
-        for key, value in {"idVendor":"054c", "idProduct":"01cd", "bcdDevice":"0301"}.items():
+        for key, value in {"idVendor":"054c", "idProduct":"01cd", "bcdDevice":"0100"}.items():
             (parent/key).write_text(value+"\n", encoding="ascii")
         return parent
 
@@ -86,7 +86,7 @@ class PhysicalBindingTests(unittest.TestCase):
             self.choose([self.pad, replace(self.pad,index=1)])
 
     def test_stale_revision_and_malformed_descriptor_are_rejected(self):
-        for value in (replace(self.pad,revision=0x0300), replace(self.pad,axes=2),
+        for value in (replace(self.pad,revision=0x0300), replace(self.pad,revision=0x0301), replace(self.pad,axes=2),
                       replace(self.pad,buttons=8), replace(self.pad,hats=0),
                       replace(self.pad,index=10), replace(self.pad,index=True),
                       replace(self.pad,guid="0"*32)):
@@ -97,6 +97,13 @@ class PhysicalBindingTests(unittest.TestCase):
         (self.parent/"bcdDevice").write_text("0300\n")
         with self.assertRaises(sdl.LinuxControllerError):
             self.choose()
+
+    def test_usb_revision_0302_also_requires_matching_kernel_and_sdl_metadata(self):
+        (self.parent/"bcdDevice").write_text("0302\n")
+        with self.assertRaises(sdl.LinuxControllerError):
+            self.choose()
+        pad = replace(self.pad, revision=0x0302)
+        self.assertEqual(self.choose([pad]), pad)
 
     def test_unlinked_input_and_path_traversal_are_rejected(self):
         for name in ("/dev/input/event999", "/dev/input/../event7", "event7", "/tmp/event7"):

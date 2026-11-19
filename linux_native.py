@@ -14,12 +14,12 @@ import re
 import stat
 import subprocess
 
-from native_dock import (PID, REVISION, VID, MAGIC, NativeDockError,
+from native_dock import (PID, USB_REVISIONS, REPORT_BYTES, VID, MAGIC, NativeDockError,
                          NativeDockTransport, decode_status, probe_native,
-                         request_phase)
+                         request_phase, request_begin, request_progress)
 from psp_usb import PspStorage
 
-# The native driver includes homebrew/bridge-hid/report_descriptor.h.
+# The native driver includes homebrew/native-dock/native_report_descriptor.h.
 # Exact matching also rejects unrelated collections sharing the Sony VID.
 REPORT_DESCRIPTOR = bytes.fromhex(
     '05 01 09 04 a1 01 09 01 a1 00 09 30 09 31 09 32 09 35 15 00 26 ff 00 35 '
@@ -27,7 +27,7 @@ REPORT_DESCRIPTOR = bytes.fromhex(
     '01 46 3b 01 65 14 75 04 95 01 81 02 05 09 19 01 29 0c 15 00 25 01 75 01 '
     '95 0c 81 02 95 10 81 03 05 08 09 43 15 00 26 ff 00 35 00 46 ff 00 75 08 '
     '95 01 91 82 09 44 91 82 09 45 91 82 09 46 91 82 06 00 ff 09 01 15 00 26 '
-    'ff 00 35 00 46 ff 00 65 00 75 08 95 20 b1 02 c0')
+    'ff 00 35 00 46 ff 00 65 00 75 08 95 40 b1 02 c0')
 
 
 def unescape_mount(value: str) -> str:
@@ -87,8 +87,8 @@ class LinuxSystem:
                                    for name in ('idVendor', 'idProduct', 'bcdDevice'))
                 except (ValueError, OSError) as exc:
                     raise NativeDockError('No se puede leer la identidad USB Linux.') from exc
-                if actual != (VID, PID, REVISION):
-                    raise NativeDockError('Linux requiere PSP Dock nativo 054c:01cd revisión 0301.')
+                if actual[:2] != (VID, PID) or actual[2] not in USB_REVISIONS:
+                    raise NativeDockError('Linux requiere el USB PSP Dock 054c:01cd admitido. El firmware se confirma por FEATURE, no por bcdDevice.')
                 return candidate.stat().st_ino, str(candidate)
         raise NativeDockError('El dispositivo no tiene un padre USB PSP Dock verificable.')
 
@@ -145,7 +145,7 @@ class LinuxSystem:
         parent = self.parent_of(block)
         if not (Path(mount.point) / 'PSP').is_dir():
             raise NativeDockError('No hay una carpeta PSP en la Memory Stick montada.')
-        identity = PspStorage(mount.point, self.serial_of(root), str(block), parent[1], 'Sony PSP Dock 0301')
+        identity = PspStorage(mount.point, self.serial_of(root), str(block), parent[1], 'Sony PSP Dock')
         return identity, parent[0]
 
     def devices(self) -> list[dict]:
@@ -223,7 +223,7 @@ class LinuxSystem:
                 'volume_serial': identity.volume_serial, 'usb_parent': parent[1]}
 
 
-def feature_ioctl(operation: int, length: int = 33) -> int:
+def feature_ioctl(operation: int, length: int = REPORT_BYTES) -> int:
     # asm-generic ioctl ABI used by supported x86_64/aarch64 Linux.
     return (3 << 30) | (length << 16) | (ord('H') << 8) | operation
 
@@ -257,23 +257,25 @@ class LinuxHid:
             os.close(fd)
 
     def attributes(self, fd):
-        self.system.hid_identity(self.handles[fd])
-        return {'vendor_id': VID, 'product_id': PID, 'revision': REVISION}
+        node = self.system.hid_identity(self.handles[fd])
+        parent = Path(self.system.parent_of(node)[1])
+        usb_revision = int((parent / 'bcdDevice').read_text().strip(), 16)
+        return {'vendor_id': VID, 'product_id': PID, 'revision': usb_revision}
 
     def get(self, fd):
         import fcntl
-        report = bytearray(33)
+        report = bytearray(REPORT_BYTES)
         count = fcntl.ioctl(fd, feature_ioctl(0x07), report, True)
-        if count != 33:
+        if count != REPORT_BYTES:
             raise NativeDockError('Respuesta hidraw PDK2 incompleta.')
         return decode_status(bytes(report))
 
     def set(self, fd, report):
         import fcntl
-        if len(report) != 33 or report[0] != 0 or report[1:5] != MAGIC:
+        if len(report) != REPORT_BYTES or report[0] != 0 or report[1:5] != MAGIC:
             raise NativeDockError('Orden PDK2 inválida.')
         count = fcntl.ioctl(fd, feature_ioctl(0x06), bytearray(report), True)
-        if count != 33:
+        if count != REPORT_BYTES:
             raise NativeDockError('Entrega de fase incierta; no se repite la orden.')
 
 
@@ -285,5 +287,8 @@ def create_transport(system=None):
         identify_storage=system.identify, parent_of=system.parent_of,
         serial_of=system.serial_of,
         change_phase=lambda path, session, phase: request_phase(path, session, phase, api_factory=factory),
+        begin=lambda path, session: request_begin(path, session, api_factory=factory),
+        progress=lambda path, session, phase, activity, **fields: request_progress(
+            path, session, phase, activity, api_factory=factory, **fields),
         eject=system.eject, hid_identity=system.hid_identity,
         same_root=lambda a, b: str(Path(a).absolute()) == str(Path(b).absolute()))

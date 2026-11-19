@@ -197,13 +197,19 @@ class DockLinuxIntegrationTests(unittest.TestCase):
         self.dock.product_flow.set_game_running.assert_called_with(False)
 
     def test_linux_input_dispatch_rejects_retired_revision_before_reader(self):
-        self.dock.snapshot['controller_status'] = {'connected': True, 'mode': 'native_dock', 'product_id': 0x01cd, 'revision': 0x0301}
+        self.dock.snapshot['controller_status'] = {'connected': True, 'mode': 'native_dock',
+            'product_id': 0x01cd, 'revision': 0x0100, 'protocol_version': 3,
+            'firmware_revision': 0x0302, 'host_confirmed': True}
         self.dock.product_flow.snapshot.return_value = {'phase': 'ready'}
         with patch('linux_input.PSPLinuxReader') as reader:
             reader.return_value.read.return_value = {'connected': True}
             self.assertTrue(self.dock.psp_launcher_input()['connected'])
-            self.dock.snapshot['controller_status']['revision'] = 0x0300
-            self.assertFalse(self.dock.psp_launcher_input()['connected'])
+            for bad in ({'firmware_revision': 0x0300}, {'firmware_revision': 0x0301},
+                        {'protocol_version': 2}, {'host_confirmed': False}):
+                original = dict(self.dock.snapshot['controller_status'])
+                self.dock.snapshot['controller_status'].update(bad)
+                self.assertFalse(self.dock.psp_launcher_input()['connected'])
+                self.dock.snapshot['controller_status'] = original
             reader.return_value.read.assert_called_once()
 
 

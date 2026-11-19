@@ -1,7 +1,9 @@
 """Windows visual QA for the product session, using isolated synthetic HTTP data.
 
 Run from the repository: ``python tools/product_ui_preview.py``.
-Screenshots and result.json go to data/product-session-ui. An optional --browser
+Screenshots and result.json go to data/product-session-ui. The default views focus
+on the changed connection and measured-progress journey; --all-scenarios also
+includes the previous product views. An optional --browser
 selects a Chrome/Edge executable; --fixture-check validates data without opening
 any browser. No Dock object, real PSP, emulator or user profile is opened. One
 temporary headless browser is closed, including its children, before returning.
@@ -40,24 +42,37 @@ from dock_product_flow import MESSAGES, PHASES, plan_session_return
 
 VOLUME = "QA-FIXTURE-ONLY"
 PSP_ROOT = "Q:\\"
-PID, REVISION = 0x01CD, 0x0301
+PID, REVISION, PROTOCOL = 0x01CD, 0x0302, 3
 SCENARIOS = (
+    ("connection_waiting", "waiting_psp", "initial", None),
+    ("connection_identifying", "waiting_psp", "initial", None),
+    ("connection_storage", "waiting_psp", "initial", None),
+    ("connection_blocked", "waiting_psp", "initial", None),
+    ("inventory", "inventory", "initial", None),
     ("choosing", "choosing", "initial", None),
     ("syncing_in", "syncing_in", "initial", "all"),
+    ("syncing_in_saves", "syncing_in", "initial", "saves"),
     ("ready", "ready", "initial", "all"),
     ("ready_pc_saves", "ready", "initial", "none"),
     ("copying", "copying_game", "game_copy", "all"),
+    ("copying_verifying", "copying_game", "game_copy", "all"),
     ("copying_window_close", "copying_game", "game_copy", "all"),
     ("waiting_game_exit", "waiting_game_exit", "exit", "all"),
     ("syncing_out", "syncing_out", "exit", "all"),
     ("finalizing", "finalizing", "exit", "all"),
+    ("cancel_finalizing", "finalizing", "cancel", None),
+    ("cancel_safe", "safe_to_disconnect", "cancel", None),
     ("safe_to_disconnect", "safe_to_disconnect", "exit", "all"),
     ("attention", "attention", "exit", "all"),
     ("attention_initial", "attention", "initial", "all"),
     ("attention_resolved", "attention", "exit", "all"),
 )
-NARROW_SCENARIOS = {"choosing", "attention", "attention_initial", "attention_resolved"}
-IDLE_PROGRESS = {"active": False, "phase": "idle", "copied_bytes": 0, "total_bytes": 0}
+FOCUSED_SCENARIOS = {"connection_waiting", "connection_identifying", "connection_storage", "connection_blocked",
+                     "inventory", "syncing_in_saves", "copying_verifying", "syncing_out",
+                     "cancel_finalizing", "cancel_safe", "ready"}
+NARROW_SCENARIOS = {"connection_blocked", "syncing_out", "choosing", "attention", "attention_initial", "attention_resolved"}
+IDLE_PROGRESS = {"active": False, "operation_id": "", "stage": "", "mode": "indeterminate",
+                 "unit": "items", "completed": 0, "total": None, "label": "", "current_item": ""}
 UNSUPPORTED_NOTE = "Los estados de emuladores sin formato compatible verificado se conservan en el PC."
 SETTINGS = {
     "storage_root": "C:\\PSPDock-UI-Fixture", "library": "C:\\PSPDock-UI-Fixture\\games",
@@ -126,6 +141,10 @@ def build_fixture(name, phase, purpose, choice):
                        "availability": "ready", "core_available": True, "size": 16 * 1024**2}
     native_plan = return_plan("ULUS90001")
     saves = native_plan if review or name in ("choosing", "ready_pc_saves") else {"actions": [], "conflicts": [], "unchanged": 4}
+    if name == "syncing_in_saves" or phase == "syncing_out":
+        saves = {"actions": [{"slot": f"QA_SAVE_{index:02}", "direction": "to_psp" if purpose == "exit" else "to_pc",
+                              "source_hash": signature(f"save-{index}-after"), "target_hash": signature(f"save-{index}-before")}
+                             for index in range(1, 8)], "conflicts": [], "unchanged": 0}
     if purpose == "exit":
         saves = {**saves, "direction_scope": "to_psp"}
     raw_plan = return_plan("SRAM")
@@ -143,10 +162,34 @@ def build_fixture(name, phase, purpose, choice):
     ]
     progress = dict(IDLE_PROGRESS)
     if phase in ("syncing_in", "copying_game"):
-        progress.update(active=True, phase="copying", title=games[1]["title"],
-                        total_bytes=games[1]["size"], copied_bytes=218 * 1024**2)
+        progress.update(active=True, operation_id=signature("operation-" + name), stage="games", mode="determinate",
+                        unit="bytes", total=games[1]["size"], completed=218 * 1024**2,
+                        label="Copiando el juego al PC", current_item=games[1]["title"])
+    if name == "syncing_in_saves" or phase == "syncing_out":
+        progress.update(active=True, operation_id=signature("operation-" + name), stage="saves", mode="determinate",
+                        unit="items", completed=2, total=7, label="Comprobando los guardados" if purpose == "initial" else
+                        "Devolviendo los guardados a tu PSP", current_item="Aventura PSP de prueba")
+    if phase in ("inventory", "finalizing") or name == "copying_verifying":
+        progress.update(active=True, operation_id=signature("operation-" + name),
+                        stage="verifying" if name == "copying_verifying" else phase, mode="indeterminate",
+                        unit="items", completed=4 if phase == "inventory" else 0, total=None,
+                        label="Comparando juegos y guardados" if phase == "inventory" else
+                              "Verificando los datos copiados" if name == "copying_verifying" else
+                              "Esperando la liberación del dispositivo por Windows", current_item="")
+    waiting = name.startswith("connection_")
+    link_phase = {"connection_waiting": "waiting", "connection_identifying": "identifying",
+                  "connection_storage": "waiting_storage", "connection_blocked": "blocked"}.get(name, "verified")
+    link_message = {"waiting": "Abre PSP Dock en la consola y conecta el cable cuando indique LISTO.",
+                    "identifying": "Windows ha detectado tu PSP. Estamos comprobando la conexión con PSP Dock.",
+                    "waiting_storage": "La PSP está detectada. Windows está preparando el acceso a tu biblioteca.",
+                    "blocked": "Windows ha detectado la PSP, pero no ha podido confirmar la conexión con PSP Dock.",
+                    "verified": "PSP Dock ha confirmado la conexión."}[link_phase]
+    link = {"phase": link_phase, "message": link_message,
+            "hint": "Mantén la PSP conectada y pulsa Comprobar de nuevo." if link_phase == "blocked" else "",
+            "diagnostics": "USB bcdDevice: 0100\nProtocolo: NAT3\nFirmware: 0302\nRespuesta de identificación incompleta." if link_phase == "blocked" else "",
+            "retryable": link_phase == "blocked"}
     flow = {
-        "enabled": True, "phase": phase, "purpose": purpose, "blocking": not ready,
+        "enabled": not waiting, "phase": phase, "purpose": purpose, "blocking": not ready,
         "message": MESSAGES.get(phase, closing_message), "can_choose": phase == "choosing",
         "offer_id": signature("ui-offer-" + name), "choice": choice, "use_pc_saves": use_pc,
         "counts": {"psp_games": 3, "pc_games": 2, "missing_games": 2,
@@ -158,16 +201,17 @@ def build_fixture(name, phase, purpose, choice):
         "operation_active": phase in ("syncing_in", "copying_game", "syncing_out", "finalizing"),
         "game_running": waiting_game, "recovery_required": False, "revision": 3, "last_result": {},
         "window_close_requested": closing_window, "window_close_message": closing_message,
-        "progress": progress, "unsupported_state_formats": [UNSUPPORTED_NOTE],
+        "progress": progress, "connection": link, "unsupported_state_formats": [UNSUPPORTED_NOTE],
     }
     session = {"running": waiting_game, "pending_return": purpose == "exit" and not safe,
                "exit_requested": purpose == "exit" and not safe, "product_volume": VOLUME,
-               "return_result": "verified" if safe else "data_verified" if phase == "finalizing" else ""}
+               "return_result": "cancelled" if safe and purpose == "cancel" else
+                                "verified" if safe else "data_verified" if phase == "finalizing" and purpose != "cancel" else ""}
     if ((choice in ("all", "saves") and purpose != "initial") or (ready and not use_pc)):
         session["prepared_volume"] = VOLUME
     state = {
-        "demo": False, "devices": [] if safe else [{"root": PSP_ROOT, "label": "PSP · fixture UI"}],
-        "selected_device": PSP_ROOT if storage else None, "connection_state": "dock_connected" if native_phase in (1, 2) else "waiting_psp",
+        "demo": False, "devices": [] if safe or waiting else [{"root": PSP_ROOT, "label": "PSP · fixture UI"}],
+        "selected_device": PSP_ROOT if storage and not waiting else None, "connection_state": "dock_connected" if native_phase in (1, 2) and not waiting else "waiting_psp",
         "games": games, "retro": {"emulators": [emulator, unsupported_emulator], "roms": [rom, unsupported_rom]},
         "retro_install": {"status": "ready", "needed": False, "external": False, "missing_cores": [],
                           "requires_license_review": [], "managed_path": SETTINGS["retroarch"], "progress": {"active": False, "phase": "idle"}},
@@ -175,15 +219,16 @@ def build_fixture(name, phase, purpose, choice):
                         "conflicts": int(review or name == "ready_pc_saves"), "unmanaged": 1, "offline": not storage},
         "retro_button_layout": "nintendo", "product_flow": flow, "saves": saves,
         "copy_queue": {"status": "idle"}, "copy_policy": "skip_missing", "session": session,
-        "controller_status": {"mode": "native_dock", "connected": native_phase in (1, 2),
+        "controller_status": {"mode": "await_native" if waiting else "native_dock", "connected": native_phase in (1, 2) and not waiting,
                               "can_play": native_phase == 2, "synthetic_storage": False, "phase": native_phase,
-                              "product_id": PID, "revision": REVISION, "path": "ui-fixture-native-hid",
+                              "product_id": PID, "firmware_revision": REVISION, "protocol_version": PROTOCOL,
+                              "usb_revision": 0x0100, "host_confirmed": not waiting, "path": "ui-fixture-native-hid",
                               "session": "ui-fixture-native-session", "reason": "PSP Dock conectado." if ready else "Sincronizando PSP."},
         "can_launch_game": ready, "can_launch_retro": ready, "runtime_prepared": True, "runtime_error": "",
         "library_source": "psp_live" if storage else "cached_manifest", "error": "", "recovery_required": False,
         "emulator": {"path": SETTINGS["emulator"], "available": True}, "controller": "Fixture de interfaz; no controla una PSP real.",
     }
-    state["preflight"] = assess_storage(connected=storage, demo=False, games=games, saves=saves,
+    state["preflight"] = assess_storage(connected=storage and not waiting, demo=False, games=games, saves=saves,
                                        session=session, recovering=False, current_volume_serial=VOLUME,
                                        hid_connected=ready).snapshot()
     return state
@@ -194,12 +239,16 @@ def fixtures():
     for name, state in result.items():
         flow, pad = state["product_flow"], state["controller_status"]
         assert len(flow["offer_id"]) == 64 and flow["phase"] in PHASES | {"waiting_game_exit"}, name
-        assert (pad["mode"], pad["product_id"], pad["revision"]) == ("native_dock", PID, REVISION), name
+        assert (pad["product_id"], pad["firmware_revision"], pad["protocol_version"]) == (PID, REVISION, PROTOCOL), name
+        assert pad["host_confirmed"] == flow["enabled"], name
+        assert pad["usb_revision"] == 0x0100, name
         assert state["can_launch_game"] == state["can_launch_retro"] == (flow["phase"] == "ready"), name
         assert flow["can_close"] == (flow["phase"] == "safe_to_disconnect"), name
         assert flow["can_choose"] == (flow["phase"] == "choosing"), name
         if name == "ready_pc_saves":
             assert not state["preflight"]["saves_prepared"], name
+        if flow["progress"]["mode"] == "determinate":
+            assert flow["progress"]["active"] and flow["progress"]["operation_id"] and flow["progress"]["total"] > 0, name
     return result
 
 
@@ -405,12 +454,13 @@ LAYOUT = r"""(() => {
   const byId = id => document.getElementById(id);
   const visible = node => !!node && !node.closest('[hidden]') && node.getClientRects().length > 0;
   const button = id => ({visible: visible(byId(id)), disabled: byId(id).disabled, text: byId(id).textContent.trim()});
-  const panel = byId('dock-session'), dialog = document.querySelector('dialog[open]');
-  const container = dialog || (!panel.hidden ? panel : byId('xmb'));
+  const panel = byId('dock-session'), connect = byId('dock-connect'), dialog = document.querySelector('dialog[open]');
+  const container = dialog || (!panel.hidden ? panel : !connect.hidden ? connect : byId('xmb'));
   const rect = container.getBoundingClientRect();
   const selectors = dialog ? '.dialog-content,.save-row,.conflict-actions,button,p,h2' :
     container.id === 'xmb' ? '#xmb-hid,#xmb-hints,.xmb-cat.on,.xmb-item.on .xmb-ic,.xmb-item.on .xmb-tx,#xmb-side.open' :
-    '#dock-session .dock-session-content,#dock-session h1,#dock-session p,#dock-session dl,#dock-session button';
+    container.id === 'dock-connect' ? '.dock-connect-content,h1,p,button,summary,details[open] pre' :
+    '#dock-session .dock-session-content,#dock-session h1,#dock-session p,#dock-session dl,#dock-session button,summary,details[open] pre';
   const clipped = [...container.querySelectorAll(selectors)].filter(visible).filter(node => {
     const b = node.getBoundingClientRect();
     return b.left < rect.left - 2 || b.right > rect.right + 2 || node.scrollWidth > node.clientWidth + 2;
@@ -420,13 +470,22 @@ LAYOUT = r"""(() => {
     screen: xmbConnectionView().screen, productVisible: visible(panel), waitingVisible: visible(byId('dock-connect')),
     menuVisible: visible(byId('xmb-menu')), menuInert: byId('xmb-menu').inert,
     diagnosticVisible: visible(byId('dock-diagnostic')), serviceOffline: ui.serviceOffline, busy: ui.busy,
-    heading: byId('dock-session-title').textContent, message: byId('dock-session-message').textContent,
+    heading: visible(connect) ? byId('dock-connect-title').textContent : byId('dock-session-title').textContent,
+    message: visible(connect) ? byId('dock-connect-status-detail').textContent : byId('dock-session-message').textContent,
+    publicText: container.innerText,
     note: byId('dock-session-note').textContent, view: xmbConnectionView(),
     launchDisabled: byId('launch-button').disabled, savesPrepared: ui.state.preflight.saves_prepared,
     selectedGame: ui.state.games.find(game => game.id === ui.selected) || null,
     choices: [...document.querySelectorAll('[data-session-choice]')].map(node => ({choice: node.dataset.sessionChoice, visible: visible(node), disabled: node.disabled})),
     review: button('dock-session-review'), retry: button('dock-session-retry'), close: button('dock-session-close'),
     progressVisible: visible(byId('dock-session-progress')), sync: button('sync-button'),
+    progressDeterminate: visible(byId('dock-session-progress')) && byId('dock-session-progress-bar').hasAttribute('value'),
+    progressLabel: byId('dock-session-progress-label').textContent,
+    progressPercent: byId('dock-session-progress-percent').textContent,
+    connectionProgressVisible: visible(byId('dock-connect-progress')),
+    connectionDiagnostics: {visible: visible(byId('dock-connect-diagnostics')), open: byId('dock-connect-diagnostics').open,
+      text: byId('dock-connect-diagnostics-text').textContent},
+    connectionClose: button('dock-connect-close'),
     documentOverflow: document.documentElement.scrollWidth > innerWidth + 2 || document.documentElement.scrollHeight > innerHeight + 2,
     containerOverflowX: container.scrollWidth > container.clientWidth + 2, clipped,
     containerOverflowXPolicy: getComputedStyle(container).overflowX,
@@ -440,25 +499,28 @@ LAYOUT = r"""(() => {
 })()"""
 
 
-def validate_layout(layout, state, dialog=False):
+def validate_layout(layout, state, dialog=False, diagnostics=False):
     flow = state["product_flow"]
     ready, choosing = flow["phase"] == "ready", flow["phase"] == "choosing"
-    expected_screen = "menu" if ready else "product"
+    waiting = not flow["enabled"] or flow["phase"] == "waiting_psp"
+    expected_screen = "waiting" if waiting else "menu" if ready else "product"
     checks = {
         "document_title": layout["title"] == "PSP Dock",
         "phase": layout["phase"] == flow["phase"] and layout["purpose"] == flow["purpose"],
         "screen": layout["screen"] == expected_screen,
-        "blocking_panel": layout["productVisible"] == (not ready),
+        "blocking_panel": layout["productVisible"] == (not ready and not waiting),
         "xmb_visibility": layout["menuVisible"] == ready and layout["menuInert"] != ready,
-        "no_waiting_or_diagnostic": not layout["waitingVisible"] and not layout["diagnosticVisible"],
+        "waiting_visibility": layout["waitingVisible"] == waiting,
+        "no_legacy_diagnostic": not layout["diagnosticVisible"],
         "online": not layout["serviceOffline"] and not layout["busy"],
         "no_document_overflow": not layout["documentOverflow"],
         "panel_inside_viewport": layout["containerInsideViewport"],
-        "choices": all(item["visible"] == choosing and item["disabled"] != choosing for item in layout["choices"]),
+        "choices": all(item["visible"] == choosing and (not item["visible"] or not item["disabled"]) for item in layout["choices"]),
         "review_permission": layout["review"]["visible"] == flow["can_review_saves"],
         "retry_permission": layout["retry"]["visible"] == flow["can_retry"],
         "safe_close_permission": layout["close"]["visible"] == flow["can_close"],
         "measured_progress": layout["progressVisible"] == flow["progress"]["active"],
+        "real_denominator": layout["progressDeterminate"] == (flow["progress"]["active"] and flow["progress"]["mode"] == "determinate"),
         "launch_gate": layout["view"]["canPlay"] == ready,
     }
     if ready:
@@ -477,11 +539,26 @@ def validate_layout(layout, state, dialog=False):
             checks["explicit_pc_save_policy"] = layout["view"]["product"]["usePcSaves"] and not layout["savesPrepared"]
     else:
         checks["no_panel_horizontal_overflow"] = not layout["containerOverflowX"] and not layout["clipped"]
+    if waiting:
+        link = flow["connection"]
+        checks["connection_gauge"] = layout["connectionProgressVisible"] == (link["phase"] in ("identifying", "waiting_storage"))
+        checks["close_without_session"] = layout["connectionClose"]["visible"] and not layout["connectionClose"]["disabled"]
+        checks["no_false_sync"] = "sincronizando" not in layout["publicText"].lower()
+        if link["phase"] == "blocked":
+            checks["public_error"] = link["message"] in layout["publicText"] and link["hint"] in layout["publicText"]
+            checks["technical_details_available"] = layout["connectionDiagnostics"]["visible"] and link["diagnostics"] == layout["connectionDiagnostics"]["text"]
+            checks["technical_details_optional"] = layout["connectionDiagnostics"]["open"] == diagnostics and ("bcdDevice" in layout["publicText"]) == diagnostics
+    if flow["progress"]["active"]:
+        checks["work_explained"] = layout["progressLabel"] == flow["progress"]["label"]
+        if flow["progress"]["mode"] == "indeterminate":
+            checks["no_invented_percentage"] = layout["progressPercent"] == ""
     if choosing:
         checks["explicit_question"] = layout["message"] == "¿Quieres copiar todos los juegos y sincronizar toda la PSP ahora?"
         checks["real_storage_controller_hint"] = "cruceta" in layout["note"]
     if flow["phase"] == "finalizing":
         checks["no_premature_disconnect"] = "ya puedes desconectar" not in layout["message"].lower()
+    if flow["purpose"] == "cancel":
+        checks["cancel_does_not_claim_sync"] = "guardados comprobados" not in layout["publicText"].lower() and "sincronización terminada" not in layout["publicText"].lower()
     if flow.get("window_close_requested"):
         checks["window_close_explained"] = flow["window_close_message"] in layout["message"] + layout["note"]
     if flow["phase"] == "waiting_game_exit":
@@ -518,10 +595,10 @@ def settle(client):
     client.evaluate("new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))")
 
 
-def capture(client, output, name, size, state, report, dialog=False):
+def capture(client, output, name, size, state, report, dialog=False, diagnostics=False):
     settle(client)
     layout = client.evaluate(LAYOUT)
-    checks = validate_layout(layout, state, dialog)
+    checks = validate_layout(layout, state, dialog, diagnostics)
     filename = f"{name}-{size[0]}x{size[1]}.png"
     shot = client.call("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})
     (output / filename).write_bytes(base64.b64decode(shot["data"]))
@@ -529,7 +606,7 @@ def capture(client, output, name, size, state, report, dialog=False):
     report["views"].append(view)
     report["failures"].extend(name + ": " + check for check, ok in checks.items() if not ok)
     if layout["scroll"]["content"] > layout["scroll"]["height"] + 2:
-        selector = "dialog[open]" if dialog else "#dock-session"
+        selector = "dialog[open]" if dialog else "#dock-connect" if layout["waitingVisible"] else "#dock-session"
         client.evaluate(f"document.querySelector({json.dumps(selector)}).scrollTop=100000;true")
         settle(client)
         bottom = client.evaluate(LAYOUT)
@@ -591,14 +668,16 @@ def stop_browser(process, client, report):
         report["browser_closed"] = process.poll() is not None
 
 
-def run(output, browser):
-    states = fixtures()
+def run(output, browser, selected=None):
+    states = {name: state for name, state in fixtures().items() if selected is None or name in selected}
+    if not states:
+        raise ValueError("No fixture scenarios selected")
     output.mkdir(parents=True, exist_ok=True)
     report = {"kind": "synthetic_product_ui_fixture", "physical_psp_test": False,
               "live_backend_used": False, "views": [], "failures": [], "errors": [],
               "source_sha256": {name: hashlib.sha256((ROOT / "web" / name).read_bytes()).hexdigest()
                                 for name in ("app.js", "index.html", "style.css")}}
-    server = FixtureServer(states["choosing"])
+    server = FixtureServer(next(iter(states.values())))
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     client = process = None
@@ -652,6 +731,10 @@ def run(output, browser):
                   return true;
                 })()""")
                 capture(client, output, name, size, state, report)
+                if name == "connection_blocked":
+                    client.evaluate("document.querySelector('#dock-connect-diagnostics summary').click();true")
+                    capture(client, output, name + "-details", size, state, report, diagnostics=True)
+                    client.evaluate("document.getElementById('dock-connect-diagnostics').open=false;true")
                 if name == "choosing":
                     keypress(client, "ArrowLeft", "ArrowLeft", 37)
                     keypress(client, "Escape", "Escape", 27)
@@ -662,7 +745,7 @@ def run(output, browser):
                         keypress(client, key, code, number)
                     if client.evaluate("xmbConnectionView().screen") != "product":
                         report["failures"].append(client.current_view + ": input escaped the blocking phase")
-                elif name == "ready":
+                elif name == "ready" and selected is None:
                     keypress(client, "t", "KeyT", 84)
                     if not client.evaluate("Boolean(xmb.nav.side && xmb.side)"):
                         report["failures"].append("ready: TRIANGLE/T did not open the context menu")
@@ -716,11 +799,16 @@ def main():
     parser.add_argument("--browser", help="Chrome/Edge executable; uses an isolated temporary profile")
     parser.add_argument("--output", type=Path, default=ROOT / "data" / "product-session-ui")
     parser.add_argument("--fixture-check", action="store_true", help="Validate snapshots only; never start a server/browser")
+    parser.add_argument("--all-scenarios", action="store_true", help="Also capture unchanged chooser, legacy product phases and conflict dialogs")
+    parser.add_argument("--scenarios", help="Comma-separated fixture names; overrides the focused default")
     args = parser.parse_args()
     if args.fixture_check:
         print(json.dumps({"result": "passed", "fixtures": list(fixtures()), "browser_started": False}))
         return 0
-    return run(args.output.resolve(), browser_path(args.browser))
+    selected = set(args.scenarios.split(",")) if args.scenarios else None if args.all_scenarios else FOCUSED_SCENARIOS
+    if selected is not None and selected - fixtures().keys():
+        parser.error("Unknown scenarios: " + ", ".join(sorted(selected - fixtures().keys())))
+    return run(args.output.resolve(), browser_path(args.browser), selected)
 
 
 if __name__ == "__main__":

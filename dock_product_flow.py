@@ -31,6 +31,10 @@ class ProductFlowError(ValueError):
     pass
 
 
+class ProductFlowCancelled(ProductFlowError):
+    """A checkpoint between verified operations observed an entry cancellation."""
+
+
 @dataclass(frozen=True)
 class FlowCallbacks:
     """Each callback accepts a context dict and returns a result dict.
@@ -141,6 +145,7 @@ def _empty_state():
         "schema": SCHEMA, "phase": "waiting_psp", "purpose": "initial",
         "identity": {}, "choice": None, "offer_id": "", "inventory": {},
         "game_id": "", "revision": 0, "return_required": False,
+        "entry_completed": False, "cancel_requested": False,
         "resume_phase": "", "attention_reason": "", "conflicts": [],
         "recovery_required": False, "role_request_sent": False,
         "operation": {}, "last_result": {},
@@ -176,6 +181,8 @@ def _observation(value):
             raise ProductFlowError("Falta la comprobación del modo de la PSP.")
     if type(value.get("safe_ready", False)) is not bool:
         raise ProductFlowError("Estado de finalización USB inválido.")
+    if type(value.get("exit_requested", False)) is not bool:
+        raise ProductFlowError("Solicitud de salida de la PSP inválida.")
     phase = value.get("phase")
     if phase is not None and (type(phase) is not int or phase not in (1, 2, 3, 4, 5)):
         raise ProductFlowError("Fase del transporte PSP inválida.")
@@ -183,7 +190,8 @@ def _observation(value):
         return None
     return {**{key: value[key] for key in
               ("session_id", "volume_serial", "storage_ready", "controller_ready")},
-            "safe_ready": value.get("safe_ready", False), "phase": phase}
+            "safe_ready": value.get("safe_ready", False), "phase": phase,
+            "exit_requested": value.get("exit_requested", False)}
 
 
 def _inventory(value):
@@ -234,6 +242,13 @@ class ProductFlow:
                 if self.path.stat().st_size > 512 * 1024:
                     raise ValueError("journal too large")
                 value = json.loads(self.path.read_text(encoding="utf-8"))
+                # Older journals have no early-cancellation fields. Preserve
+                # their recovery requirement and infer only already-reached
+                # controller sessions; this never renews permission to write.
+                if isinstance(value, dict) and set(value) == set(_empty_state()) - {"entry_completed", "cancel_requested"}:
+                    value.update(entry_completed=bool(value.get("return_required") or
+                                 value.get("phase") == "ready" or value.get("purpose") in ("exit", "game_copy")),
+                                 cancel_requested=False)
                 self._validate_journal(value)
                 self._state = value
             except (ValueError, TypeError, KeyError):
@@ -255,15 +270,19 @@ class ProductFlow:
                     )
                     if value["return_required"] and value["purpose"] == "initial":
                         self._state.update(purpose="exit", resume_phase="waiting_storage_return")
+                    elif value["cancel_requested"] and not value["entry_completed"]:
+                        self._state.update(purpose="cancel", resume_phase="finalizing")
 
     @staticmethod
     def _validate_journal(value):
         if (not isinstance(value, dict) or set(value) != set(_empty_state()) or
                 value["schema"] != SCHEMA or value["phase"] not in PHASES or
-                value["purpose"] not in ("initial", "game_copy", "exit") or
+                value["purpose"] not in ("initial", "game_copy", "exit", "cancel") or
                 value["choice"] not in CHOICES | {None} or
                 type(value["revision"]) is not int or value["revision"] < 0 or
                 type(value["return_required"]) is not bool or
+                type(value["entry_completed"]) is not bool or
+                type(value["cancel_requested"]) is not bool or
                 type(value["recovery_required"]) is not bool or
                 type(value["role_request_sent"]) is not bool or
                 not isinstance(value["operation"], dict) or
@@ -309,12 +328,14 @@ class ProductFlow:
         # Legacy/manual adapters expose physical roles only. A native
         # adapter additionally proves the logical phase, so COPY/EXIT_SYNC
         # cannot be inferred just because Sony storage remains mounted.
-        expected = {"initial": 1, "game_copy": 3, "exit": 4}[purpose]
+        expected = {"initial": 1, "game_copy": 3, "exit": 4, "cancel": 1}[purpose]
         return bool(self._same(storage=True) and self._observed.get("phase") in (None, expected))
 
-    def _attention(self, reason, *, conflicts=None, resume_phase=None):
+    def _attention(self, reason, *, conflicts=None, resume_phase=None, recovery_required=None):
         resume_phase = resume_phase or self._state["phase"]
         changes = {}
+        if recovery_required is not None:
+            changes['recovery_required'] = recovery_required
         if (self._state["return_required"] and self._state["purpose"] == "initial"
                 and resume_phase == "ready"):
             # A reconnect after playing must retain the session comparison.
@@ -346,6 +367,14 @@ class ProductFlow:
                 return
             phase = self._state["phase"]
             if phase == "attention":
+                if (seen and self._state["identity"] and
+                        seen["volume_serial"] == self._state["identity"]["volume_serial"] and
+                        seen["session_id"] != self._state["identity"]["session_id"] and
+                        not self._state["recovery_required"]):
+                    # A reconnect creates a fresh device nonce. It is the
+                    # original card, but only an explicit Retry may bind the
+                    # new session and authorize another callback.
+                    self._commit(recovery_required=True)
                 return  # New hardware observations are not renewed consent.
             if phase == "safe_to_disconnect":
                 if seen is None:
@@ -360,10 +389,17 @@ class ProductFlow:
                     self._phase(initial, identity=identity, purpose="initial", choice=None,
                                 inventory={}, game_id="", offer_id=secrets.token_hex(32),
                                 attention_reason="", conflicts=[], recovery_required=False,
-                                operation={}, last_result={}, return_required=False)
+                                operation={}, last_result={}, return_required=False,
+                                entry_completed=False, cancel_requested=False)
+                    if seen.get("exit_requested"):
+                        self.request_cancel()
                 return
             if seen is not None and not self._same():
-                self._attention("La conexión corresponde a otra sesión o Memory Stick.")
+                self._attention("La conexión corresponde a otra sesión o Memory Stick.",
+                                recovery_required=(seen["volume_serial"] == self._state["identity"].get("volume_serial")))
+                return
+            if seen and seen.get("exit_requested") and self.can_cancel_entry():
+                self.request_cancel()
                 return
             if phase in ROLE_WAIT:
                 if phase in STORAGE_WAIT and self._storage_for(self._state["purpose"]):
@@ -372,7 +408,7 @@ class ProductFlow:
                     self._phase(target)
                 elif phase in CONTROLLER_WAIT and self._same(controller=True):
                     self._phase("ready", purpose="initial", game_id="", attention_reason="",
-                                conflicts=[], recovery_required=False)
+                                conflicts=[], recovery_required=False, entry_completed=True)
                 return
             if phase == "ready" and not self._same(controller=True):
                 if seen is None and not self._state["return_required"] and not self._game_running:
@@ -431,6 +467,35 @@ class ProductFlow:
             self._phase("waiting_storage_return", purpose="exit", game_id="",
                         attention_reason="", conflicts=[])
 
+    def can_cancel_entry(self):
+        with self._lock:
+            return bool(self.enabled and not self._state["entry_completed"] and
+                        not self._state["return_required"] and not self._game_running and
+                        not self._state["recovery_required"] and
+                        self._state["phase"] not in ("waiting_psp", "safe_to_disconnect"))
+
+    def request_cancel(self):
+        """Cancel entry without importing/exporting anything new.
+
+        A callback already admitted may finish its current verified file.
+        Its next checkpoint or successful return then goes straight to the
+        eject callback. Errors retain attention/recovery and never imply that
+        an incomplete copy became verified merely because exit was requested.
+        """
+        with self._lock:
+            if not self.can_cancel_entry() or not self._same():
+                raise ProductFlowError("No hay una entrada de esta PSP que se pueda cancelar.")
+            if self._state["cancel_requested"]:
+                return
+            if (self._state["phase"] == "attention" and
+                    self._state["operation"].get("status") == "started"):
+                self._commit(cancel_requested=True, purpose="cancel", resume_phase="finalizing")
+            elif self._busy:
+                self._commit(cancel_requested=True)
+            else:
+                self._phase("finalizing", purpose="cancel", cancel_requested=True,
+                            game_id="", attention_reason="", conflicts=[])
+
     def set_game_running(self, running):
         if type(running) is not bool:
             raise ProductFlowError("Estado del juego inválido.")
@@ -468,8 +533,8 @@ class ProductFlow:
             identity = {key: self._observed[key] for key in ("session_id", "volume_serial")}
             purpose = self._state["purpose"]
             target = {"initial": "entering_storage", "game_copy": "waiting_storage_copy",
-                      "exit": "waiting_storage_return"}[purpose]
-            if purpose == "exit" and self._state["resume_phase"] == "finalizing":
+                      "exit": "waiting_storage_return", "cancel": "finalizing"}[purpose]
+            if purpose in ("exit", "cancel") and self._state["resume_phase"] == "finalizing":
                 target = "finalizing"
             changes = {"identity": identity, "recovery_required": False,
                        "attention_reason": "", "conflicts": [], "operation": {},
@@ -552,12 +617,29 @@ class ProductFlow:
                 if name == "finalize_exit" and (result.get("verified") is not True or
                                                 result.get("host_eject_accepted") is not True):
                     raise ProductFlowError("Windows no confirmó la expulsión segura de esta PSP.")
+        except ProductFlowCancelled as exc:
+            with self._lock:
+                self._busy = False
+                if (self._state["operation"].get("id") == operation_id and
+                        self._state["cancel_requested"] and not self._state["entry_completed"]):
+                    try:
+                        self._phase("finalizing", purpose="cancel", conflicts=[], attention_reason="",
+                                    operation={**operation, "status": "cancelled_at_checkpoint"},
+                                    last_result={"entry_cancelled": True})
+                    except OSError:
+                        self._state.update(phase="attention", purpose="cancel", resume_phase="finalizing",
+                                           recovery_required=True, attention_reason="No se pudo registrar el cierre. Revisa la recuperación.")
+                else:
+                    self._attention(str(exc), resume_phase=phase)
+            return True
         except Exception as exc:
             # Includes adapter errors, but not KeyboardInterrupt/SystemExit.
             with self._lock:
                 self._busy = False
                 if self._state["phase"] == phase and self._state["operation"].get("id") == operation_id:
                     try:
+                        if self._state["cancel_requested"]:
+                            self._commit(purpose="cancel")
                         self._attention(str(exc), resume_phase=phase)
                     except OSError:
                         self._state.update(phase="attention", resume_phase=phase,
@@ -570,7 +652,10 @@ class ProductFlow:
                 return True  # Connection changed during the call; never overwrite that stop.
             completed = {**operation, "status": "completed"}
             try:
-                if name == "inventory":
+                if self._state["cancel_requested"] and name != "finalize_exit":
+                    self._phase("finalizing", purpose="cancel", operation=completed,
+                                attention_reason="", conflicts=[], last_result={"entry_cancelled": True})
+                elif name == "inventory":
                     self._phase("choosing", inventory=result, offer_id=self._new_offer(result),
                                 operation=completed, last_result={"inventory_verified": True})
                 elif name == "request_role":
@@ -613,8 +698,11 @@ class ProductFlow:
                 message = ("Activa el almacenamiento USB de la misma PSP para continuar."
                            if phase in STORAGE_WAIT else
                            "Activa PSP Dock en modo mando para continuar.")
+            if state["purpose"] == "cancel" and phase == "safe_to_disconnect":
+                message = "Conexión cerrada. Ya puedes desconectar la PSP."
             return {
                 "enabled": self.enabled, "phase": phase, "purpose": state["purpose"],
+                "entry_completed": state["entry_completed"], "cancel_requested": state["cancel_requested"],
                 "blocking": phase != "ready", "message": message,
                 "can_choose": (phase == "choosing" and not self._busy and self._same(storage=True)),
                 "offer_id": state["offer_id"], "choice": state["choice"],

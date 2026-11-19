@@ -111,11 +111,12 @@ class NativeWindowClose:
                 return False
             state = self.dock.product_flow.snapshot()
             phase = state['phase']
-            if phase == 'choosing':
-                # Closing before making the initial selection means no new
-                # game/save import. Inventory has still completed first.
-                self.dock.product_session.choose('none', state['offer_id'])
-                self._record('preparing_exit')
+            if self.dock.product_flow.can_cancel_entry() and not state.get('cancel_requested'):
+                # An exit before the first controller session does not
+                # authorize importing or returning saves. The product
+                # callback finishes admitted work, then only ejects.
+                self.dock.product_session.request_cancel()
+                self._record('cancelling_entry')
                 return True
             if phase == 'ready':
                 self.dock.request_exit()
@@ -146,9 +147,13 @@ class NativeWindowClose:
                                   can_choose=False, can_review_saves=False,
                                   can_retry=False, can_close=False, message=message)
                 else:
-                    message = ('Has pedido salir. Revisa lo pendiente; la ventana se cerrará cuando las partidas estén verificadas y la PSP expulsada.'
-                               if flow['phase']=='attention' else
-                               'Has pedido salir. El Dock terminará la operación y devolverá las partidas antes de cerrar.')
+                    if not flow.get('entry_completed', False):
+                        message = ('Has pedido salir antes de empezar. El Dock terminará la operación en curso '
+                                   'y cerrará la conexión; no iniciará otra sincronización.')
+                    else:
+                        message = ('Has pedido salir. Revisa lo pendiente; la ventana se cerrará cuando las partidas estén verificadas y la PSP expulsada.'
+                                   if flow['phase']=='attention' else
+                                   'Has pedido salir. El Dock terminará la operación y devolverá las partidas antes de cerrar.')
                     result['can_choose'] = False
                     if flow['phase'] == 'ready':
                         result.update(phase='waiting_storage_return', blocking=True,
