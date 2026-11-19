@@ -703,10 +703,10 @@ class DockProductSessionTests(unittest.TestCase):
         checked_names={str(call.args[1]) for call in checked.call_args_list}
         self.assertIn('ISO/Game.iso',checked_names)
         self.assertIn('PSP/GAME/Collection/MyHomebrew/EBOOT.PBP',checked_names)
-        self.assertIn(homebrew,visited)
-        self.assertIn(self.psp/'ISO/Game.iso',visited)
+        self.assertIn(homebrew.resolve(),visited)
+        self.assertIn((self.psp/'ISO/Game.iso').resolve(),visited)
         for path in ignored:
-            self.assertNotIn(path,visited)
+            self.assertNotIn(path.resolve(),visited)
             self.assertNotIn(path.relative_to(self.psp).as_posix(),checked_names)
         self.assertEqual({game['title'] for game in games},{'Game','MyHomebrew'})
 

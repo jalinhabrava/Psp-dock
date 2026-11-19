@@ -158,7 +158,8 @@ class BrowserLocaleTest(unittest.TestCase):
         url = self.base + ('?action=' + action if action else '')
         command = [find_browser(), '--headless=new', '--disable-gpu', '--no-first-run',
                    '--no-default-browser-check', '--disable-extensions', '--disable-background-networking',
-                   '--user-data-dir=' + str(profile), '--lang=' + locale,
+                   # UI language alone does not set navigator.language on Linux.
+                   '--user-data-dir=' + str(profile), '--lang=' + locale, '--accept-lang=' + locale,
                    '--virtual-time-budget=2600', '--dump-dom', url]
         result = subprocess.run(command, capture_output=True, encoding='utf-8',
                                 errors='replace', timeout=35, check=False)
